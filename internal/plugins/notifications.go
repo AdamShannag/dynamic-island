@@ -66,6 +66,9 @@ func (n *Notifications) Run(ctx context.Context, h island.Host) error {
 			case dbus.TypeError:
 				return fmt.Errorf("BecomeMonitor: %v", msg.Body)
 			case dbus.TypeMethodCall:
+				if h.Presenting() {
+					continue // never mirror personal notifications on a shared screen
+				}
 				if v, ttl, ok := n.view(msg); ok {
 					n.seq++
 					h.Set(island.Activity{

@@ -7,6 +7,21 @@ A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with
 - **Esc** or clicking outside the dashboard closes it.
 - **`island open [tab]`** toggles the dashboard from the command line. Bind it to a key in Settings → Keyboard → Custom Shortcuts, for example Super+Space → `island open`.
 
+## Tools in the header
+
+- **Colour picker (eyedropper):** pick any pixel on screen. The HEX value is copied, and the island shows a swatch along with RGB and HSL values. It uses the desktop portal.
+- **Presentation mode (sunglasses):** hides track names, album art, command details, clipboard history and notes. It also pauses mirroring of desktop notifications, stops recording clipboard copies, and turns GNOME's notification banners off (restoring them afterwards). The face puts on sunglasses. It **turns on automatically when a screen share starts** and off again when the share ends, unless you turned it on yourself.
+
+The Clipboard tab also has **transform chips**: JSON pretty-print, Base64 encode and decode, URL encode and decode, UPPER, lower, Title, snake, camel and kebab. Each one transforms the **selected text** if there is any, otherwise the clipboard, and copies the result.
+
+## Personality
+
+- **Face:** two eyes next to the clock that follow your cursor and blink every now and then. They go dizzy when the CPU is pegged, turn into hearts when something succeeds, and look surprised when you plug in a USB device.
+- **Sleepy:** after 3 minutes of inactivity the eyes close and little Zs float up. Moving the mouse wakes it.
+- **Wobble:** shake your mouse quickly over the island, or middle-click it, and it wobbles like jelly with a `> <` face.
+- **Magnetic:** the notch leans slightly toward a nearby cursor. This is off while presenting.
+- **USB reactions:** drives, keyboards, mice, game controllers, phones, audio devices and cameras each get a popup with an icon and a little bounce.
+
 ## Context awareness
 
 You don't need to wrap anything. The daemon checks your processes about once a second and recognises dev commands:
@@ -54,8 +69,10 @@ Cost and context usage come from Claude Code's documented status-line feed. Your
 | Home | A Now Playing card (art, live progress with time remaining, controls) and a Today card with a one-click focus timer and a container summary. |
 | Docker | Running containers grouped by compose project, with health, ports and image. Each one has restart and stop buttons. Refreshes live. |
 | Ports | Every listening TCP port and which process or container owns it. **Kill** frees the port (two clicks to confirm). You can also type a port number and press Enter to free it. Ports published by Docker stop their container. |
+| Notes | A scratchpad that saves automatically (`~/.local/share/go-island/notes.md`, mode 0600). Open it directly with `island open notes`. |
 | Clipboard | A history of everything you copy, saved across reboots. Click an entry to copy it again; you can also pin, delete or filter. Copies flagged by password managers are skipped. |
-| Web | A Google search box (a typed URL or `localhost:3000` opens directly), plus a grid of saved sites. **＋** adds a site and right-click removes one. Icons are fetched from each site itself. |
+| QR | Click the grid icon on any clipboard item, or next to the Web search box, to get a scannable QR code. |
+| Web | A calculator (type `150*1.16` and press Enter to copy `174`) and a Google search box (a typed URL or `localhost:3000` opens directly), plus a grid of saved sites. **＋** adds a site and right-click removes one. Icons are fetched from each site itself. |
 
 ```
 MPRIS / UPower / notifications / docker / ss / CLI

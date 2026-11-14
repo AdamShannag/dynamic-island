@@ -30,6 +30,7 @@ type View struct {
 	Playing   bool     `json:"playing,omitempty"`
 	Timing    *Timing  `json:"timing,omitempty"`
 	Focus     []int    `json:"focus,omitempty"`   // pids; clicking focuses the first with a window
+	Swatch    string   `json:"swatch,omitempty"`  // a colour to show in place of the icon
 	Actions   []string `json:"actions,omitempty"` // action names the UI may offer
 }
 
@@ -84,6 +85,9 @@ type Host interface {
 	ClearPrefix(prefix string)
 	// HandleAction registers fn for an action name sent by the UI (e.g. "media.next").
 	HandleAction(name string, fn func())
+	// Presenting reports whether screen-sharing privacy mode is on; plugins
+	// should not surface personal content while it is.
+	Presenting() bool
 }
 
 // Plugin is one island feature. Run blocks until ctx is done; returning an
@@ -101,12 +105,13 @@ type entry struct {
 
 // Manager implements Host and tracks the current View.
 type Manager struct {
-	mu       sync.Mutex
-	acts     map[string]*entry
-	actions  map[string]func()
-	seq      uint64
-	current  string
-	onChange func(stateJSON string)
+	mu         sync.Mutex
+	presenting bool
+	acts       map[string]*entry
+	actions    map[string]func()
+	seq        uint64
+	current    string
+	onChange   func(stateJSON string)
 }
 
 func NewManager() *Manager {
@@ -167,6 +172,22 @@ func (m *Manager) HandleAction(name string, fn func()) {
 	m.mu.Lock()
 	m.actions[name] = fn
 	m.mu.Unlock()
+}
+
+func (m *Manager) Presenting() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.presenting
+}
+
+// SetPresenting toggles privacy mode; turning it on drops personal popups.
+func (m *Manager) SetPresenting(on bool) {
+	m.mu.Lock()
+	m.presenting = on
+	m.mu.Unlock()
+	if on {
+		m.ClearPrefix("notify.mirror.")
+	}
 }
 
 // Action runs a registered action handler asynchronously.

@@ -350,3 +350,100 @@
 .goisland-site-letter { font-size: 18pt; font-weight: 700; color: #fff; }
 .goisland-site-add-icon { icon-size: 20px; color: rgba(245, 245, 247, 0.55); }
 .goisland-site-name { font-size: 8pt; font-weight: 500; color: rgba(245, 245, 247, 0.7); }
+
+/* ───────────── Face ───────────── */
+
+.goisland-face { spacing: 3px; }
+.goisland-eyes { spacing: 5px; }
+.goisland-eye { width: 12px; height: 14px; }
+.goisland-eye-dot {
+  width: 6px;
+  height: 10px;
+  border-radius: 3px;
+  background-color: #f5f5f7;
+}
+.goisland-eye-glyph { font-size: 8.5pt; font-weight: 800; color: #f5f5f7; }
+.goisland-eye-glyph.love { color: #ff375f; font-size: 9pt; }
+.goisland-zzz { font-size: 7pt; font-weight: 700; color: rgba(245, 245, 247, 0.7); width: 8px; }
+.goisland-spy { icon-size: 30px; }
+
+/* ───────────── Header tools ───────────── */
+
+.goisland-head-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 15px;
+  color: rgba(245, 245, 247, 0.55);
+  transition-duration: 120ms;
+}
+.goisland-head-btn StIcon { icon-size: 15px; }
+.goisland-head-btn:hover   { color: #f5f5f7; background-color: rgba(255, 255, 255, 0.06); }
+.goisland-head-btn:checked { background-color: rgba(255, 255, 255, 0.12); }
+.goisland-head-btn:focus   { box-shadow: none; }
+.goisland-head-spy { icon-size: 20px; }
+.goisland-present-badge {
+  font-size: 8pt;
+  font-weight: 700;
+  color: #ffd60a;
+  background-color: rgba(255, 214, 10, 0.12);
+  border-radius: 999px;
+  padding: 3px 10px;
+  margin-right: 6px;
+}
+.goisland-header { spacing: 4px; }
+.goisland-dash-clock { padding-left: 6px; }
+
+/* ───────────── Transforms, calculator, notes, QR ───────────── */
+
+.goisland-chips { spacing: 4px; }
+.goisland-chips-label { font-size: 8pt; font-weight: 700; color: rgba(245, 245, 247, 0.36); padding-right: 4px; }
+.goisland-chip {
+  font-size: 8pt;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.75);
+  background-color: #141417;
+  border-radius: 999px;
+  padding: 4px 11px;
+  transition-duration: 120ms;
+}
+.goisland-chip:hover { background-color: #1e1e22; color: #f5f5f7; }
+.goisland-chip:focus { box-shadow: none; }
+.goisland-chip.good { color: #00230b; background-color: #30d158; }
+.goisland-chip.bad  { color: #fff; background-color: #ff453a; }
+
+.goisland-icon-btn { padding: 0; width: 48px; border-radius: 16px; }
+.goisland-icon-btn StIcon { icon-size: 16px; }
+
+.goisland-calc {
+  background-color: rgba(10, 132, 255, 0.10);
+  border: 1px solid rgba(10, 132, 255, 0.25);
+  border-radius: 14px;
+  padding: 8px 16px;
+}
+.goisland-calc-result { font-size: 13pt; font-weight: 700; font-feature-settings: "tnum"; color: #6cb6ff; }
+
+.goisland-notes-card { padding: 6px; }
+.goisland-notes {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: #f5f5f7;
+  caret-color: #ffd60a;
+  selection-background-color: rgba(255, 214, 10, 0.35);
+  font-size: 10.5pt;
+  padding: 10px 12px;
+}
+.goisland-notes:focus { box-shadow: none; border: none; }
+.goisland-notes StLabel.hint-text { color: rgba(245, 245, 247, 0.32); }
+.goisland-notes-status { padding: 0 6px; }
+
+.goisland-qr-card { spacing: 24px; padding: 22px; }
+.goisland-qr-img {
+  width: 240px;
+  height: 240px;
+  border-radius: 18px;
+  background-color: #fff;
+  background-size: contain;
+}
+.goisland-qr-info { spacing: 12px; }
+.goisland-qr-text { font-size: 10pt; font-family: monospace; color: rgba(245, 245, 247, 0.75); }

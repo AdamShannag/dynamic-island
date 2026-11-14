@@ -70,6 +70,7 @@ func main() {
 		plugins.NewPomodoro(cfg.Pomodoro.FocusMinutes, cfg.Pomodoro.BreakMinutes),
 		plugins.NewDocker(),
 		plugins.NewContext(),
+		plugins.NewUSB(),
 	}
 
 	var wg sync.WaitGroup

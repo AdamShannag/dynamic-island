@@ -20,6 +20,7 @@ import (
 	"go-island/internal/island"
 	"go-island/internal/ports"
 	"go-island/internal/sites"
+	"go-island/internal/tools"
 )
 
 const (
@@ -100,6 +101,23 @@ const introXML = `
     </method>
     <method name="AgentsList">
       <arg name="sessions" type="s" direction="out"/>
+    </method>
+    <method name="NotesGet">
+      <arg name="text" type="s" direction="out"/>
+    </method>
+    <method name="NotesSave">
+      <arg name="text" type="s" direction="in"/>
+    </method>
+    <method name="QR">
+      <arg name="text" type="s" direction="in"/>
+      <arg name="png" type="s" direction="out"/>
+    </method>
+    <method name="PickColor"/>
+    <signal name="ColorPicked">
+      <arg name="hex" type="s"/>
+    </signal>
+    <method name="SetPresenting">
+      <arg name="on" type="b" direction="in"/>
     </method>
     <method name="Open">
       <arg name="tab" type="s" direction="in"/>
@@ -205,7 +223,44 @@ func (a *api) PortFree(port uint32) (string, *dbus.Error) {
 	return summary, dbusErr(err)
 }
 
-func (a *api) ClipboardAdd(text string) *dbus.Error  { return dbusErr(a.clip.Add(text)) }
+func (a *api) ClipboardAdd(text string) *dbus.Error {
+	if a.m.Presenting() {
+		return nil // don't record copies made on a shared screen
+	}
+	return dbusErr(a.clip.Add(text))
+}
+
+func (a *api) NotesGet() (string, *dbus.Error) {
+	t, err := tools.NotesGet()
+	return t, dbusErr(err)
+}
+func (a *api) NotesSave(text string) *dbus.Error { return dbusErr(tools.NotesSave(text)) }
+func (a *api) QR(text string) (string, *dbus.Error) {
+	p, err := tools.QR(text)
+	return p, dbusErr(err)
+}
+func (a *api) SetPresenting(on bool) *dbus.Error { a.m.SetPresenting(on); return nil }
+
+// PickColor starts the portal's interactive picker; the result arrives as a
+// ColorPicked signal (the UI copies it) and an island popup with a swatch.
+func (a *api) PickColor() *dbus.Error {
+	go func() {
+		c, err := tools.PickColor(context.Background())
+		if err != nil {
+			if err.Error() != "cancelled" {
+				a.m.Set(island.Activity{ID: "notify.color", Priority: island.PriorityNotify, TTL: 4 * time.Second,
+					View: island.View{Kind: "notify", Title: "Colour picker unavailable", Subtitle: err.Error(),
+						Icon: "dialog-error-symbolic", Accent: "error", Click: "notify.dismiss"}})
+			}
+			return
+		}
+		_ = a.conn.Emit(Path, Iface+".ColorPicked", c.Hex)
+		a.m.Set(island.Activity{ID: "notify.color", Priority: island.PriorityNotify, TTL: 8 * time.Second,
+			View: island.View{Kind: "notify", Title: c.Hex + " copied", Subtitle: c.RGB + "  ·  " + c.HSL,
+				Swatch: c.Hex, Trailing: "colour", Click: "notify.dismiss"}})
+	}()
+	return nil
+}
 func (a *api) ClipboardList() (string, *dbus.Error)  { return toJSON(a.clip.List()) }
 func (a *api) ClipboardDelete(id uint32) *dbus.Error { return dbusErr(a.clip.Delete(id)) }
 func (a *api) ClipboardClear() *dbus.Error           { return dbusErr(a.clip.Clear()) }

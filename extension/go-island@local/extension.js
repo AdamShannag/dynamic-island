@@ -18,6 +18,9 @@ import GnomeDesktop from 'gi://GnomeDesktop';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import {Face} from './face.js';
+import {calc, formatNumber, TRANSFORMS} from './util.js';
+
 const BUS_NAME = 'org.goisland.Island';
 const OBJ_PATH = '/org/goisland/Island';
 const IFACE_XML = `
@@ -46,6 +49,14 @@ const IFACE_XML = `
     </method>
     <method name="ClipboardClear"/>
     <method name="AgentsList"><arg name="sessions" type="s" direction="out"/></method>
+    <method name="NotesGet"><arg name="text" type="s" direction="out"/></method>
+    <method name="NotesSave"><arg name="text" type="s" direction="in"/></method>
+    <method name="QR">
+      <arg name="text" type="s" direction="in"/><arg name="png" type="s" direction="out"/>
+    </method>
+    <method name="PickColor"/>
+    <method name="SetPresenting"><arg name="on" type="b" direction="in"/></method>
+    <signal name="ColorPicked"><arg name="hex" type="s"/></signal>
     <signal name="StateChanged"><arg name="state" type="s"/></signal>
     <signal name="OpenDashboard"><arg name="tab" type="s"/></signal>
   </interface>
@@ -70,11 +81,18 @@ const TABS = [
     ['docker', 'Docker', 'network-server-symbolic'],
     ['ports', 'Ports', 'network-wired-symbolic'],
     ['clipboard', 'Clipboard', 'edit-paste-symbolic'],
+    ['notes', 'Notes', 'document-edit-symbolic'],
     ['search', 'Web', 'web-browser-symbolic'],
 ];
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {home: 292, search: 340, agents: 400, default: 480};
+const DASH_HEIGHT = {home: 292, search: 360, agents: 400, notes: 420, qr: 430, default: 500};
+
+// Personality.
+const POINTER_MS = 33;           // ~30 fps pointer tracking (eyes, magnet, shake)
+const SLEEP_AFTER_MS = 3 * 60 * 1000;
+const CPU_DIZZY = 0.85;          // busy fraction that makes the island dizzy
+const MAGNET_RADIUS = 150;       // px below the notch where it leans toward the cursor
 const AGENT_REFRESH_MS = 2000;
 const LIVE_KINDS = new Set(['agent', 'task', 'service']);
 const AGENT_STATES = {
@@ -257,7 +275,10 @@ class Island extends St.BoxLayout {
                 this._render(this._state);
         });
         this.connect('captured-event', (_a, event) => this._onCapturedEvent(event));
+        this._startPersonality();
         this.connect('destroy', () => {
+            this._stopPersonality();
+            this._face.destroy();
             for (const tl of Object.values(this._springs))
                 tl.stop();
             this._springs = {};
@@ -285,8 +306,9 @@ class Island extends St.BoxLayout {
         text.add_child(this._title);
         text.add_child(this._subtitle);
         this._pillEq = new Equalizer('pill');
+        this._face = new Face(this._ext.spyIcon);
         this._trailing = label('goisland-trailing');
-        for (const a of [this._art, this._icon, text, this._pillEq.actor, this._trailing])
+        for (const a of [this._art, this._icon, text, this._pillEq.actor, this._face.actor, this._trailing])
             this._content.add_child(a);
     }
 
@@ -317,6 +339,19 @@ class Island extends St.BoxLayout {
         this._tabName = label('goisland-tab-name');
         tabs.add_child(this._tabName);
         header.add_child(tabs);
+        this._presentBadge = label('goisland-present-badge', {text: 'Presenting · private info hidden', visible: false});
+        header.add_child(this._presentBadge);
+        header.add_child(iconButton('color-select-symbolic', 'goisland-head-btn', () => {
+            this._closeDash();
+            this._ext.call('PickColor');
+        }, 'Pick a colour'));
+        this._spyBtn = new St.Button({
+            style_class: 'goisland-head-btn', can_focus: true, accessible_name: 'Presentation mode',
+            y_align: Clutter.ActorAlign.CENTER,
+            child: new St.Icon({gicon: this._ext.spyIcon, style_class: 'goisland-head-spy'}),
+        });
+        this._spyBtn.connect('clicked', () => this._ext.setPresenting(!this._ext.presenting, false));
+        header.add_child(this._spyBtn);
         this._dashClock = label('goisland-dash-clock');
         header.add_child(this._dashClock);
         this._dash.add_child(header);
@@ -328,6 +363,8 @@ class Island extends St.BoxLayout {
             docker: this._buildDockerPage(),
             ports: this._buildPortsPage(),
             clipboard: this._buildClipboardPage(),
+            notes: this._buildNotesPage(),
+            qr: this._buildQRPage(),
             search: this._buildSearchPage(),
         };
         for (const page of Object.values(this._pages)) {
@@ -653,14 +690,150 @@ class Island extends St.BoxLayout {
         clear.connect('clicked', () => this._ext.call('ClipboardClear', [], () => this._loadClipboard()));
         top.add_child(this._clipFilter);
         top.add_child(clear);
+
+        // Transforms apply to the selected text if there is any, else the clipboard.
+        const chips = new St.BoxLayout({style_class: 'goisland-chips'});
+        chips.add_child(label('goisland-chips-label', {text: 'Transform'}));
+        for (const [, name, fn] of TRANSFORMS) {
+            const chip = new St.Button({style_class: 'goisland-chip', label: name, can_focus: true});
+            chip.connect('clicked', () => this._transform(chip, name, fn));
+            chips.add_child(chip);
+        }
         const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
         this._clipList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
         this._clipMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
         card.add_child(this._clipMsg);
         card.add_child(scrollView(this._clipList));
         page.add_child(top);
+        page.add_child(chips);
         page.add_child(card);
         return page;
+    }
+
+    _transform(chip, name, fn) {
+        const cb = St.Clipboard.get_default();
+        const run = text => {
+            let out;
+            try {
+                if (!text)
+                    throw new Error('empty');
+                out = fn(text);
+            } catch {
+                this._flash(chip, 'Invalid', name, 'bad');
+                return;
+            }
+            cb.set_text(St.ClipboardType.CLIPBOARD, out);
+            this._flash(chip, 'Copied', name, 'good');
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                if (this._dashOpen && this._tab === 'clipboard')
+                    this._loadClipboard();
+                return GLib.SOURCE_REMOVE;
+            });
+        };
+        cb.get_text(St.ClipboardType.PRIMARY, (_c, selected) => {
+            if (selected?.trim())
+                run(selected);
+            else
+                cb.get_text(St.ClipboardType.CLIPBOARD, (_c2, text) => run(text));
+        });
+    }
+
+    _flash(btn, text, restore, kind) {
+        btn.label = text;
+        btn.add_style_class_name(kind);
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1100, () => {
+            if (btn.get_stage()) {
+                btn.label = restore;
+                btn.remove_style_class_name(kind);
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // ----- Notes -----
+
+    _buildNotesPage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-notes-card', vertical: true, x_expand: true, y_expand: true});
+        this._notes = new St.Entry({
+            style_class: 'goisland-notes', hint_text: 'Jot something down. It saves automatically.',
+            can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.START,
+        });
+        const ct = this._notes.clutter_text;
+        ct.single_line_mode = false;
+        ct.activatable = false;
+        ct.line_wrap = true;
+        ct.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        this._notesSaveId = 0;
+        this._notesLoaded = false;
+        ct.connect('text-changed', () => {
+            if (!this._notesLoaded)
+                return;
+            this._notesStatus.text = 'Editing…';
+            if (this._notesSaveId)
+                GLib.source_remove(this._notesSaveId);
+            this._notesSaveId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+                this._notesSaveId = 0;
+                this._ext.call('NotesSave', [this._notes.text], (_r, err) => {
+                    this._notesStatus.text = err ? 'Not saved' : 'Saved';
+                });
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+        const box = new St.BoxLayout({vertical: true, x_expand: true});
+        box.add_child(this._notes);
+        card.add_child(scrollView(box));
+        this._notesStatus = label('goisland-hint goisland-notes-status', {text: '', x_align: Clutter.ActorAlign.END});
+        page.add_child(card);
+        page.add_child(this._notesStatus);
+        return page;
+    }
+
+    _loadNotes() {
+        this._notesLoaded = false;
+        if (this._ext.presenting) {
+            this._notes.text = '';
+            this._notesStatus.text = 'Hidden while presenting';
+            return;
+        }
+        this._ext.call('NotesGet', [], (res, err) => {
+            this._notes.text = err ? '' : res[0];
+            this._notesLoaded = !err;
+            this._notesStatus.text = err ? 'Daemon not running' : '';
+        });
+    }
+
+    // ----- QR -----
+
+    _buildQRPage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page goisland-qr-page', vertical: true});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-qr-card', x_expand: true, y_expand: true});
+        this._qrImg = new St.Bin({style_class: 'goisland-qr-img', y_align: Clutter.ActorAlign.CENTER});
+        const col = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'goisland-qr-info'});
+        col.add_child(label('goisland-group', {text: 'SCAN WITH YOUR PHONE'}));
+        this._qrText = new St.Label({style_class: 'goisland-qr-text'});
+        this._qrText.clutter_text.line_wrap = true;
+        this._qrText.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        this._qrText.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        col.add_child(this._qrText);
+        const back = new St.Button({style_class: 'goisland-pill-btn', label: 'Back', can_focus: true, x_align: Clutter.ActorAlign.START});
+        back.connect('clicked', () => this._showTab(this._qrReturn ?? 'clipboard'));
+        col.add_child(back);
+        card.add_child(this._qrImg);
+        card.add_child(col);
+        page.add_child(card);
+        return page;
+    }
+
+    _showQR(text) {
+        this._ext.call('QR', [text], (res, err) => {
+            if (err || !this._dashOpen)
+                return;
+            this._qrReturn = this._tab;
+            this._qrImg.style = `background-image: url("file://${encodeURI(res[0])}");`;
+            this._qrText.text = text.length > 400 ? `${text.slice(0, 400)}…` : text;
+            this._showTab('qr');
+        });
     }
 
     _loadClipboard() {
@@ -679,6 +852,10 @@ class Island extends St.BoxLayout {
         this._clipList.destroy_all_children();
         const items = this._filteredClips();
         let msg = '';
+        if (this._ext.presenting) {
+            this._message(this._clipMsg, 'Hidden while presenting');
+            return;
+        }
         if (error)
             msg = error;
         else if (!this._clipItems.length)
@@ -690,6 +867,8 @@ class Island extends St.BoxLayout {
             const box = new St.BoxLayout({x_expand: true});
             const preview = it.text.slice(0, 300).replace(/\s*\n\s*/g, ' ⏎ ');
             box.add_child(label('goisland-clip-text', {text: preview, x_expand: true}));
+            box.add_child(iconButton('view-app-grid-symbolic', 'goisland-row-btn',
+                () => this._showQR(it.text), 'Show as QR code'));
             box.add_child(iconButton('view-pin-symbolic', `goisland-row-btn${it.pinned ? ' pinned' : ''}`,
                 () => this._ext.call('ClipboardPin', [it.id, !it.pinned], () => this._loadClipboard()),
                 it.pinned ? 'Unpin' : 'Pin'));
@@ -717,10 +896,16 @@ class Island extends St.BoxLayout {
             x_expand: true,
             primary_icon: new St.Icon({icon_name: 'system-search-symbolic', style_class: 'goisland-entry-icon'}),
         });
+        this._searchEntry.clutter_text.connect('text-changed', () => this._updateCalc());
         this._searchEntry.clutter_text.connect('activate', () => {
             const q = this._searchEntry.text.trim();
             if (!q)
                 return;
+            if (this._calcValue !== null) { // a calculation: copy the result
+                St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, this._calcValue);
+                this._calcHint.text = 'Copied';
+                return;
+            }
             const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(q);
             const looksLikeHost = /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(q) || /^localhost(:\d+)?(\/\S*)?$/.test(q);
             let uri = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
@@ -732,7 +917,26 @@ class Island extends St.BoxLayout {
             this._searchEntry.text = '';
             this._closeDash();
         });
-        page.add_child(this._searchEntry);
+        const searchRow = new St.BoxLayout({style_class: 'goisland-toolbar'});
+        searchRow.add_child(this._searchEntry);
+        const qrBtn = iconButton('view-app-grid-symbolic', 'goisland-pill-btn goisland-icon-btn', () => {
+            const q = this._searchEntry.text.trim();
+            if (q)
+                this._showQR(q);
+            else
+                St.Clipboard.get_default().get_text(St.ClipboardType.CLIPBOARD, (_c, t) => t?.trim() && this._showQR(t.trim()));
+        }, 'QR code of this text (or the clipboard)');
+        qrBtn.y_align = Clutter.ActorAlign.FILL;
+        searchRow.add_child(qrBtn);
+        page.add_child(searchRow);
+
+        this._calcRow = new St.BoxLayout({style_class: 'goisland-calc', visible: false});
+        this._calcResult = label('goisland-calc-result', {x_expand: true});
+        this._calcHint = label('goisland-hint', {text: 'Enter to copy'});
+        this._calcRow.add_child(this._calcResult);
+        this._calcRow.add_child(this._calcHint);
+        this._calcValue = null;
+        page.add_child(this._calcRow);
 
         const card = new St.BoxLayout({style_class: 'goisland-card goisland-sites-card', vertical: true, x_expand: true, y_expand: true});
         const head = new St.BoxLayout({style_class: 'goisland-section-head'});
@@ -777,6 +981,16 @@ class Island extends St.BoxLayout {
         page.add_child(card);
         this._sites = [];
         return page;
+    }
+
+    _updateCalc() {
+        const v = calc(this._searchEntry.text);
+        this._calcValue = v === null ? null : formatNumber(v);
+        this._calcRow.visible = v !== null;
+        if (v !== null) {
+            this._calcResult.text = `= ${this._calcValue}`;
+            this._calcHint.text = 'Enter to copy';
+        }
     }
 
     _loadSites() {
@@ -868,6 +1082,7 @@ class Island extends St.BoxLayout {
             this._timer = this._state;
         else if (k === 'idle' || k === 'media')
             this._timer = null;
+        this._react(prev);
         this._render(prev);
     }
 
@@ -951,14 +1166,22 @@ class Island extends St.BoxLayout {
         this._dash.visible = mode === 'dashboard';
         this._content.visible = mode !== 'dashboard';
 
-        this._title.text = s.title ?? '';
+        const priv = this._ext.presenting;
+        const masked = priv && (s.kind === 'media' || LIVE_KINDS.has(s.kind));
+        this._title.text = priv && s.kind === 'media' ? 'Now playing' : s.title ?? '';
         this._title.visible = mode !== 'idle';
         this._subtitle.text = s.subtitle ?? '';
-        this._subtitle.visible = mode === 'notify' && !!s.subtitle;
+        this._subtitle.visible = mode === 'notify' && !!s.subtitle && !masked;
+        this._face.actor.visible = mode === 'idle';
+        this._art.style = null;
         if (mode === 'idle') {
             this._art.hide();
             this._icon.hide();
-        } else if (s.art) {
+        } else if (s.swatch) {
+            this._art.style = `background-color: ${s.swatch};`;
+            this._art.show();
+            this._icon.hide();
+        } else if (s.art && !priv) {
             this._art.style = `background-image: url("file://${encodeURI(s.art)}");`;
             this._art.show();
             this._icon.hide();
@@ -980,9 +1203,12 @@ class Island extends St.BoxLayout {
 
     _applyHome() {
         const m = this._media;
-        this._mTitle.text = m?.title ?? 'Not playing';
-        this._mSub.text = m ? m.subtitle ?? '' : 'Start music in any player';
-        this._mArt.visible = !!m?.art;
+        const priv = this._ext.presenting;
+        this._presentBadge.visible = priv;
+        this._spyBtn.checked = priv;
+        this._mTitle.text = m ? priv ? 'Now playing' : m.title ?? '' : 'Not playing';
+        this._mSub.text = m ? priv ? 'Hidden while presenting' : m.subtitle ?? '' : 'Start music in any player';
+        this._mArt.visible = !!m?.art && !priv;
         if (m?.art)
             this._mArt.style = `background-image: url("file://${encodeURI(m.art)}");`;
         this._mEq.actor.visible = !!m;
@@ -1075,10 +1301,20 @@ class Island extends St.BoxLayout {
             Main.panel.statusArea.dateMenu?.menu.toggle();
             return Clutter.EVENT_STOP;
         }
+        if (button === Clutter.BUTTON_MIDDLE) {
+            this.wobble();
+            return Clutter.EVENT_STOP;
+        }
         if (button !== Clutter.BUTTON_PRIMARY)
             return Clutter.EVENT_PROPAGATE;
         const s = this._state;
-        // Context-aware items (agents, builds, services) jump to their window.
+        // A working agent opens the Agents tab (its terminal is usually
+        // already focused); approvals and results jump to the terminal.
+        if (s.kind === 'agent' && !s.accent) {
+            this.openDash('agents');
+            return Clutter.EVENT_STOP;
+        }
+        // Context-aware items (builds, services, agent popups) jump to their window.
         if (s.focus?.length && focusPids(s.focus)) {
             if (s.click)
                 this._ext.action(s.click);
@@ -1161,7 +1397,7 @@ class Island extends St.BoxLayout {
             btn.checked = tid === id;
         for (const [pid, page] of Object.entries(this._pages))
             page.visible = pid === id;
-        this._tabName.text = TABS.find(([tid]) => tid === id)?.[1] ?? '';
+        this._tabName.text = TABS.find(([tid]) => tid === id)?.[1] ?? (id === 'qr' ? 'QR code' : '');
 
         this._stopDocker();
         let focus = this;
@@ -1184,11 +1420,15 @@ class Island extends St.BoxLayout {
             this._portEntry.text = '';
             this._loadPorts();
             focus = this._portEntry;
+        } else if (id === 'notes') {
+            this._loadNotes();
+            focus = this._notes;
         } else if (id === 'clipboard') {
             this._clipFilter.text = '';
             this._loadClipboard();
             focus = this._clipFilter;
         } else if (id === 'search') {
+            this._updateCalc();
             this._addRow.hide();
             this._loadSites();
             focus = this._searchEntry;
@@ -1210,6 +1450,175 @@ class Island extends St.BoxLayout {
     _message(lbl, text) {
         lbl.text = text ?? '';
         lbl.visible = !!text;
+    }
+
+    // ---------- personality ----------
+
+    _startPersonality() {
+        this._asleep = false;
+        this._wobbling = false;
+        this._shake = [];
+        this._mag = {x: 0, s: 1};
+        this._cpuPrev = null;
+        this._cpuHot = 0;
+        this._pointerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POINTER_MS, () => {
+            this._onPointer();
+            return GLib.SOURCE_CONTINUE;
+        });
+        this._cpuId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
+            this._sampleCpu();
+            return GLib.SOURCE_CONTINUE;
+        });
+        this._idleMon = global.backend.get_core_idle_monitor();
+        this._idleWatch = this._idleMon.add_idle_watch(SLEEP_AFTER_MS, () => this._setAsleep(true));
+        this._activeWatch = 0;
+    }
+
+    _stopPersonality() {
+        for (const id of [this._pointerId, this._cpuId]) {
+            if (id)
+                GLib.source_remove(id);
+        }
+        this._pointerId = this._cpuId = 0;
+        for (const w of [this._idleWatch, this._activeWatch]) {
+            if (w)
+                this._idleMon.remove_watch(w);
+        }
+        this._idleWatch = this._activeWatch = 0;
+        this._wobbleTl?.stop();
+    }
+
+    setPresenting(on) {
+        this._face.setSpy(on);
+        this._apply();
+        this.relayout(true); // the idle width depends on face vs. sunglasses
+        if (this._dashOpen && (this._tab === 'clipboard' || this._tab === 'notes'))
+            this._showTab(this._tab);
+    }
+
+    _setAsleep(on) {
+        this._asleep = on;
+        this._face.setMood(on ? 'sleep' : this._cpuHot >= 2 ? 'dizzy' : 'normal');
+        if (on && !this._activeWatch) {
+            this._activeWatch = this._idleMon.add_user_active_watch(() => {
+                this._activeWatch = 0;
+                this._setAsleep(false);
+            });
+        }
+    }
+
+    // Busy CPU for a few seconds makes the island dizzy.
+    _sampleCpu() {
+        try {
+            const [, bytes] = GLib.file_get_contents('/proc/stat');
+            const f = new TextDecoder().decode(bytes).split('\n', 1)[0].trim().split(/\s+/).slice(1).map(Number);
+            const idle = f[3] + (f[4] || 0);
+            const total = f.reduce((a, b) => a + b, 0);
+            if (this._cpuPrev) {
+                const busy = 1 - (idle - this._cpuPrev[0]) / Math.max(1, total - this._cpuPrev[1]);
+                this._cpuHot = busy > CPU_DIZZY ? this._cpuHot + 1 : busy < 0.6 ? 0 : this._cpuHot;
+                if (!this._asleep) {
+                    if (this._cpuHot >= 2 && this._face.mood === 'normal')
+                        this._face.setMood('dizzy');
+                    else if (this._cpuHot === 0 && this._face.mood === 'dizzy')
+                        this._face.setMood('normal');
+                }
+            }
+            this._cpuPrev = [idle, total];
+        } catch {
+            // /proc unavailable: no dizziness
+        }
+    }
+
+    // React to activity changes: hearts after success, surprise + bounce on USB.
+    _react(prev) {
+        const s = this._state;
+        if (this._asleep)
+            return;
+        if (prev.accent === 'ok' && s.title !== prev.title)
+            this._face.setMood('love', 2600);
+        if (s.kind === 'usb' && (prev.kind !== 'usb' || prev.title !== s.title)) {
+            this._face.setMood('surprised', 5000);
+            this.set({scale_x: 1.07, scale_y: 1.07});
+            this._springTo({scale_x: 1, scale_y: 1}, 520, null, 'scale');
+        }
+    }
+
+    // Jelly wobble: middle-click, or shake the mouse over the island.
+    wobble() {
+        if (this._wobbling)
+            return;
+        this._wobbling = true;
+        this._face.setMood('squint', 900);
+        const D = 760;
+        const tl = new Clutter.Timeline({actor: this, duration: D});
+        tl.connect('new-frame', () => {
+            const t = tl.get_elapsed_time() / D;
+            const a = Math.sin(t * Math.PI * 5) * Math.pow(1 - t, 2) * 0.14;
+            this.scale_x = 1 + a;
+            this.scale_y = 1 - a * 0.8;
+        });
+        tl.connect('completed', () => {
+            this.scale_x = this.scale_y = 1;
+            this._wobbling = false;
+        });
+        this._wobbleTl = tl;
+        tl.start();
+    }
+
+    // ~30 fps: eyes follow the cursor, the notch leans toward a nearby
+    // cursor (magnet), and shaking the mouse over it triggers a wobble.
+    _onPointer() {
+        const resting = this._mode === 'idle' || this._mode === 'compact';
+        const [px, py] = global.get_pointer();
+
+        if (this._face.actor.mapped) {
+            const [fx, fy] = this._face.actor.get_transformed_position();
+            this._face.track(px - (fx + this._face.actor.width / 2), py - (fy + this._face.actor.height / 2));
+        }
+
+        if (this.hover && resting) {
+            const now = GLib.get_monotonic_time() / 1000;
+            const h = this._shake;
+            h.push([now, px]);
+            while (h.length && now - h[0][0] > 700)
+                h.shift();
+            let reversals = 0, dir = 0;
+            for (let i = 1; i < h.length; i++) {
+                const d = h[i][1] - h[i - 1][1];
+                if (Math.abs(d) < 4)
+                    continue;
+                if (dir && Math.sign(d) !== dir)
+                    reversals++;
+                dir = Math.sign(d);
+            }
+            if (reversals >= 4) {
+                this._shake = [];
+                this.wobble();
+            }
+        } else if (this._shake.length) {
+            this._shake = [];
+        }
+
+        let tx = 0, ts = 1;
+        if (resting && !this.hover && !this._ext.presenting && !this._asleep && !this._springs.geom) {
+            const dx = px - (this.x + this.width / 2);
+            const dy = py - (this.y + this.height);
+            const dist = Math.hypot(dx, Math.max(0, dy));
+            if (dy > -this.height && dist < MAGNET_RADIUS) {
+                const f = 1 - dist / MAGNET_RADIUS;
+                tx = Math.max(-7, Math.min(7, dx * 0.05)) * f;
+                ts = 1 + 0.05 * f;
+            }
+        }
+        const step = (cur, target) => (Math.abs(target - cur) < 0.01 ? target : cur + (target - cur) * 0.2);
+        this._mag.x = step(this._mag.x, tx);
+        this._mag.s = step(this._mag.s, ts);
+        // Only touch the actor when something changed (no idle redraws).
+        if (this.translation_x !== this._mag.x)
+            this.translation_x = this._mag.x;
+        if (!this._wobbling && !this._springs.scale && this.scale_y !== this._mag.s)
+            this.scale_y = this._mag.s;
     }
 
     // ---------- layout ----------
@@ -1299,6 +1708,8 @@ class Island extends St.BoxLayout {
 export default class GoIslandExtension extends Extension {
     enable() {
         this.agentIcon = Gio.icon_new_for_string(`${this.path}/icons/agent.svg`);
+        this.spyIcon = Gio.icon_new_for_string(`${this.path}/icons/spy.svg`);
+        this.presenting = false;
         this._island = new Island(this);
         Main.layoutManager.addTopChrome(this._island, {
             affectsInputRegion: true,
@@ -1314,6 +1725,21 @@ export default class GoIslandExtension extends Extension {
         Main.layoutManager.connectObject('monitors-changed', () => this._island.relayout(false), this);
         Main.panel.connectObject('notify::height', () => this._island.relayout(false), this);
 
+        // Screen sharing turns on presentation mode automatically (and off
+        // again when it ends, unless you turned it on yourself).
+        this._shares = new Set();
+        global.backend.get_remote_access_controller?.()?.connectObject('new-handle', (_c, handle) => {
+            if (handle.is_recording)
+                return; // the built-in screen recorder isn't sharing
+            this._shares.add(handle);
+            this.setPresenting(true, true);
+            handle.connectObject('stopped', () => {
+                this._shares.delete(handle);
+                if (!this._shares.size && this._autoPresent)
+                    this.setPresenting(false, false);
+            }, this);
+        }, this);
+
         // Clipboard history: only the compositor can read the clipboard on Wayland.
         global.display.get_selection().connectObject('owner-changed',
             (_sel, type, source) => this._onClipboardChanged(type, source), this);
@@ -1325,6 +1751,11 @@ export default class GoIslandExtension extends Extension {
     }
 
     disable() {
+        this.setPresenting(false, false); // restores notification banners
+        global.backend.get_remote_access_controller?.()?.disconnectObject(this);
+        for (const h of this._shares ?? [])
+            h.disconnectObject(this);
+        this._shares = null;
         Gio.bus_unwatch_name(this._watchId);
         this._watchId = 0;
         this._disconnect();
@@ -1336,6 +1767,28 @@ export default class GoIslandExtension extends Extension {
         Main.layoutManager.removeChrome(this._island);
         this._island.destroy();
         this._island = null;
+    }
+
+    // Presentation mode: hide personal content, silence notification
+    // banners, stop recording clipboard copies, and put on the sunglasses.
+    setPresenting(on, auto) {
+        if (on === this.presenting) {
+            if (!auto)
+                this._autoPresent = false; // a manual toggle wins over auto-off
+            return;
+        }
+        this.presenting = on;
+        this._autoPresent = on && auto;
+        const notif = new Gio.Settings({schema_id: 'org.gnome.desktop.notifications'});
+        if (on) {
+            this._bannersWere = notif.get_boolean('show-banners');
+            notif.set_boolean('show-banners', false);
+        } else if (this._bannersWere !== undefined) {
+            notif.set_boolean('show-banners', this._bannersWere);
+            this._bannersWere = undefined;
+        }
+        this.call('SetPresenting', [on]);
+        this._island?.setPresenting(on);
     }
 
     _onClipboardChanged(type, source) {
@@ -1365,7 +1818,11 @@ export default class GoIslandExtension extends Extension {
             this._signalIds = [
                 proxy.connectSignal('StateChanged', (_p, _sender, [json]) => this._applyState(json)),
                 proxy.connectSignal('OpenDashboard', (_p, _sender, [tab]) => this._island?.toggleDash(tab)),
+                proxy.connectSignal('ColorPicked', (_p, _sender, [hex]) =>
+                    St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, hex)),
             ];
+            if (this.presenting)
+                this.call('SetPresenting', [true]);
             this.call('GetState', [], (result, err) => {
                 if (!err && !cancellable.is_cancelled())
                     this._applyState(result[0]);
