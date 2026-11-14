@@ -14,6 +14,10 @@ A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with
 
 The Clipboard tab also has **transform chips**: JSON pretty-print, Base64 encode and decode, URL encode and decode, UPPER, lower, Title, snake, camel and kebab. Each one transforms the **selected text** if there is any, otherwise the clipboard, and copies the result.
 
+## Volume and brightness
+
+GNOME's volume, brightness and microphone popups are replaced by a slim level bar that grows out of the notch, showing an icon, the level and a percentage. Over-amplified volume reads above 100%.
+
 ## Personality
 
 - **Face:** two eyes next to the clock that follow your cursor and blink every now and then. They go dizzy when the CPU is pegged, turn into hearts when something succeeds, and look surprised when you plug in a USB device.
@@ -36,7 +40,7 @@ You don't need to wrap anything. The daemon checks your processes about once a s
 It also traces each command back to the app that started it: GoLand, IntelliJ, VS Code, Cursor, a terminal, or Claude Code.
 
 - **Builds and tests** appear as a slim pill with a live timer. Hover over it to see the project and the app. Tasks launched from an IDE also show a "Finished" popup.
-- **Dev servers** (`go run`, `npm run dev`, `spring-boot:run`, `bootRun`, IDE run configurations) appear as a service along with their ports, for example `:8080`. Services rank below music.
+- **Dev servers** (`go run`, `npm run dev`, `spring-boot:run`, `bootRun`, IDE run configurations) appear as a service along with their ports, for example `:8080`. Clicking the service opens `localhost:8080` in your browser. Services rank below music.
 - **Clicking** jumps to the window that started the command.
 
 Linux won't let one process read another unrelated process's exit code. Commands the watcher detects on its own are therefore reported as *Finished*, not passed or failed. `island run` and the bash hook do know the exit code.
@@ -67,8 +71,8 @@ Cost and context usage come from Claude Code's documented status-line feed. Your
 |---|---|
 | Agents | Claude Code sessions with their state, cost, context usage and when they were last active. Click a session to focus its window. |
 | Home | A Now Playing card (art, live progress with time remaining, controls) and a Today card with a one-click focus timer and a container summary. |
-| Docker | Running containers grouped by compose project, with health, ports and image. Each one has restart and stop buttons. Refreshes live. |
-| Ports | Every listening TCP port and which process or container owns it. **Kill** frees the port (two clicks to confirm). You can also type a port number and press Enter to free it. Ports published by Docker stop their container. |
+| Docker | Running containers grouped by compose project, with health, **live CPU and memory**, and **clickable port chips** that open `localhost:PORT`. Each one has a **logs view** (last 50 lines, following live), restart and stop. |
+| Ports | Every listening TCP port and which process or container owns it. Click a port to open it in your browser. **Kill** frees the port (two clicks to confirm). You can also type a port number and press Enter to free it. Ports published by Docker stop their container. |
 | Notes | A scratchpad that saves automatically (`~/.local/share/go-island/notes.md`, mode 0600). Open it directly with `island open notes`. |
 | Clipboard | A history of everything you copy, saved across reboots. Click an entry to copy it again; you can also pin, delete or filter. Copies flagged by password managers are skipped. |
 | QR | Click the grid icon on any clipboard item, or next to the Web search box, to get a scannable QR code. |
@@ -84,11 +88,35 @@ MPRIS / UPower / notifications / docker / ss / CLI
 
 ## Install
 
+**Requirements:** Ubuntu or any other distro with GNOME Shell **46–49** (Ubuntu 24.04 through 25.10), on X11 or Wayland, on x86-64 or ARM64. Docker is optional.
+
+**From a release tarball (no Go needed):**
+
 ```sh
-make install                        # binaries + systemd user unit + extension
-# first time / after JS changes: restart GNOME Shell (X11: Alt+F2 → r; Wayland: log out/in)
-gnome-extensions enable go-island@local
+tar xzf go-island-<version>.tar.gz && cd go-island
+./install.sh
 ```
+
+**From source** (needs Go 1.22 or newer: `sudo apt install golang-go`):
+
+```sh
+./install.sh            # or: make install
+```
+
+The installer:
+1. puts `islandd` and `island` in `~/.local/bin`,
+2. enables the `islandd` systemd user service,
+3. installs and enables the extension.
+
+A brand-new extension loads only after GNOME Shell restarts. On **X11**, press Alt+F2, type `r` and press Enter. On **Wayland** (the Ubuntu default), log out and back in.
+
+`make dist` builds the release tarball, with static binaries for amd64 and arm64. `./uninstall.sh` removes everything. Your data in `~/.local/share/go-island` is kept unless you pass `--purge`.
+
+**Portability notes:**
+- Sizes follow your display scale, so 2× HiDPI and fractional scaling stay in proportion.
+- On GNOME 48 and later, the extension uses the newer layout API.
+- Volume and brightness popups fall back to GNOME's own popup over fullscreen apps and while the dashboard is open.
+- Only GNOME 46 has actually been run. 47–49 are declared supported and use the matching APIs, but haven't been tested yet.
 
 ## Features
 

@@ -57,6 +57,11 @@ const introXML = `
     <method name="DockerList">
       <arg name="containers" type="s" direction="out"/>
     </method>
+    <method name="DockerLogs">
+      <arg name="id" type="s" direction="in"/>
+      <arg name="lines" type="i" direction="in"/>
+      <arg name="text" type="s" direction="out"/>
+    </method>
     <method name="DockerAction">
       <arg name="id" type="s" direction="in"/>
       <arg name="op" type="s" direction="in"/>
@@ -192,6 +197,11 @@ func (a *api) DockerList() (string, *dbus.Error) {
 		list = []docker.Container{}
 	}
 	return toJSON(list)
+}
+
+func (a *api) DockerLogs(id string, lines int32) (string, *dbus.Error) {
+	out, err := docker.Logs(context.Background(), id, int(lines))
+	return out, dbusErr(err)
 }
 
 func (a *api) DockerAction(id, op string) *dbus.Error {

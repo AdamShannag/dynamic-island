@@ -16,6 +16,7 @@ import Pango from 'gi://Pango';
 import GnomeDesktop from 'gi://GnomeDesktop';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {Face} from './face.js';
@@ -31,6 +32,10 @@ const IFACE_XML = `
     <method name="DockerList"><arg name="containers" type="s" direction="out"/></method>
     <method name="DockerAction">
       <arg name="id" type="s" direction="in"/><arg name="op" type="s" direction="in"/>
+    </method>
+    <method name="DockerLogs">
+      <arg name="id" type="s" direction="in"/><arg name="lines" type="i" direction="in"/>
+      <arg name="text" type="s" direction="out"/>
     </method>
     <method name="PortsList"><arg name="listeners" type="s" direction="out"/></method>
     <method name="PortFree">
@@ -63,6 +68,13 @@ const IFACE_XML = `
 </node>`;
 const IslandProxy = Gio.DBusProxy.makeProxyWrapper(IFACE_XML);
 
+// GNOME 48 replaced St.BoxLayout's `vertical` with `orientation`.
+const SHELL_MAJOR = parseInt(Config.PACKAGE_VERSION, 10);
+const VERTICAL = SHELL_MAJOR >= 48 ? {orientation: Clutter.Orientation.VERTICAL} : {vertical: true};
+
+// Sizes below are logical px; multiply by the display scale (HiDPI).
+const scale = () => St.ThemeContext.get_for_stage(global.stage).scale_factor;
+
 // Motion. The shape moves on a spring; content is laid out at its final
 // size up front and revealed by the growing shape, so it can fade in almost
 // immediately instead of waiting for the morph to finish.
@@ -73,7 +85,7 @@ const FADE_IN_MS = 200;
 
 const DOCKER_REFRESH_MS = 3000;
 const IDLE = {kind: 'idle'};
-const MODES = ['idle', 'compact', 'notify', 'dashboard'];
+const MODES = ['idle', 'compact', 'notify', 'dashboard', 'osd'];
 const ACCENTS = ['ok', 'warn', 'error'];
 const TABS = [
     ['home', 'Home', 'user-home-symbolic'],
@@ -86,7 +98,8 @@ const TABS = [
 ];
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {home: 292, search: 360, agents: 400, notes: 420, qr: 430, default: 500};
+const DASH_HEIGHT = {home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
+const OSD_MS = 1600; // how long the volume/brightness bar stays up
 
 // Personality.
 const POINTER_MS = 33;           // ~30 fps pointer tracking (eyes, magnet, shake)
@@ -294,6 +307,8 @@ class Island extends St.BoxLayout {
         this._startPersonality();
         this.connect('destroy', () => {
             this._stopPersonality();
+            if (this._osdTimer)
+                GLib.source_remove(this._osdTimer);
             if (this._hoverId)
                 GLib.source_remove(this._hoverId);
             this._face.destroy();
@@ -318,22 +333,34 @@ class Island extends St.BoxLayout {
 
         this._art = new St.Bin({style_class: 'goisland-art', y_align: Clutter.ActorAlign.CENTER});
         this._icon = new St.Icon({style_class: 'goisland-icon', y_align: Clutter.ActorAlign.CENTER});
-        const text = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        const text = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        this._textBox = text;
         this._title = label('goisland-title');
         this._subtitle = label('goisland-subtitle');
         text.add_child(this._title);
         text.add_child(this._subtitle);
+        // Volume / brightness bar (takes over GNOME's OSD popup).
+        // Fixed layout: the fill sits at x=0 and only its width changes (a
+        // BinLayout would let the fill's width feed back into the track's).
+        this._osdTrack = new St.Widget({
+            style_class: 'goisland-osd-track', x_expand: true, y_align: Clutter.ActorAlign.CENTER, visible: false,
+        });
+        this._osdFill = new St.Widget({style_class: 'goisland-osd-fill', x: 0, y: 0});
+        this._osdTrack.add_child(this._osdFill);
+        this._osdTrack.connect('notify::allocation', () => this._syncOsdFill());
+        this._osd = null;
+        this._osdTimer = 0;
         this._pillEq = new Equalizer('pill');
         this._face = new Face(this._ext.spyIcon);
         this._trailing = label('goisland-trailing');
-        for (const a of [this._art, this._icon, text, this._pillEq.actor, this._face.actor, this._trailing])
+        for (const a of [this._art, this._icon, text, this._osdTrack, this._pillEq.actor, this._face.actor, this._trailing])
             this._content.add_child(a);
     }
 
     _buildDash() {
         this._dash = new St.BoxLayout({
             style_class: 'goisland-dash',
-            vertical: true,
+            ...VERTICAL,
             visible: false,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.START,
@@ -383,6 +410,7 @@ class Island extends St.BoxLayout {
             clipboard: this._buildClipboardPage(),
             notes: this._buildNotesPage(),
             qr: this._buildQRPage(),
+            logs: this._buildLogsPage(),
             search: this._buildSearchPage(),
         };
         for (const page of Object.values(this._pages)) {
@@ -398,7 +426,7 @@ class Island extends St.BoxLayout {
         const page = new St.BoxLayout({style_class: 'goisland-page goisland-home'});
 
         // Now Playing
-        const media = new St.BoxLayout({style_class: 'goisland-card goisland-media-card', vertical: true, x_expand: true});
+        const media = new St.BoxLayout({style_class: 'goisland-card goisland-media-card', ...VERTICAL, x_expand: true});
         const top = new St.BoxLayout({style_class: 'goisland-media-top'});
         this._mArtFrame = new St.Widget({style_class: 'goisland-media-art', layout_manager: new Clutter.BinLayout()});
         this._mArt = new St.Bin({style_class: 'goisland-media-art-img', x_expand: true, y_expand: true});
@@ -408,7 +436,7 @@ class Island extends St.BoxLayout {
         });
         this._mArtFrame.add_child(this._mArtIcon);
         this._mArtFrame.add_child(this._mArt);
-        const col = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
         this._mTitle = label('goisland-media-title');
         this._mSub = label('goisland-media-sub');
         col.add_child(this._mTitle);
@@ -423,11 +451,8 @@ class Island extends St.BoxLayout {
         this._progress = new St.BoxLayout({style_class: 'goisland-progress'});
         this._posLabel = label('goisland-time');
         this._remLabel = label('goisland-time goisland-time-right');
-        this._track = new St.Widget({
-            style_class: 'goisland-track', x_expand: true, y_align: Clutter.ActorAlign.CENTER,
-            layout_manager: new Clutter.BinLayout(),
-        });
-        this._fill = new St.Widget({style_class: 'goisland-fill', x_align: Clutter.ActorAlign.START, y_expand: true});
+        this._track = new St.Widget({style_class: 'goisland-track', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        this._fill = new St.Widget({style_class: 'goisland-fill', x: 0, y: 0});
         this._track.add_child(this._fill);
         for (const a of [this._posLabel, this._track, this._remLabel])
             this._progress.add_child(a);
@@ -445,7 +470,7 @@ class Island extends St.BoxLayout {
         page.add_child(media);
 
         // Today
-        const today = new St.BoxLayout({style_class: 'goisland-card goisland-today-card', vertical: true});
+        const today = new St.BoxLayout({style_class: 'goisland-card goisland-today-card', ...VERTICAL});
         this._todayDate = label('goisland-today-date');
         this._todayTitle = label('goisland-today-title');
         today.add_child(this._todayDate);
@@ -463,7 +488,7 @@ class Island extends St.BoxLayout {
     _actionRow(color, title, onClick) {
         const row = new St.BoxLayout({style_class: 'goisland-action'});
         row.add_child(new St.Widget({style_class: `goisland-action-bar ${color}`}));
-        const col = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
         const titleLbl = label('goisland-action-title', {text: title});
         const sub = label('goisland-action-sub');
         col.add_child(titleLbl);
@@ -490,9 +515,9 @@ class Island extends St.BoxLayout {
     // ----- Agents -----
 
     _buildAgentsPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
-        this._agentList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        this._agentList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
         this._agentMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
         card.add_child(this._agentMsg);
         card.add_child(scrollView(this._agentList));
@@ -517,14 +542,14 @@ class Island extends St.BoxLayout {
             const [stateName, color] = AGENT_STATES[a.state] ?? AGENT_STATES.ready;
             const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-agent-row'});
             box.add_child(new St.Widget({style_class: `goisland-dot ${color}`, y_align: Clutter.ActorAlign.CENTER}));
-            const col = new St.BoxLayout({vertical: true, x_expand: true});
+            const col = new St.BoxLayout({...VERTICAL, x_expand: true});
             const head = new St.BoxLayout({style_class: 'goisland-agent-head'});
             head.add_child(label('goisland-row-title', {text: `${a.agent} · ${a.project || 'session'}`}));
             head.add_child(label(`goisland-agent-state ${color}`, {text: stateName}));
             col.add_child(head);
             col.add_child(label('goisland-row-sub', {text: a.detail || a.title || ''}));
             box.add_child(col);
-            const meta = new St.BoxLayout({vertical: true, y_align: Clutter.ActorAlign.CENTER});
+            const meta = new St.BoxLayout({...VERTICAL, y_align: Clutter.ActorAlign.CENTER});
             const usage = [a.costUsd ? `$${a.costUsd.toFixed(2)}` : '', a.contextPct ? `${Math.round(a.contextPct)}% ctx` : '']
                 .filter(Boolean).join('  ·  ');
             meta.add_child(label('goisland-agent-usage', {text: usage || ' ', x_align: Clutter.ActorAlign.END}));
@@ -542,14 +567,70 @@ class Island extends St.BoxLayout {
     // ----- Docker -----
 
     _buildDockerPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
-        this._dockerList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        this._dockerList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
         this._dockerMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
         card.add_child(this._dockerMsg);
         card.add_child(scrollView(this._dockerList));
         page.add_child(card);
         return page;
+    }
+
+    _buildLogsPage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const bar = new St.BoxLayout({style_class: 'goisland-toolbar'});
+        const back = new St.Button({style_class: 'goisland-pill-btn', label: 'Back', can_focus: true});
+        back.connect('clicked', () => this._showTab('docker'));
+        this._logsTitle = label('goisland-logs-title', {x_expand: true});
+        this._logsHint = label('goisland-hint', {text: 'Last 50 lines · live'});
+        bar.add_child(back);
+        bar.add_child(this._logsTitle);
+        bar.add_child(this._logsHint);
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-logs-card', ...VERTICAL, x_expand: true, y_expand: true});
+        this._logsText = new St.Label({style_class: 'goisland-logs'});
+        const ct = this._logsText.clutter_text;
+        ct.line_wrap = true;
+        ct.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        ct.selectable = true;
+        ct.reactive = true;
+        this._logsText.reactive = true;
+        const box = new St.BoxLayout({...VERTICAL, x_expand: true});
+        box.add_child(this._logsText);
+        this._logsScroll = scrollView(box);
+        card.add_child(this._logsScroll);
+        page.add_child(bar);
+        page.add_child(card);
+        return page;
+    }
+
+    _showLogs(c) {
+        this._logsFor = c;
+        this._logsTitle.text = c.name;
+        this._logsText.text = 'Loading…';
+        this._showTab('logs');
+    }
+
+    _loadLogs(scrollToEnd) {
+        const c = this._logsFor;
+        if (!c)
+            return;
+        this._ext.call('DockerLogs', [c.id, 50], (res, err) => {
+            if (!this._dashOpen || this._tab !== 'logs' || this._logsFor !== c)
+                return;
+            const adj = this._logsScroll.vadjustment;
+            const atEnd = scrollToEnd || adj.value + adj.page_size >= adj.upper - 4;
+            const text = err ? err.message.replace(/^.*?Error\.Failed: /, '') : res[0].trimEnd() || '(no output yet)';
+            if (text === this._logsText.text)
+                return;
+            this._logsText.text = text;
+            if (atEnd) { // follow the tail unless you've scrolled up to read
+                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    adj.value = adj.upper - adj.page_size;
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+        });
     }
 
     _loadDocker() {
@@ -580,11 +661,27 @@ class Island extends St.BoxLayout {
             row.add_child(new St.Widget({
                 style_class: `goisland-dot ${healthy ? 'ok' : 'bad'}`, y_align: Clutter.ActorAlign.CENTER,
             }));
-            const col = new St.BoxLayout({vertical: true, x_expand: true});
+            const col = new St.BoxLayout({...VERTICAL, x_expand: true});
             col.add_child(label('goisland-row-title', {text: c.name}));
-            const meta = [c.status, c.ports && `:${c.ports}`, c.image].filter(Boolean).join('  ·  ');
-            col.add_child(label('goisland-row-sub', {text: meta}));
+            col.add_child(label('goisland-row-sub', {text: [c.status, c.image].filter(Boolean).join('  ·  ')}));
             row.add_child(col);
+            const chips = new St.BoxLayout({style_class: 'goisland-port-chips', y_align: Clutter.ActorAlign.CENTER});
+            for (const p of (c.ports || '').split(', ').filter(Boolean).slice(0, 3))
+                chips.add_child(this._portButton(p, 'goisland-port-chip'));
+            row.add_child(chips);
+            const st = c.stats;
+            const usage = new St.BoxLayout({...VERTICAL, style_class: 'goisland-usage', y_align: Clutter.ActorAlign.CENTER});
+            const cpu = label(`goisland-usage-cpu${st && st.cpu >= 80 ? ' hot' : ''}`, {
+                text: st ? `${st.cpu.toFixed(st.cpu < 10 ? 1 : 0)}% CPU` : '–', x_align: Clutter.ActorAlign.END,
+            });
+            const mem = label(`goisland-usage-mem${st && st.memPct >= 80 ? ' hot' : ''}`, {
+                text: st ? st.mem.replace(/iB$/, 'B') : ' ', x_align: Clutter.ActorAlign.END,
+            });
+            usage.add_child(cpu);
+            usage.add_child(mem);
+            row.add_child(usage);
+            row.add_child(iconButton('format-justify-left-symbolic', 'goisland-row-btn',
+                () => this._showLogs(c), `Logs of ${c.name}`));
             for (const [op, icon] of [['restart', 'view-refresh-symbolic'], ['stop', 'media-playback-stop-symbolic']]) {
                 row.add_child(iconButton(icon, 'goisland-row-btn', () => {
                     row.opacity = 128;
@@ -598,7 +695,7 @@ class Island extends St.BoxLayout {
     // ----- Ports -----
 
     _buildPortsPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
         this._portEntry = new St.Entry({
             style_class: 'goisland-entry',
             hint_text: 'Filter, or type a port and press Enter to free it',
@@ -614,8 +711,8 @@ class Island extends St.BoxLayout {
                 this._freePort(port);
             }
         });
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
-        this._portList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        this._portList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
         this._portMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
         card.add_child(this._portMsg);
         card.add_child(scrollView(this._portList));
@@ -644,8 +741,8 @@ class Island extends St.BoxLayout {
         for (const l of items) {
             const mine = !!(l.container || l.pid);
             const row = new St.BoxLayout({style_class: `goisland-row${mine ? '' : ' muted'}`});
-            row.add_child(label('goisland-port', {text: `:${l.port}`}));
-            const col = new St.BoxLayout({vertical: true, x_expand: true});
+            row.add_child(this._portButton(l.port, 'goisland-port'));
+            const col = new St.BoxLayout({...VERTICAL, x_expand: true});
             const owner = l.container ? `${l.container}  ·  container` : l.process ? `${l.process}  ·  pid ${l.pid}` : 'System service';
             col.add_child(label('goisland-row-title', {text: owner}));
             col.add_child(label('goisland-row-sub', {text: [l.addr, l.cmd].filter(Boolean).join('  ·  ')}));
@@ -679,6 +776,19 @@ class Island extends St.BoxLayout {
         }
     }
 
+    // A port number that opens http://localhost:PORT when clicked.
+    _portButton(port, styleClass) {
+        const btn = new St.Button({
+            style_class: `goisland-port-btn ${styleClass}`, label: `:${port}`, can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER, accessible_name: `Open localhost:${port}`,
+        });
+        btn.connect('clicked', () => {
+            openUri(`http://localhost:${port}`);
+            this._closeDash();
+        });
+        return btn;
+    }
+
     _freePort(port) {
         this._ext.call('PortFree', [port], () => {
             GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
@@ -692,7 +802,7 @@ class Island extends St.BoxLayout {
     // ----- Clipboard -----
 
     _buildClipboardPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
         const top = new St.BoxLayout({style_class: 'goisland-toolbar'});
         this._clipFilter = new St.Entry({
             style_class: 'goisland-entry', hint_text: 'Filter clipboard', can_focus: true, x_expand: true,
@@ -717,8 +827,8 @@ class Island extends St.BoxLayout {
             chip.connect('clicked', () => this._transform(chip, name, fn));
             chips.add_child(chip);
         }
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
-        this._clipList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        this._clipList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
         this._clipMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
         card.add_child(this._clipMsg);
         card.add_child(scrollView(this._clipList));
@@ -771,8 +881,8 @@ class Island extends St.BoxLayout {
     // ----- Notes -----
 
     _buildNotesPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-notes-card', vertical: true, x_expand: true, y_expand: true});
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-notes-card', ...VERTICAL, x_expand: true, y_expand: true});
         this._notes = new St.Entry({
             style_class: 'goisland-notes', hint_text: 'Jot something down. It saves automatically.',
             can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.START,
@@ -798,7 +908,7 @@ class Island extends St.BoxLayout {
                 return GLib.SOURCE_REMOVE;
             });
         });
-        const box = new St.BoxLayout({vertical: true, x_expand: true});
+        const box = new St.BoxLayout({...VERTICAL, x_expand: true});
         box.add_child(this._notes);
         card.add_child(scrollView(box));
         this._notesStatus = label('goisland-hint goisland-notes-status', {text: '', x_align: Clutter.ActorAlign.END});
@@ -824,10 +934,10 @@ class Island extends St.BoxLayout {
     // ----- QR -----
 
     _buildQRPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page goisland-qr-page', vertical: true});
+        const page = new St.BoxLayout({style_class: 'goisland-page goisland-qr-page', ...VERTICAL});
         const card = new St.BoxLayout({style_class: 'goisland-card goisland-qr-card', x_expand: true, y_expand: true});
         this._qrImg = new St.Bin({style_class: 'goisland-qr-img', y_align: Clutter.ActorAlign.CENTER});
-        const col = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'goisland-qr-info'});
+        const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'goisland-qr-info'});
         col.add_child(label('goisland-group', {text: 'SCAN WITH YOUR PHONE'}));
         this._qrText = new St.Label({style_class: 'goisland-qr-text'});
         this._qrText.clutter_text.line_wrap = true;
@@ -906,7 +1016,7 @@ class Island extends St.BoxLayout {
     // ----- Web: search + saved sites -----
 
     _buildSearchPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page goisland-web', vertical: true});
+        const page = new St.BoxLayout({style_class: 'goisland-page goisland-web', ...VERTICAL});
         this._searchEntry = new St.Entry({
             style_class: 'goisland-entry goisland-search-entry',
             hint_text: 'Search Google or enter an address',
@@ -956,7 +1066,7 @@ class Island extends St.BoxLayout {
         this._calcValue = null;
         page.add_child(this._calcRow);
 
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-sites-card', vertical: true, x_expand: true, y_expand: true});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-sites-card', ...VERTICAL, x_expand: true, y_expand: true});
         const head = new St.BoxLayout({style_class: 'goisland-section-head'});
         head.add_child(label('goisland-group', {text: 'SAVED SITES', x_expand: true}));
         head.add_child(label('goisland-hint', {text: 'Right-click to remove'}));
@@ -994,7 +1104,7 @@ class Island extends St.BoxLayout {
             this._addRow.add_child(a);
         card.add_child(this._addRow);
 
-        this._siteGrid = new St.BoxLayout({vertical: true, style_class: 'goisland-site-grid'});
+        this._siteGrid = new St.BoxLayout({...VERTICAL, style_class: 'goisland-site-grid'});
         card.add_child(scrollView(this._siteGrid));
         page.add_child(card);
         this._sites = [];
@@ -1030,7 +1140,7 @@ class Island extends St.BoxLayout {
     }
 
     _tile(iconActor, name, styleClass = '') {
-        const box = new St.BoxLayout({vertical: true, style_class: 'goisland-site-box'});
+        const box = new St.BoxLayout({...VERTICAL, style_class: 'goisland-site-box'});
         const frame = new St.Widget({
             style_class: `goisland-site-icon ${styleClass}`,
             layout_manager: new Clutter.BinLayout(),
@@ -1104,10 +1214,39 @@ class Island extends St.BoxLayout {
         this._render(prev);
     }
 
+    // Called instead of GNOME's OSD popup (volume, brightness, mic…).
+    showOsd(gicon, label, level, maxLevel) {
+        const hadOsd = !!this._osd;
+        this._osd = {gicon, label, level, maxLevel};
+        if (this._osdTimer)
+            GLib.source_remove(this._osdTimer);
+        this._osdTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, OSD_MS, () => {
+            this._osdTimer = 0;
+            this._osd = null;
+            this._render(this._state);
+            return GLib.SOURCE_REMOVE;
+        });
+        if (hadOsd && this._mode === 'osd')
+            this._apply(); // just move the bar
+        else
+            this._render(this._state);
+    }
+
+    _syncOsdFill() {
+        const o = this._osd;
+        if (!o || o.level === null || o.level === undefined)
+            return;
+        const w = this._osdTrack.width;
+        if (w > 0)
+            this._osdFill.set_size(Math.round(w * Math.max(0, Math.min(1, o.level))), this._osdTrack.height);
+    }
+
     _targetMode() {
         const s = this._state;
         if (this._dashOpen)
             return 'dashboard';
+        if (this._osd)
+            return 'osd';
         if (s.kind === 'idle')
             return 'idle';
         if (s.kind === 'media')
@@ -1211,6 +1350,18 @@ class Island extends St.BoxLayout {
                 this._icon.icon_name = s.icon || 'dialog-information-symbolic';
             this._icon.show();
         }
+        const o = mode === 'osd' ? this._osd : null;
+        const hasLevel = o && o.level !== null && o.level !== undefined;
+        this._osdTrack.visible = !!hasLevel;
+        this._textBox.visible = !hasLevel; // the bar takes the full width
+        if (o) {
+            this._art.hide();
+            this._icon.gicon = o.gicon;
+            this._icon.show();
+            this._title.text = o.label ?? '';
+            this._title.visible = !hasLevel && !!o.label;
+            this._syncOsdFill();
+        }
         this._pillEq.actor.visible = s.kind === 'media' && mode === 'compact';
         this._pillEq.running = this._pillEq.actor.visible && !!s.playing;
 
@@ -1250,7 +1401,10 @@ class Island extends St.BoxLayout {
         const s = this._state;
         const now = Date.now();
         let trailing = '';
-        if (this._mode === 'idle')
+        if (this._mode === 'osd') {
+            const o = this._osd;
+            trailing = o?.level !== null && o?.level !== undefined ? `${Math.round(o.level * 100)}%` : '';
+        } else if (this._mode === 'idle')
             trailing = this._wallClock.clock;
         else if (s.endsAt)
             trailing = fmtClock((s.endsAt - now) / 1000);
@@ -1279,7 +1433,7 @@ class Island extends St.BoxLayout {
             this._remLabel.text = `-${fmtClock(t.length - pos)}`;
             const w = this._track.width;
             if (w > 0)
-                this._fill.width = Math.round(w * (t.length ? pos / t.length : 0));
+                this._fill.set_size(Math.round(w * (t.length ? pos / t.length : 0)), this._track.height);
         }
     }
 
@@ -1330,6 +1484,11 @@ class Island extends St.BoxLayout {
         // already focused); approvals and results jump to the terminal.
         if (s.kind === 'agent' && !s.accent) {
             this.openDash('agents');
+            return Clutter.EVENT_STOP;
+        }
+        // A dev server with a port opens in the browser.
+        if (s.url) {
+            openUri(s.url);
             return Clutter.EVENT_STOP;
         }
         // Context-aware items (builds, services, agent popups) jump to their window.
@@ -1415,11 +1574,19 @@ class Island extends St.BoxLayout {
             btn.checked = tid === id;
         for (const [pid, page] of Object.entries(this._pages))
             page.visible = pid === id;
-        this._tabName.text = TABS.find(([tid]) => tid === id)?.[1] ?? (id === 'qr' ? 'QR code' : '');
+        this._tabName.text = TABS.find(([tid]) => tid === id)?.[1] ?? {qr: 'QR code', logs: 'Logs'}[id] ?? '';
+        if (id === 'logs')
+            this._tabButtons.docker.checked = true;
 
         this._stopDocker();
         let focus = this;
-        if (id === 'agents') {
+        if (id === 'logs') {
+            this._loadLogs(true);
+            this._dockerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+                this._loadLogs(false);
+                return GLib.SOURCE_CONTINUE;
+            });
+        } else if (id === 'agents') {
             this._loadAgents();
             this._dockerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, AGENT_REFRESH_MS, () => {
                 this._loadAgents();
@@ -1626,18 +1793,21 @@ class Island extends St.BoxLayout {
 
     _size() {
         const barH = Main.panel.height;
+        const k = scale(); // panel height and measured widths are already device px
         switch (this._mode) {
         case 'idle': {
             this._content.set_size(-1, -1); // measure natural width
             const [, natural] = this._content.get_preferred_width(barH);
-            return [Math.max(150, Math.ceil(natural) + 44), barH];
+            return [Math.max(150 * k, Math.ceil(natural) + 44 * k), barH];
         }
         case 'notify':
-            return [420, 72];
+            return [420 * k, 72 * k];
         case 'dashboard':
-            return [DASH_WIDTH, DASH_HEIGHT[this._tab] ?? DASH_HEIGHT.default];
+            return [DASH_WIDTH * k, (DASH_HEIGHT[this._tab] ?? DASH_HEIGHT.default) * k];
+        case 'osd':
+            return [300 * k, barH];
         default:
-            return [320, barH];
+            return [320 * k, barH];
         }
     }
 
@@ -1724,6 +1894,25 @@ export default class GoIslandExtension extends Extension {
 
         this._island.setState(IDLE);
         Main.layoutManager.connectObject('monitors-changed', () => this._island.relayout(false), this);
+        St.ThemeContext.get_for_stage(global.stage).connectObject('notify::scale-factor',
+            () => this._island.relayout(false), this);
+
+        // Volume / brightness / mic popups morph out of the island instead.
+        // Falls back to GNOME's own popup over fullscreen apps (the island
+        // hides there) and while the dashboard is open.
+        const osd = Main.osdWindowManager;
+        this._origOsdShow = osd.show;
+        const ext = this;
+        osd.show = function (monitorIndex, icon, label, level, maxLevel) {
+            const island = ext._island;
+            const primary = Main.layoutManager.primaryMonitor;
+            if (island && !island._dashOpen && primary && !primary.inFullscreen &&
+                (monitorIndex === -1 || monitorIndex === Main.layoutManager.primaryIndex)) {
+                island.showOsd(icon, label, level, maxLevel);
+                return;
+            }
+            ext._origOsdShow.call(this, monitorIndex, icon, label, level, maxLevel);
+        };
         Main.panel.connectObject('notify::height', () => this._island.relayout(false), this);
 
         // Screen sharing turns on presentation mode automatically (and off
@@ -1752,6 +1941,11 @@ export default class GoIslandExtension extends Extension {
     }
 
     disable() {
+        if (this._origOsdShow) {
+            Main.osdWindowManager.show = this._origOsdShow;
+            this._origOsdShow = null;
+        }
+        St.ThemeContext.get_for_stage(global.stage).disconnectObject(this);
         this.setPresenting(false, false); // restores notification banners
         global.backend.get_remote_access_controller?.()?.disconnectObject(this);
         for (const h of this._shares ?? [])
@@ -1855,7 +2049,13 @@ export default class GoIslandExtension extends Extension {
             cb?.(null, new Error('daemon not running'));
             return;
         }
-        this._proxy[`${method}Remote`](...args, (result, err) => {
+        const fn = this._proxy[`${method}Remote`];
+        if (typeof fn !== 'function') {
+            console.error(`go-island: unknown method ${method}`);
+            cb?.(null, new Error(`unknown method ${method}`));
+            return;
+        }
+        fn.call(this._proxy, ...args, (result, err) => {
             if (err)
                 console.error(`go-island: ${method}: ${err.message}`);
             cb?.(result, err);

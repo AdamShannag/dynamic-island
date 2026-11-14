@@ -3,7 +3,10 @@ BIN_DIR   := $(HOME)/.local/bin
 EXT_DIR   := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 UNIT_DIR  := $(HOME)/.config/systemd/user
 
-.PHONY: build install install-daemon install-extension uninstall run logs
+VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GOFLAGS_REL := -trimpath -ldflags "-s -w"
+
+.PHONY: build install install-daemon install-extension uninstall run logs dist
 
 build:
 	go build -o bin/ ./cmd/...
@@ -36,3 +39,13 @@ run: build
 
 logs:
 	journalctl --user -fu islandd & journalctl -f -o cat /usr/bin/gnome-shell | grep --line-buffered -i go-island
+
+# Release tarball with static binaries for amd64 + arm64; unpack and run ./install.sh.
+dist:
+	rm -rf dist && mkdir -p dist/go-island
+	for arch in amd64 arm64; do \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build $(GOFLAGS_REL) -o dist/go-island/bin/linux-$$arch/ ./cmd/... || exit 1; \
+	done
+	cp -r extension systemd contrib install.sh uninstall.sh README.md config.example.json dist/go-island/
+	tar -C dist -czf dist/go-island-$(VERSION).tar.gz go-island
+	@echo "dist/go-island-$(VERSION).tar.gz"

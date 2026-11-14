@@ -31,6 +31,7 @@ type View struct {
 	Timing    *Timing  `json:"timing,omitempty"`
 	Focus     []int    `json:"focus,omitempty"`   // pids; clicking focuses the first with a window
 	Swatch    string   `json:"swatch,omitempty"`  // a colour to show in place of the icon
+	URL       string   `json:"url,omitempty"`     // clicking opens this in the browser
 	Actions   []string `json:"actions,omitempty"` // action names the UI may offer
 }
 

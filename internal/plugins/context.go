@@ -152,6 +152,7 @@ func (c *Context) activity(id string, t *tracked) island.Activity {
 				ps[i] = ":" + strconv.Itoa(p)
 			}
 			v.Trailing = strings.Join(ps, " ")
+			v.URL = "http://localhost:" + strconv.Itoa(t.ports[0])
 		}
 		prio = island.PriorityService
 	} else {

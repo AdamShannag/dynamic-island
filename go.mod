@@ -1,10 +1,10 @@
 module go-island
 
-go 1.25.0
-
-require github.com/godbus/dbus/v5 v5.2.4
+go 1.22
 
 require (
-	golang.org/x/sys v0.27.0 // indirect
-	rsc.io/qr v0.2.0 // indirect
+	github.com/godbus/dbus/v5 v5.2.4
+	rsc.io/qr v0.2.0
 )
+
+require golang.org/x/sys v0.27.0 // indirect
