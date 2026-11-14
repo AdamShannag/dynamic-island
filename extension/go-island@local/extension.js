@@ -46,13 +46,14 @@ const IFACE_XML = `
     </method>
     <method name="ClipboardClear"/>
     <signal name="StateChanged"><arg name="state" type="s"/></signal>
+    <signal name="OpenDashboard"><arg name="tab" type="s"/></signal>
   </interface>
 </node>`;
 const IslandProxy = Gio.DBusProxy.makeProxyWrapper(IFACE_XML);
 
-const MORPH_MS = 450;
-const FADE_OUT_MS = 90;
-const FADE_IN_MS = 220;
+const MORPH_MS = 560;
+const FADE_OUT_MS = 110;
+const FADE_IN_MS = 200;
 const DOCKER_REFRESH_MS = 3000;
 const IDLE = {kind: 'idle'};
 const MODES = ['idle', 'compact', 'notify', 'dashboard'];
@@ -75,6 +76,15 @@ function fmtClock(secs) {
     const mm = String(m).padStart(h ? 2 : 1, '0'), ss = String(s).padStart(2, '0');
     return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
+
+// Damped spring (ζ≈0.8): fast start, ~2% overshoot, soft settle. t in [0,1].
+function spring(t) {
+    if (t >= 1)
+        return 1;
+    const z = 0.8, w = 11, wd = w * Math.sqrt(1 - z * z);
+    return 1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t));
+}
+const PIXEL_PROPS = new Set(['x', 'y', 'width', 'height']);
 
 function label(styleClass, props = {}) {
     const l = new St.Label({style_class: styleClass, y_align: Clutter.ActorAlign.CENTER, ...props});
@@ -125,10 +135,19 @@ class Island extends St.BoxLayout {
             style_class: 'goisland idle',
             reactive: true,
             track_hover: true,
-            clip_to_allocation: true,
             opacity: 0,
         });
         this._ext = ext;
+        // The pill itself is never clipped (so its rounded background stays
+        // clean); content is clipped by this inner layer instead.
+        this._clip = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            clip_to_allocation: true,
+            x_expand: true,
+            y_expand: true,
+        });
+        this.add_child(this._clip);
+        this._morphGen = 0;
         this._state = IDLE;
         this._media = null; // last media view; survives notifications covering it
         this._mode = 'idle';
@@ -151,6 +170,9 @@ class Island extends St.BoxLayout {
         this.connect('button-release-event', (_a, event) => this._onClick(event));
         this.connect('captured-event', (_a, event) => this._onCapturedEvent(event));
         this.connect('destroy', () => {
+            for (const tl of Object.values(this._springs ?? {}))
+                tl.stop();
+            this._springs = {};
             this._closeDash(false);
             this._stopTicker();
             this._wallClock = null;
@@ -161,7 +183,7 @@ class Island extends St.BoxLayout {
 
     _buildPill() {
         this._content = new St.BoxLayout({style_class: 'goisland-content', x_expand: true, y_expand: true});
-        this.add_child(this._content);
+        this._clip.add_child(this._content);
 
         this._art = new St.Bin({style_class: 'goisland-art', y_align: Clutter.ActorAlign.CENTER});
         this._icon = new St.Icon({style_class: 'goisland-icon', y_align: Clutter.ActorAlign.CENTER});
@@ -214,7 +236,7 @@ class Island extends St.BoxLayout {
         this._dash = new St.BoxLayout({
             style_class: 'goisland-dash', vertical: true, x_expand: true, y_expand: true, visible: false,
         });
-        this.add_child(this._dash);
+        this._clip.add_child(this._dash);
 
         const tabs = new St.BoxLayout({style_class: 'goisland-tabs'});
         this._tabButtons = {};
@@ -222,7 +244,8 @@ class Island extends St.BoxLayout {
             const box = new St.BoxLayout({style_class: 'goisland-tab-box'});
             box.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon'}));
             box.add_child(new St.Label({text, y_align: Clutter.ActorAlign.CENTER}));
-            const btn = new St.Button({style_class: 'goisland-tab', can_focus: true, child: box});
+            box.x_align = Clutter.ActorAlign.CENTER;
+            const btn = new St.Button({style_class: 'goisland-tab', can_focus: true, child: box, x_expand: true});
             btn.connect('clicked', () => this._showTab(id));
             tabs.add_child(btn);
             this._tabButtons[id] = btn;
@@ -524,25 +547,35 @@ class Island extends St.BoxLayout {
             this.relayout(true);
             return;
         }
-        this._content.remove_all_transitions();
-        this._dash.remove_all_transitions();
-        const target = this._mode === 'dashboard' ? this._dash : this._content;
-        target.ease({
+        // Structural change: fade the old content out, morph an empty
+        // shape (cheap: no relayout of text/lists per frame), then fade the
+        // new content in once the shape has settled.
+        const gen = ++this._morphGen;
+        const out = this._mode === 'dashboard' ? this._dash : this._content;
+        out.remove_all_transitions();
+        out.ease({
             opacity: 0,
             duration: FADE_OUT_MS,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onComplete: () => {
-                if (!this._wallClock)
-                    return; // destroyed
+                if (!this._wallClock || gen !== this._morphGen)
+                    return; // destroyed or superseded
                 this._apply();
-                this.relayout(true);
-                const shown = this._mode === 'dashboard' ? this._dash : this._content;
-                shown.opacity = 0;
-                shown.ease({
-                    opacity: 255,
-                    delay: 100,
-                    duration: FADE_IN_MS,
-                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                const inn = this._mode === 'dashboard' ? this._dash : this._content;
+                inn.remove_all_transitions();
+                inn.opacity = 0;
+                inn.hide();
+                this.relayout(true, () => {
+                    if (gen !== this._morphGen)
+                        return;
+                    inn.show();
+                    inn.ease({
+                        opacity: 255,
+                        duration: FADE_IN_MS,
+                        mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+                    });
+                    this._afterMorph?.();
+                    this._afterMorph = null;
                 });
             },
         });
@@ -714,8 +747,31 @@ class Island extends St.BoxLayout {
             return;
         }
         this._dashOpen = true;
+        this._afterMorph = () => this._focusTab();
         this._render(this._state);
         this._showTab(tab);
+    }
+
+    _focusTab() {
+        if (!this._dashOpen)
+            return;
+        const target = {
+            ports: this._portEntry, clipboard: this._clipFilter, search: this._searchEntry,
+        }[this._tab] ?? this; // the island itself, so Esc works without a focus ring
+        target.grab_key_focus();
+    }
+
+    // From `island open [tab]` (bind it to a keyboard shortcut).
+    toggleDash(tab) {
+        const valid = TABS.some(([id]) => id === tab);
+        if (this._dashOpen) {
+            if (valid && tab !== this._tab)
+                this._showTab(tab);
+            else
+                this._closeDash();
+            return;
+        }
+        this.openDash(valid ? tab : this._media ? 'media' : this._tab);
     }
 
     _closeDash(render = true) {
@@ -758,7 +814,7 @@ class Island extends St.BoxLayout {
             this._loadSites();
             this._searchEntry.grab_key_focus();
         } else {
-            this._tabButtons[id].grab_key_focus();
+            this.grab_key_focus();
         }
         this._tick();
         this._syncTicker();
@@ -840,10 +896,11 @@ class Island extends St.BoxLayout {
             : this._ports;
         this._message(this._portMsg, error ?? (items.length ? '' : q ? 'No matches (Enter kills that port)' : 'Nothing listening'));
         for (const l of items) {
-            const row = new St.BoxLayout({style_class: 'goisland-row'});
+            const mine = !!(l.container || l.pid);
+            const row = new St.BoxLayout({style_class: `goisland-row${mine ? '' : ' muted'}`});
             row.add_child(label('goisland-port', {text: `:${l.port}`}));
             const col = new St.BoxLayout({vertical: true, x_expand: true});
-            const owner = l.container ? `🐳 ${l.container}` : l.process ? `${l.process} · pid ${l.pid}` : 'other user (needs sudo)';
+            const owner = l.container ? `${l.container}  ·  container` : l.process ? `${l.process}  ·  pid ${l.pid}` : 'System service';
             col.add_child(label('goisland-row-title', {text: owner}));
             col.add_child(label('goisland-row-sub', {text: [l.addr, l.cmd].filter(Boolean).join('  ·  ')}));
             row.add_child(col);
@@ -953,7 +1010,34 @@ class Island extends St.BoxLayout {
         }
     }
 
-    relayout(animate) {
+    // Animate numeric properties along the spring curve on the actor's frame
+    // clock. (Clutter's set_progress_func is unusable from GJS: it freezes
+    // the transition.) Geometry is rounded so text never renders blurry.
+    _springTo(target, duration, onDone = null, key = 'geom') {
+        this._springs ??= {};
+        this._springs[key]?.stop();
+        const from = {};
+        for (const k of Object.keys(target))
+            from[k] = this[k];
+        const set = p => {
+            for (const [k, to] of Object.entries(target)) {
+                const v = from[k] + (to - from[k]) * p;
+                this[k] = PIXEL_PROPS.has(k) ? Math.round(v) : v;
+            }
+        };
+        const tl = new Clutter.Timeline({actor: this, duration});
+        tl.connect('new-frame', () => set(spring(tl.get_elapsed_time() / duration)));
+        tl.connect('completed', () => {
+            set(1);
+            if (this._springs[key] === tl)
+                delete this._springs[key];
+            onDone?.();
+        });
+        this._springs[key] = tl;
+        tl.start();
+    }
+
+    relayout(animate, onDone = null) {
         const mon = Main.layoutManager.primaryMonitor;
         if (!mon)
             return;
@@ -965,23 +1049,26 @@ class Island extends St.BoxLayout {
             width,
             height,
         };
-        if (!animate) {
-            for (const p of ['x', 'y', 'width', 'height'])
-                this.remove_transition(p);
-            this.set(t);
+        const unchanged = this.x === t.x && this.y === t.y && this.width === t.width && this.height === t.height;
+        if (!animate || unchanged) {
+            if (!animate) {
+                this._springs?.geom?.stop();
+                delete this._springs?.geom;
+            }
+            if (!this._springs?.geom)
+                this.set(t);
+            onDone?.();
             return;
         }
-        this.ease({...t, duration: MORPH_MS, mode: Clutter.AnimationMode.EASE_OUT_BACK});
+        this._springTo(t, MORPH_MS, onDone);
     }
 
     _show() {
         this._shown = true;
         this.relayout(false);
-        this.set({opacity: 0, scale_x: 0.6, scale_y: 0.6});
-        this.ease({
-            opacity: 255, scale_x: 1, scale_y: 1,
-            duration: MORPH_MS, mode: Clutter.AnimationMode.EASE_OUT_BACK,
-        });
+        this.set({opacity: 0, scale_x: 0.7, scale_y: 0.7});
+        this.ease({opacity: 255, duration: 250, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        this._springTo({scale_x: 1, scale_y: 1}, MORPH_MS, null, 'scale');
     }
 });
 
@@ -1052,6 +1139,8 @@ export default class GoIslandExtension extends Extension {
             this._proxy = proxy;
             this._signalId = proxy.connectSignal('StateChanged',
                 (_p, _sender, [json]) => this._applyState(json));
+            this._openId = proxy.connectSignal('OpenDashboard',
+                (_p, _sender, [tab]) => this._island?.toggleDash(tab));
             this.call('GetState', [], (result, err) => {
                 if (!err && !cancellable.is_cancelled())
                     this._applyState(result[0]);
@@ -1064,6 +1153,9 @@ export default class GoIslandExtension extends Extension {
         this._cancellable = null;
         if (this._proxy && this._signalId)
             this._proxy.disconnectSignal(this._signalId);
+        if (this._proxy && this._openId)
+            this._proxy.disconnectSignal(this._openId);
+        this._openId = 0;
         this._proxy = null;
         this._signalId = 0;
         this._island?.setState(IDLE);

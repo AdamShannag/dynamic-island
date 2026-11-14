@@ -90,6 +90,12 @@ const introXML = `
       <arg name="pinned" type="b" direction="in"/>
     </method>
     <method name="ClipboardClear"/>
+    <method name="Open">
+      <arg name="tab" type="s" direction="in"/>
+    </method>
+    <signal name="OpenDashboard">
+      <arg name="tab" type="s"/>
+    </signal>
     <signal name="StateChanged">
       <arg name="state" type="s"/>
     </signal>
@@ -108,8 +114,14 @@ type api struct {
 	mu    sync.Mutex
 	tasks map[uint32]task
 
+	conn  *dbus.Conn
 	clip  *clipboard.Store
 	sites *sites.Store
+}
+
+// Open asks the UI to toggle the dashboard (optionally on a given tab).
+func (a *api) Open(tab string) *dbus.Error {
+	return dbusErr(a.conn.Emit(Path, Iface+".OpenDashboard", tab))
 }
 
 func (a *api) SitesList() (string, *dbus.Error) { return toJSON(a.sites.List()) }
@@ -260,7 +272,7 @@ func (a *api) TaskEnd(id uint32, exitCode int32) *dbus.Error {
 
 // Serve claims the bus name, exports the API and wires StateChanged signals.
 func Serve(conn *dbus.Conn, m *island.Manager, clip *clipboard.Store, st *sites.Store) error {
-	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st}
+	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn}
 	m.HandleAction("notify.dismiss", func() { m.ClearPrefix("notify.") })
 
 	if err := conn.Export(a, Path, Iface); err != nil {

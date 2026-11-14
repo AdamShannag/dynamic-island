@@ -83,7 +83,7 @@ func (s *Store) Add(raw, name string) (Site, error) {
 		return Site{}, fmt.Errorf("not a valid web address: %q", raw)
 	}
 	if name = strings.TrimSpace(name); name == "" {
-		name = strings.TrimPrefix(u.Hostname(), "www.")
+		name = defaultName(u.Hostname())
 	}
 	s.mu.Lock()
 	site := Site{ID: s.next, Name: name, URL: u.String()}
@@ -176,4 +176,18 @@ func (s *Store) save() error {
 		return err
 	}
 	return os.Rename(tmp, s.path)
+}
+
+// defaultName turns "news.ycombinator.com" into "Ycombinator" and
+// "localhost" into "Localhost": short enough for a tile label.
+func defaultName(host string) string {
+	labels := strings.Split(strings.TrimPrefix(host, "www."), ".")
+	n := labels[0]
+	if len(labels) >= 2 {
+		n = labels[len(labels)-2]
+	}
+	if n == "" {
+		return host
+	}
+	return strings.ToUpper(n[:1]) + n[1:]
 }

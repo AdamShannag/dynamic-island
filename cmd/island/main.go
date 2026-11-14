@@ -21,6 +21,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   island notify [-t ms] [-i icon] [-a ok|warn|error] TITLE [BODY]
   island run [-n name] -- COMMAND [ARGS...]   show a command in the island while it runs
+  island open [media|docker|ports|clipboard|search]   toggle the dashboard
   island kill-port PORT                       free a port (kills the process / stops the container)
   island pomodoro start|stop|toggle
   island action NAME                          e.g. media.play-pause, notify.dismiss
@@ -59,6 +60,12 @@ func main() {
 		err = call("Notify", fs.Arg(0), body, *icon, *accent, int32(*timeout)).Err
 	case "run":
 		os.Exit(run(args))
+	case "open":
+		tab := ""
+		if len(args) > 0 {
+			tab = args[0]
+		}
+		err = call("Open", tab).Err
 	case "kill-port":
 		if len(args) != 1 {
 			usage()

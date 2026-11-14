@@ -5,6 +5,7 @@ A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with
 - **Left-click** opens the dashboard, with tabs for Now Playing, Docker, Ports, Clipboard and Web.
 - **Right-click** opens the regular calendar and notifications menu.
 - **Esc** or clicking outside the dashboard closes it.
+- **`island open [tab]`** toggles the dashboard from the command line. Bind it to a key in Settings → Keyboard → Custom Shortcuts, for example Super+Space → `island open`.
 
 ## Dashboard
 
