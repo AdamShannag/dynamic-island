@@ -92,7 +92,11 @@ const DASH_HEIGHT = {home: 292, search: 360, agents: 400, notes: 420, qr: 430, d
 const POINTER_MS = 33;           // ~30 fps pointer tracking (eyes, magnet, shake)
 const SLEEP_AFTER_MS = 3 * 60 * 1000;
 const CPU_DIZZY = 0.85;          // busy fraction that makes the island dizzy
-const MAGNET_RADIUS = 150;       // px below the notch where it leans toward the cursor
+const HOVER_IN_MS = 450;         // rest on a live pill this long before it expands
+const HOVER_OUT_MS = 350;        // ...and it collapses this long after you leave
+const SHAKE_WINDOW_MS = 600;     // shake = SHAKE_REVERSALS sharp direction changes within this window
+const SHAKE_REVERSALS = 5;
+const SHAKE_MIN_PX = 10;
 const AGENT_REFRESH_MS = 2000;
 const LIVE_KINDS = new Set(['agent', 'task', 'service']);
 const AGENT_STATES = {
@@ -270,14 +274,28 @@ class Island extends St.BoxLayout {
         this._buildDash();
 
         this.connect('button-release-event', (_a, event) => this._onClick(event));
+        // Hover intent: brushing past a live pill must not make it morph.
+        this._hoverExpanded = false;
+        this._hoverId = 0;
         this.connect('notify::hover', () => {
-            if (!this._dashOpen && LIVE_KINDS.has(this._state.kind))
-                this._render(this._state);
+            if (this._hoverId)
+                GLib.source_remove(this._hoverId);
+            this._hoverId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this.hover ? HOVER_IN_MS : HOVER_OUT_MS, () => {
+                this._hoverId = 0;
+                if (this._hoverExpanded !== this.hover) {
+                    this._hoverExpanded = this.hover;
+                    if (!this._dashOpen && LIVE_KINDS.has(this._state.kind))
+                        this._render(this._state);
+                }
+                return GLib.SOURCE_REMOVE;
+            });
         });
         this.connect('captured-event', (_a, event) => this._onCapturedEvent(event));
         this._startPersonality();
         this.connect('destroy', () => {
             this._stopPersonality();
+            if (this._hoverId)
+                GLib.source_remove(this._hoverId);
             this._face.destroy();
             for (const tl of Object.values(this._springs))
                 tl.stop();
@@ -1096,7 +1114,7 @@ class Island extends St.BoxLayout {
             return 'compact';
         // Long-lived activity stays slim; hover to see the detail line.
         if (LIVE_KINDS.has(s.kind) && !s.accent)
-            return this.hover && s.subtitle ? 'notify' : 'compact';
+            return this._hoverExpanded && s.subtitle ? 'notify' : 'compact';
         return s.subtitle ? 'notify' : 'compact';
     }
 
@@ -1458,7 +1476,6 @@ class Island extends St.BoxLayout {
         this._asleep = false;
         this._wobbling = false;
         this._shake = [];
-        this._mag = {x: 0, s: 1};
         this._cpuPrev = null;
         this._cpuHot = 0;
         this._pointerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POINTER_MS, () => {
@@ -1566,59 +1583,43 @@ class Island extends St.BoxLayout {
         tl.start();
     }
 
-    // ~30 fps: eyes follow the cursor, the notch leans toward a nearby
-    // cursor (magnet), and shaking the mouse over it triggers a wobble.
+    // ~30 fps: the eyes follow the cursor, and a deliberate shake over the
+    // island makes it wobble. (Nothing here moves the island itself: any
+    // pointer-driven movement fights hover detection and jitters.)
     _onPointer() {
-        const resting = this._mode === 'idle' || this._mode === 'compact';
         const [px, py] = global.get_pointer();
-
         if (this._face.actor.mapped) {
             const [fx, fy] = this._face.actor.get_transformed_position();
             this._face.track(px - (fx + this._face.actor.width / 2), py - (fy + this._face.actor.height / 2));
         }
 
-        if (this.hover && resting) {
-            const now = GLib.get_monotonic_time() / 1000;
-            const h = this._shake;
-            h.push([now, px]);
-            while (h.length && now - h[0][0] > 700)
-                h.shift();
-            let reversals = 0, dir = 0;
-            for (let i = 1; i < h.length; i++) {
-                const d = h[i][1] - h[i - 1][1];
-                if (Math.abs(d) < 4)
-                    continue;
-                if (dir && Math.sign(d) !== dir)
-                    reversals++;
-                dir = Math.sign(d);
-            }
-            if (reversals >= 4) {
+        const resting = this._mode === 'idle' || this._mode === 'compact';
+        if (!this.hover || !resting) {
+            if (this._shake.length)
                 this._shake = [];
-                this.wobble();
-            }
-        } else if (this._shake.length) {
+            return;
+        }
+        const now = GLib.get_monotonic_time() / 1000;
+        const h = this._shake;
+        if (!h.length || h[h.length - 1][1] !== px)
+            h.push([now, px]);
+        while (h.length && now - h[0][0] > SHAKE_WINDOW_MS)
+            h.shift();
+        // Count sharp direction reversals; small jitters are ignored.
+        let reversals = 0, dir = 0, anchor = h[0]?.[1];
+        for (let i = 1; i < h.length; i++) {
+            const d = h[i][1] - anchor;
+            if (Math.abs(d) < SHAKE_MIN_PX)
+                continue;
+            if (dir && Math.sign(d) !== dir)
+                reversals++;
+            dir = Math.sign(d);
+            anchor = h[i][1];
+        }
+        if (reversals >= SHAKE_REVERSALS) {
             this._shake = [];
+            this.wobble();
         }
-
-        let tx = 0, ts = 1;
-        if (resting && !this.hover && !this._ext.presenting && !this._asleep && !this._springs.geom) {
-            const dx = px - (this.x + this.width / 2);
-            const dy = py - (this.y + this.height);
-            const dist = Math.hypot(dx, Math.max(0, dy));
-            if (dy > -this.height && dist < MAGNET_RADIUS) {
-                const f = 1 - dist / MAGNET_RADIUS;
-                tx = Math.max(-7, Math.min(7, dx * 0.05)) * f;
-                ts = 1 + 0.05 * f;
-            }
-        }
-        const step = (cur, target) => (Math.abs(target - cur) < 0.01 ? target : cur + (target - cur) * 0.2);
-        this._mag.x = step(this._mag.x, tx);
-        this._mag.s = step(this._mag.s, ts);
-        // Only touch the actor when something changed (no idle redraws).
-        if (this.translation_x !== this._mag.x)
-            this.translation_x = this._mag.x;
-        if (!this._wobbling && !this._springs.scale && this.scale_y !== this._mag.s)
-            this.scale_y = this._mag.s;
     }
 
     // ---------- layout ----------

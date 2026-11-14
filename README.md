@@ -19,7 +19,7 @@ The Clipboard tab also has **transform chips**: JSON pretty-print, Base64 encode
 - **Face:** two eyes next to the clock that follow your cursor and blink every now and then. They go dizzy when the CPU is pegged, turn into hearts when something succeeds, and look surprised when you plug in a USB device.
 - **Sleepy:** after 3 minutes of inactivity the eyes close and little Zs float up. Moving the mouse wakes it.
 - **Wobble:** shake your mouse quickly over the island, or middle-click it, and it wobbles like jelly with a `> <` face.
-- **Magnetic:** the notch leans slightly toward a nearby cursor. This is off while presenting.
+- **Hover intent:** a slim live pill (agent, build or service) only expands after you rest the cursor on it for about half a second, so passing over it does nothing.
 - **USB reactions:** drives, keyboards, mice, game controllers, phones, audio devices and cameras each get a popup with an icon and a little bounce.
 
 ## Context awareness
