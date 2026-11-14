@@ -93,12 +93,13 @@ const TABS = [
     ['docker', 'Docker', 'network-server-symbolic'],
     ['ports', 'Ports', 'network-wired-symbolic'],
     ['clipboard', 'Clipboard', 'edit-paste-symbolic'],
+    ['transform', 'Transform', 'edit-find-replace-symbolic'],
     ['notes', 'Notes', 'document-edit-symbolic'],
     ['search', 'Web', 'web-browser-symbolic'],
 ];
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
+const DASH_HEIGHT = {transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
 const OSD_MS = 1600; // how long the volume/brightness bar stays up
 
 // Personality.
@@ -408,6 +409,7 @@ class Island extends St.BoxLayout {
             docker: this._buildDockerPage(),
             ports: this._buildPortsPage(),
             clipboard: this._buildClipboardPage(),
+            transform: this._buildTransformPage(),
             notes: this._buildNotesPage(),
             qr: this._buildQRPage(),
             logs: this._buildLogsPage(),
@@ -782,6 +784,7 @@ class Island extends St.BoxLayout {
             style_class: `goisland-port-btn ${styleClass}`, label: `:${port}`, can_focus: true,
             y_align: Clutter.ActorAlign.CENTER, accessible_name: `Open localhost:${port}`,
         });
+        btn.child.x_align = Clutter.ActorAlign.START; // align numbers in the Ports column
         btn.connect('clicked', () => {
             openUri(`http://localhost:${port}`);
             this._closeDash();
@@ -819,51 +822,93 @@ class Island extends St.BoxLayout {
         top.add_child(this._clipFilter);
         top.add_child(clear);
 
-        // Transforms apply to the selected text if there is any, else the clipboard.
-        const chips = new St.BoxLayout({style_class: 'goisland-chips'});
-        chips.add_child(label('goisland-chips-label', {text: 'Transform'}));
-        for (const [, name, fn] of TRANSFORMS) {
-            const chip = new St.Button({style_class: 'goisland-chip', label: name, can_focus: true});
-            chip.connect('clicked', () => this._transform(chip, name, fn));
-            chips.add_child(chip);
-        }
         const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
         this._clipList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
         this._clipMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
         card.add_child(this._clipMsg);
         card.add_child(scrollView(this._clipList));
         page.add_child(top);
-        page.add_child(chips);
         page.add_child(card);
         return page;
     }
 
-    _transform(chip, name, fn) {
-        const cb = St.Clipboard.get_default();
-        const run = text => {
-            let out;
-            try {
-                if (!text)
-                    throw new Error('empty');
-                out = fn(text);
-            } catch {
-                this._flash(chip, 'Invalid', name, 'bad');
-                return;
-            }
-            cb.set_text(St.ClipboardType.CLIPBOARD, out);
-            this._flash(chip, 'Copied', name, 'good');
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                if (this._dashOpen && this._tab === 'clipboard')
-                    this._loadClipboard();
-                return GLib.SOURCE_REMOVE;
-            });
+    // ----- Transform -----
+
+    _buildTransformPage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const multiline = (styleClass, hint) => {
+            const e = new St.Entry({style_class: styleClass, hint_text: hint, can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.START});
+            const ct = e.clutter_text;
+            ct.single_line_mode = false;
+            ct.activatable = false;
+            ct.line_wrap = true;
+            ct.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            return e;
         };
-        cb.get_text(St.ClipboardType.PRIMARY, (_c, selected) => {
-            if (selected?.trim())
-                run(selected);
-            else
-                cb.get_text(St.ClipboardType.CLIPBOARD, (_c2, text) => run(text));
+        const pane = (title, child, extra) => {
+            const card = new St.BoxLayout({style_class: 'goisland-card goisland-xf-card', ...VERTICAL, x_expand: true, y_expand: true});
+            const head = new St.BoxLayout({style_class: 'goisland-xf-head'});
+            head.add_child(label('goisland-group', {text: title, x_expand: true}));
+            if (extra)
+                head.add_child(extra);
+            card.add_child(head);
+            const box = new St.BoxLayout({...VERTICAL, x_expand: true});
+            box.add_child(child);
+            card.add_child(scrollView(box));
+            return card;
+        };
+
+        this._xfIn = multiline('goisland-notes goisland-xf-text', 'Paste or type text. Your selection or clipboard is filled in when you open this tab.');
+        this._xfInfo = label('goisland-hint');
+        page.add_child(pane('INPUT', this._xfIn, this._xfInfo));
+
+        const chips = new St.BoxLayout({style_class: 'goisland-chips', x_align: Clutter.ActorAlign.CENTER});
+        for (const [, name, fn] of TRANSFORMS) {
+            const chip = new St.Button({style_class: 'goisland-chip', label: name, can_focus: true});
+            chip.connect('clicked', () => this._transform(chip, name, fn));
+            chips.add_child(chip);
+        }
+        page.add_child(chips);
+
+        this._xfOut = multiline('goisland-notes goisland-xf-text goisland-xf-out', 'The result appears here and is copied.');
+        const useAsInput = new St.Button({style_class: 'goisland-chip', label: 'Use as input', can_focus: true});
+        useAsInput.connect('clicked', () => {
+            if (this._xfOut.text)
+                this._xfIn.text = this._xfOut.text;
         });
+        page.add_child(pane('OUTPUT', this._xfOut, useAsInput));
+        return page;
+    }
+
+    // Fill the input from the selection (if any) or the clipboard.
+    _loadTransformInput() {
+        const cb = St.Clipboard.get_default();
+        const fill = (text, from) => {
+            if (!text?.trim())
+                return false;
+            this._xfIn.text = text;
+            this._xfInfo.text = `from ${from}`;
+            return true;
+        };
+        cb.get_text(St.ClipboardType.PRIMARY, (_c, sel) => {
+            if (!fill(sel, 'selection'))
+                cb.get_text(St.ClipboardType.CLIPBOARD, (_c2, clip) => fill(clip, 'clipboard'));
+        });
+    }
+
+    _transform(chip, name, fn) {
+        let out;
+        try {
+            if (!this._xfIn.text)
+                throw new Error('empty');
+            out = fn(this._xfIn.text);
+        } catch {
+            this._flash(chip, 'Invalid', name, 'bad');
+            return;
+        }
+        this._xfOut.text = out;
+        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, out);
+        this._flash(chip, 'Copied', name, 'good');
     }
 
     _flash(btn, text, restore, kind) {
@@ -1605,6 +1650,11 @@ class Island extends St.BoxLayout {
             this._portEntry.text = '';
             this._loadPorts();
             focus = this._portEntry;
+        } else if (id === 'transform') {
+            this._xfOut.text = '';
+            this._xfInfo.text = '';
+            this._loadTransformInput();
+            focus = this._xfIn;
         } else if (id === 'notes') {
             this._loadNotes();
             focus = this._notes;

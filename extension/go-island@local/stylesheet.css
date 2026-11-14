@@ -464,7 +464,9 @@
   transition-duration: 120ms;
 }
 .goisland-port-btn:focus { box-shadow: none; }
-.goisland-port-btn.goisland-port { padding: 2px 6px; margin-left: -6px; }
+/* No negative margins anywhere: St turns them into a huge unsigned width
+   and the whole row renders off-screen. */
+.goisland-port-btn.goisland-port { padding: 2px 6px; }
 .goisland-port-btn.goisland-port:hover { background-color: rgba(100, 210, 255, 0.12); }
 .goisland-port-chips { spacing: 4px; }
 .goisland-port-chip {
@@ -491,3 +493,11 @@
   color: rgba(245, 245, 247, 0.82);
   padding: 8px 10px;
 }
+
+/* ───────────── Transform ───────────── */
+
+.goisland-xf-card { padding: 10px 6px 6px; spacing: 2px; }
+.goisland-xf-head { padding: 0 10px; }
+.goisland-xf-head .goisland-group { padding: 0; }
+.goisland-xf-text { font-family: monospace; font-size: 9.5pt; padding: 6px 10px; }
+.goisland-xf-out { color: #6cb6ff; }
