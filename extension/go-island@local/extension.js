@@ -1,10 +1,10 @@
 // Go Island: a thin view layer. All logic lives in the islandd daemon; this
 // extension renders whatever View JSON it receives over D-Bus.
 //
-// - Replaces the top-bar clock. Idle, the pill shows the time.
-// - Live activities (media, timers, notifications) grow out of the bar.
-// - Left-click opens the dashboard (Now Playing / Docker / Clipboard /
-//   Search); right-click opens the regular calendar menu.
+// - A notch attached to the top edge that replaces the top-bar clock.
+// - Live activities (media, timers, notifications) grow out of it.
+// - Left-click opens the dashboard (Home / Docker / Ports / Clipboard /
+//   Web); right-click opens the regular calendar menu.
 import GObject from 'gi://GObject';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
@@ -51,31 +51,32 @@ const IFACE_XML = `
 </node>`;
 const IslandProxy = Gio.DBusProxy.makeProxyWrapper(IFACE_XML);
 
-const MORPH_MS = 560;
-const FADE_OUT_MS = 110;
+// Motion. The shape moves on a spring; content is laid out at its final
+// size up front and revealed by the growing shape, so it can fade in almost
+// immediately instead of waiting for the morph to finish.
+const MORPH_MS = 480;
+const FADE_OUT_MS = 70;
+const REVEAL_DELAY_MS = 40;
 const FADE_IN_MS = 200;
+
 const DOCKER_REFRESH_MS = 3000;
 const IDLE = {kind: 'idle'};
 const MODES = ['idle', 'compact', 'notify', 'dashboard'];
 const ACCENTS = ['ok', 'warn', 'error'];
 const TABS = [
-    ['media', 'Now Playing', 'audio-x-generic-symbolic'],
+    ['home', 'Home', 'user-home-symbolic'],
     ['docker', 'Docker', 'network-server-symbolic'],
     ['ports', 'Ports', 'network-wired-symbolic'],
     ['clipboard', 'Clipboard', 'edit-paste-symbolic'],
     ['search', 'Web', 'web-browser-symbolic'],
 ];
-const SITE_COLS = 7;
+const TAB_ALIASES = {media: 'home', web: 'search'};
+const DASH_WIDTH = 760;
+const DASH_HEIGHT = {home: 292, search: 340, default: 480};
+const SITE_COLS = 8;
 const TILE_COLORS = ['#0a84ff', '#30d158', '#ff9f0a', '#ff375f', '#bf5af2', '#64d2ff', '#ff453a', '#5e5ce6'];
 // Password managers mark secrets with this mime type; never record them.
 const SECRET_MIME = 'x-kde-passwordManagerHint';
-
-function fmtClock(secs) {
-    secs = Math.max(0, Math.floor(secs));
-    const h = Math.floor(secs / 3600), m = Math.floor(secs / 60) % 60, s = secs % 60;
-    const mm = String(m).padStart(h ? 2 : 1, '0'), ss = String(s).padStart(2, '0');
-    return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
 
 // Damped spring (ζ≈0.8): fast start, ~2% overshoot, soft settle. t in [0,1].
 function spring(t) {
@@ -85,6 +86,13 @@ function spring(t) {
     return 1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t));
 }
 const PIXEL_PROPS = new Set(['x', 'y', 'width', 'height']);
+
+function fmtClock(secs) {
+    secs = Math.max(0, Math.floor(secs));
+    const h = Math.floor(secs / 3600), m = Math.floor(secs / 60) % 60, s = secs % 60;
+    const mm = String(m).padStart(h ? 2 : 1, '0'), ss = String(s).padStart(2, '0');
+    return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
 
 function label(styleClass, props = {}) {
     const l = new St.Label({style_class: styleClass, y_align: Clutter.ActorAlign.CENTER, ...props});
@@ -128,96 +136,25 @@ function openUri(uri) {
     }
 }
 
-const Island = GObject.registerClass(
-class Island extends St.BoxLayout {
-    _init(ext) {
-        super._init({
-            style_class: 'goisland idle',
-            reactive: true,
-            track_hover: true,
-            opacity: 0,
-        });
-        this._ext = ext;
-        // The pill itself is never clipped (so its rounded background stays
-        // clean); content is clipped by this inner layer instead.
-        this._clip = new St.Widget({
-            layout_manager: new Clutter.BinLayout(),
-            clip_to_allocation: true,
-            x_expand: true,
-            y_expand: true,
-        });
-        this.add_child(this._clip);
-        this._morphGen = 0;
-        this._state = IDLE;
-        this._media = null; // last media view; survives notifications covering it
-        this._mode = 'idle';
-        this._dashOpen = false;
-        this._tab = 'clipboard';
-        this._grab = null;
-        this._tickId = 0;
-        this._dockerId = 0;
-        this._shown = false;
-        this._clipItems = [];
-        this.set_pivot_point(0.5, 0);
-
-        this._wallClock = new GnomeDesktop.WallClock();
-        this._wallClock.connectObject('notify::clock', () => this._tick(), this);
-        this._interface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
-
-        this._buildPill();
-        this._buildDash();
-
-        this.connect('button-release-event', (_a, event) => this._onClick(event));
-        this.connect('captured-event', (_a, event) => this._onCapturedEvent(event));
-        this.connect('destroy', () => {
-            for (const tl of Object.values(this._springs ?? {}))
-                tl.stop();
-            this._springs = {};
-            this._closeDash(false);
-            this._stopTicker();
-            this._wallClock = null;
-        });
-    }
-
-    // ---------- construction ----------
-
-    _buildPill() {
-        this._content = new St.BoxLayout({style_class: 'goisland-content', x_expand: true, y_expand: true});
-        this._clip.add_child(this._content);
-
-        this._art = new St.Bin({style_class: 'goisland-art', y_align: Clutter.ActorAlign.CENTER});
-        this._icon = new St.Icon({style_class: 'goisland-icon', y_align: Clutter.ActorAlign.CENTER});
-        const text = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-        this._title = label('goisland-title');
-        this._subtitle = label('goisland-subtitle');
-        text.add_child(this._title);
-        text.add_child(this._subtitle);
-        this._trailing = label('goisland-trailing');
-
-        // Tiny "now playing" equalizer for the compact media pill.
-        this._eq = new St.BoxLayout({style_class: 'goisland-eq', y_align: Clutter.ActorAlign.CENTER});
-        this._eqBars = [0, 1, 2, 3].map(() => {
+// A tiny animated "now playing" equalizer.
+class Equalizer {
+    constructor(styleClass) {
+        this.actor = new St.BoxLayout({style_class: `goisland-eq ${styleClass}`, y_align: Clutter.ActorAlign.CENTER});
+        this._bars = [0, 1, 2, 3].map(() => {
             const bar = new St.Widget({style_class: 'goisland-eq-bar', y_expand: true});
             bar.set_pivot_point(0.5, 1);
             bar.scale_y = 0.35;
-            this._eq.add_child(bar);
+            this.actor.add_child(bar);
             return bar;
         });
-        this._eqRunning = false;
-
-        for (const a of [this._art, this._icon, text, this._eq, this._trailing])
-            this._content.add_child(a);
+        this._running = false;
     }
 
-    _syncEqualizer() {
-        const s = this._state;
-        const show = s.kind === 'media' && this._mode === 'compact';
-        this._eq.visible = show;
-        const run = show && !!s.playing;
-        if (run === this._eqRunning)
+    set running(run) {
+        if (run === this._running)
             return;
-        this._eqRunning = run;
-        this._eqBars.forEach((bar, i) => {
+        this._running = run;
+        this._bars.forEach((bar, i) => {
             bar.remove_all_transitions();
             bar.scale_y = 0.35;
             if (run) {
@@ -231,30 +168,123 @@ class Island extends St.BoxLayout {
             }
         });
     }
+}
+
+const Island = GObject.registerClass(
+class Island extends St.BoxLayout {
+    _init(ext) {
+        super._init({
+            style_class: 'goisland idle',
+            reactive: true,
+            track_hover: true,
+            can_focus: true,
+            opacity: 0,
+        });
+        this._ext = ext;
+        this._state = IDLE;
+        this._media = null; // last media view; survives notifications covering it
+        this._timer = null; // running pomodoro view, if any
+        this._mode = 'idle';
+        this._dashOpen = false;
+        this._tab = 'home';
+        this._grab = null;
+        this._tickId = 0;
+        this._dockerId = 0;
+        this._shown = false;
+        this._springs = {};
+        this._target = null;
+        this._morphGen = 0;
+        this._clipItems = [];
+        this.set_pivot_point(0.5, 0);
+
+        this._wallClock = new GnomeDesktop.WallClock();
+        this._wallClock.connectObject('notify::clock', () => this._tick(), this);
+        this._interface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+
+        // The shape itself is never clipped (so its rounded background stays
+        // clean); content is clipped by this inner layer instead. Content is
+        // given its final size and pinned top-centre, so a growing shape
+        // reveals it rather than squeezing it.
+        this._clip = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            clip_to_allocation: true,
+            x_expand: true,
+            y_expand: true,
+        });
+        this.add_child(this._clip);
+
+        this._buildPill();
+        this._buildDash();
+
+        this.connect('button-release-event', (_a, event) => this._onClick(event));
+        this.connect('captured-event', (_a, event) => this._onCapturedEvent(event));
+        this.connect('destroy', () => {
+            for (const tl of Object.values(this._springs))
+                tl.stop();
+            this._springs = {};
+            this._closeDash(false);
+            this._stopTicker();
+            this._wallClock = null;
+        });
+    }
+
+    // ---------- construction ----------
+
+    _buildPill() {
+        this._content = new St.BoxLayout({
+            style_class: 'goisland-content',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.START,
+        });
+        this._clip.add_child(this._content);
+
+        this._art = new St.Bin({style_class: 'goisland-art', y_align: Clutter.ActorAlign.CENTER});
+        this._icon = new St.Icon({style_class: 'goisland-icon', y_align: Clutter.ActorAlign.CENTER});
+        const text = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        this._title = label('goisland-title');
+        this._subtitle = label('goisland-subtitle');
+        text.add_child(this._title);
+        text.add_child(this._subtitle);
+        this._pillEq = new Equalizer('pill');
+        this._trailing = label('goisland-trailing');
+        for (const a of [this._art, this._icon, text, this._pillEq.actor, this._trailing])
+            this._content.add_child(a);
+    }
 
     _buildDash() {
         this._dash = new St.BoxLayout({
-            style_class: 'goisland-dash', vertical: true, x_expand: true, y_expand: true, visible: false,
+            style_class: 'goisland-dash',
+            vertical: true,
+            visible: false,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.START,
         });
         this._clip.add_child(this._dash);
 
-        const tabs = new St.BoxLayout({style_class: 'goisland-tabs'});
+        const header = new St.BoxLayout({style_class: 'goisland-header'});
+        const tabs = new St.BoxLayout({style_class: 'goisland-tabs', x_expand: true});
         this._tabButtons = {};
-        for (const [id, text, icon] of TABS) {
-            const box = new St.BoxLayout({style_class: 'goisland-tab-box'});
-            box.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon'}));
-            box.add_child(new St.Label({text, y_align: Clutter.ActorAlign.CENTER}));
-            box.x_align = Clutter.ActorAlign.CENTER;
-            const btn = new St.Button({style_class: 'goisland-tab', can_focus: true, child: box, x_expand: true});
+        for (const [id, name, icon] of TABS) {
+            const btn = new St.Button({
+                style_class: 'goisland-tab',
+                can_focus: true,
+                accessible_name: name,
+                child: new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon'}),
+            });
             btn.connect('clicked', () => this._showTab(id));
             tabs.add_child(btn);
             this._tabButtons[id] = btn;
         }
-        this._dash.add_child(tabs);
+        this._tabName = label('goisland-tab-name');
+        tabs.add_child(this._tabName);
+        header.add_child(tabs);
+        this._dashClock = label('goisland-dash-clock');
+        header.add_child(this._dashClock);
+        this._dash.add_child(header);
 
         const body = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
         this._pages = {
-            media: this._buildMediaPage(),
+            home: this._buildHomePage(),
             docker: this._buildDockerPage(),
             ports: this._buildPortsPage(),
             clipboard: this._buildClipboardPage(),
@@ -267,63 +297,167 @@ class Island extends St.BoxLayout {
         this._dash.add_child(body);
     }
 
-    _buildMediaPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page goisland-media'});
-        this._mArt = new St.Bin({style_class: 'goisland-dash-art', y_align: Clutter.ActorAlign.CENTER});
-        this._mIcon = new St.Icon({
-            style_class: 'goisland-dash-art-icon', icon_name: 'audio-x-generic-symbolic',
-            y_align: Clutter.ActorAlign.CENTER,
+    // ----- Home: Now Playing card + Today card -----
+
+    _buildHomePage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page goisland-home'});
+
+        // Now Playing
+        const media = new St.BoxLayout({style_class: 'goisland-card goisland-media-card', vertical: true, x_expand: true});
+        const top = new St.BoxLayout({style_class: 'goisland-media-top'});
+        this._mArtFrame = new St.Widget({style_class: 'goisland-media-art', layout_manager: new Clutter.BinLayout()});
+        this._mArt = new St.Bin({style_class: 'goisland-media-art-img', x_expand: true, y_expand: true});
+        this._mArtIcon = new St.Icon({
+            icon_name: 'audio-x-generic-symbolic', style_class: 'goisland-media-art-icon',
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
         });
+        this._mArtFrame.add_child(this._mArtIcon);
+        this._mArtFrame.add_child(this._mArt);
         const col = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-        this._mTitle = label('goisland-dash-title');
-        this._mSub = label('goisland-subtitle');
+        this._mTitle = label('goisland-media-title');
+        this._mSub = label('goisland-media-sub');
+        col.add_child(this._mTitle);
+        col.add_child(this._mSub);
+        this._mEq = new Equalizer('card');
+        top.add_child(this._mArtFrame);
+        top.add_child(col);
+        top.add_child(this._mEq.actor);
+        media.add_child(top);
+        media.add_child(new St.Widget({y_expand: true})); // pins progress + controls to the bottom
 
         this._progress = new St.BoxLayout({style_class: 'goisland-progress'});
         this._posLabel = label('goisland-time');
-        this._lenLabel = label('goisland-time');
+        this._remLabel = label('goisland-time goisland-time-right');
         this._track = new St.Widget({
             style_class: 'goisland-track', x_expand: true, y_align: Clutter.ActorAlign.CENTER,
             layout_manager: new Clutter.BinLayout(),
         });
         this._fill = new St.Widget({style_class: 'goisland-fill', x_align: Clutter.ActorAlign.START, y_expand: true});
         this._track.add_child(this._fill);
-        for (const a of [this._posLabel, this._track, this._lenLabel])
+        for (const a of [this._posLabel, this._track, this._remLabel])
             this._progress.add_child(a);
+        media.add_child(this._progress);
 
-        const controls = new St.BoxLayout({style_class: 'goisland-controls', x_align: Clutter.ActorAlign.CENTER});
-        controls.add_child(iconButton('media-skip-backward-symbolic', 'goisland-btn',
+        this._controls = new St.BoxLayout({style_class: 'goisland-controls', x_align: Clutter.ActorAlign.CENTER});
+        this._controls.add_child(iconButton('media-seek-backward-symbolic', 'goisland-btn',
             () => this._ext.action('media.previous'), 'Previous'));
         this._playBtn = iconButton('media-playback-start-symbolic', 'goisland-btn goisland-btn-big',
             () => this._ext.action('media.play-pause'), 'Play/Pause');
-        controls.add_child(this._playBtn);
-        controls.add_child(iconButton('media-skip-forward-symbolic', 'goisland-btn',
+        this._controls.add_child(this._playBtn);
+        this._controls.add_child(iconButton('media-seek-forward-symbolic', 'goisland-btn',
             () => this._ext.action('media.next'), 'Next'));
+        media.add_child(this._controls);
+        page.add_child(media);
 
-        for (const a of [this._mTitle, this._mSub, this._progress, controls])
-            col.add_child(a);
-        this._mEmpty = label('goisland-empty', {text: 'Nothing playing', x_expand: true, x_align: Clutter.ActorAlign.CENTER});
-        for (const a of [this._mArt, this._mIcon, col, this._mEmpty])
-            page.add_child(a);
-        this._mCol = col;
+        // Today
+        const today = new St.BoxLayout({style_class: 'goisland-card goisland-today-card', vertical: true});
+        this._todayDate = label('goisland-today-date');
+        this._todayTitle = label('goisland-today-title');
+        today.add_child(this._todayDate);
+        today.add_child(this._todayTitle);
+        this._focusRow = this._actionRow('green', 'Focus session', () =>
+            this._ext.action(this._timer ? 'pomodoro.stop' : 'pomodoro.start'));
+        this._dockerRow = this._actionRow('blue', 'Containers', () => this._showTab('docker'));
+        this._dockerRow.btn.label = 'Open';
+        today.add_child(this._focusRow.row);
+        today.add_child(this._dockerRow.row);
+        page.add_child(today);
         return page;
     }
+
+    _actionRow(color, title, onClick) {
+        const row = new St.BoxLayout({style_class: 'goisland-action'});
+        row.add_child(new St.Widget({style_class: `goisland-action-bar ${color}`}));
+        const col = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        const titleLbl = label('goisland-action-title', {text: title});
+        const sub = label('goisland-action-sub');
+        col.add_child(titleLbl);
+        col.add_child(sub);
+        row.add_child(col);
+        const btn = new St.Button({style_class: `goisland-action-btn ${color}`, can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+        btn.connect('clicked', onClick);
+        row.add_child(btn);
+        return {row, sub, btn};
+    }
+
+    _loadDockerCount() {
+        this._ext.call('DockerList', [], (res, err) => {
+            if (err) {
+                this._dockerRow.sub.text = 'Docker unavailable';
+            } else {
+                const list = JSON.parse(res[0]);
+                const bad = list.filter(c => /unhealthy/.test(c.status)).length;
+                this._dockerRow.sub.text = `${list.length} running${bad ? ` · ${bad} unhealthy` : ''}`;
+            }
+        });
+    }
+
+    // ----- Docker -----
 
     _buildDockerPage() {
         const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
         this._dockerList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
         this._dockerMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
-        page.add_child(this._dockerMsg);
-        page.add_child(scrollView(this._dockerList));
+        card.add_child(this._dockerMsg);
+        card.add_child(scrollView(this._dockerList));
+        page.add_child(card);
         return page;
     }
+
+    _loadDocker() {
+        this._ext.call('DockerList', [], (res, err) => {
+            if (!this._dashOpen || this._tab !== 'docker')
+                return;
+            if (err) {
+                this._dockerList.destroy_all_children();
+                this._message(this._dockerMsg, err.message.replace(/^.*?Error\.Failed: /, ''));
+                return;
+            }
+            const list = JSON.parse(res[0]);
+            this._message(this._dockerMsg, list.length ? '' : 'No running containers');
+            this._renderDocker(list);
+        });
+    }
+
+    _renderDocker(list) {
+        this._dockerList.destroy_all_children();
+        let project = null;
+        for (const c of list) {
+            if (c.project !== project) {
+                project = c.project;
+                this._dockerList.add_child(label('goisland-group', {text: (project || 'standalone').toUpperCase()}));
+            }
+            const row = new St.BoxLayout({style_class: 'goisland-row'});
+            const healthy = c.state === 'running' && !/unhealthy/.test(c.status);
+            row.add_child(new St.Widget({
+                style_class: `goisland-dot ${healthy ? 'ok' : 'bad'}`, y_align: Clutter.ActorAlign.CENTER,
+            }));
+            const col = new St.BoxLayout({vertical: true, x_expand: true});
+            col.add_child(label('goisland-row-title', {text: c.name}));
+            const meta = [c.status, c.ports && `:${c.ports}`, c.image].filter(Boolean).join('  ·  ');
+            col.add_child(label('goisland-row-sub', {text: meta}));
+            row.add_child(col);
+            for (const [op, icon] of [['restart', 'view-refresh-symbolic'], ['stop', 'media-playback-stop-symbolic']]) {
+                row.add_child(iconButton(icon, 'goisland-row-btn', () => {
+                    row.opacity = 128;
+                    this._ext.call('DockerAction', [c.id, op], () => this._loadDocker());
+                }, `${op} ${c.name}`));
+            }
+            this._dockerList.add_child(row);
+        }
+    }
+
+    // ----- Ports -----
 
     _buildPortsPage() {
         const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
         this._portEntry = new St.Entry({
             style_class: 'goisland-entry',
-            hint_text: 'Filter, or type a port and press Enter to kill it…',
+            hint_text: 'Filter, or type a port and press Enter to free it',
             can_focus: true,
             x_expand: true,
+            primary_icon: new St.Icon({icon_name: 'system-search-symbolic', style_class: 'goisland-entry-icon'}),
         });
         this._portEntry.clutter_text.connect('text-changed', () => this._renderPorts());
         this._portEntry.clutter_text.connect('activate', () => {
@@ -333,20 +467,89 @@ class Island extends St.BoxLayout {
                 this._freePort(port);
             }
         });
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
         this._portList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
         this._portMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
+        card.add_child(this._portMsg);
+        card.add_child(scrollView(this._portList));
         page.add_child(this._portEntry);
-        page.add_child(this._portMsg);
-        page.add_child(scrollView(this._portList));
+        page.add_child(card);
         this._ports = [];
         return page;
     }
 
+    _loadPorts() {
+        this._ext.call('PortsList', [], (res, err) => {
+            if (!this._dashOpen || this._tab !== 'ports')
+                return;
+            this._ports = err ? [] : JSON.parse(res[0]);
+            this._renderPorts(err ? 'Could not list ports' : null);
+        });
+    }
+
+    _renderPorts(error = null) {
+        this._portList.destroy_all_children();
+        const q = this._portEntry.text.trim().replace(/^:/, '').toLowerCase();
+        const items = q
+            ? this._ports.filter(l => `${l.port} ${l.process ?? ''} ${l.container ?? ''} ${l.cmd ?? ''}`.toLowerCase().includes(q))
+            : this._ports;
+        this._message(this._portMsg, error ?? (items.length ? '' : q ? 'No matches. Press Enter to free that port.' : 'Nothing listening'));
+        for (const l of items) {
+            const mine = !!(l.container || l.pid);
+            const row = new St.BoxLayout({style_class: `goisland-row${mine ? '' : ' muted'}`});
+            row.add_child(label('goisland-port', {text: `:${l.port}`}));
+            const col = new St.BoxLayout({vertical: true, x_expand: true});
+            const owner = l.container ? `${l.container}  ·  container` : l.process ? `${l.process}  ·  pid ${l.pid}` : 'System service';
+            col.add_child(label('goisland-row-title', {text: owner}));
+            col.add_child(label('goisland-row-sub', {text: [l.addr, l.cmd].filter(Boolean).join('  ·  ')}));
+            row.add_child(col);
+            if (mine) {
+                const verb = l.container ? 'Stop' : 'Kill';
+                const btn = new St.Button({style_class: 'goisland-pill-btn danger', label: verb, can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+                let armed = false;
+                btn.connect('clicked', () => {
+                    if (!armed) { // two-step confirm
+                        armed = true;
+                        btn.label = 'Sure?';
+                        btn.add_style_pseudo_class('armed');
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+                            if (armed && btn.get_stage()) {
+                                armed = false;
+                                btn.label = verb;
+                                btn.remove_style_pseudo_class('armed');
+                            }
+                            return GLib.SOURCE_REMOVE;
+                        });
+                        return;
+                    }
+                    armed = false;
+                    row.opacity = 128;
+                    this._freePort(l.port);
+                });
+                row.add_child(btn);
+            }
+            this._portList.add_child(row);
+        }
+    }
+
+    _freePort(port) {
+        this._ext.call('PortFree', [port], () => {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
+                if (this._dashOpen && this._tab === 'ports')
+                    this._loadPorts();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+    }
+
+    // ----- Clipboard -----
+
     _buildClipboardPage() {
         const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
-        const top = new St.BoxLayout({style_class: 'goisland-clip-top'});
+        const top = new St.BoxLayout({style_class: 'goisland-toolbar'});
         this._clipFilter = new St.Entry({
-            style_class: 'goisland-entry', hint_text: 'Filter clipboard…', can_focus: true, x_expand: true,
+            style_class: 'goisland-entry', hint_text: 'Filter clipboard', can_focus: true, x_expand: true,
+            primary_icon: new St.Icon({icon_name: 'system-search-symbolic', style_class: 'goisland-entry-icon'}),
         });
         this._clipFilter.clutter_text.connect('text-changed', () => this._renderClipboard());
         this._clipFilter.clutter_text.connect('activate', () => {
@@ -354,17 +557,64 @@ class Island extends St.BoxLayout {
             if (first)
                 this._copy(first.text);
         });
-        const clear = new St.Button({style_class: 'goisland-pill-btn', label: 'Clear', can_focus: true});
+        const clear = new St.Button({style_class: 'goisland-pill-btn', label: 'Clear', can_focus: true, y_align: Clutter.ActorAlign.CENTER});
         clear.connect('clicked', () => this._ext.call('ClipboardClear', [], () => this._loadClipboard()));
         top.add_child(this._clipFilter);
         top.add_child(clear);
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
         this._clipList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
         this._clipMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
+        card.add_child(this._clipMsg);
+        card.add_child(scrollView(this._clipList));
         page.add_child(top);
-        page.add_child(this._clipMsg);
-        page.add_child(scrollView(this._clipList));
+        page.add_child(card);
         return page;
     }
+
+    _loadClipboard() {
+        this._ext.call('ClipboardList', [], (res, err) => {
+            this._clipItems = err ? [] : JSON.parse(res[0]) ?? [];
+            this._renderClipboard(err ? 'Daemon not running' : null);
+        });
+    }
+
+    _filteredClips() {
+        const q = this._clipFilter.text.trim().toLowerCase();
+        return q ? this._clipItems.filter(it => it.text.toLowerCase().includes(q)) : this._clipItems;
+    }
+
+    _renderClipboard(error = null) {
+        this._clipList.destroy_all_children();
+        const items = this._filteredClips();
+        let msg = '';
+        if (error)
+            msg = error;
+        else if (!this._clipItems.length)
+            msg = 'Copy something and it shows up here';
+        else if (!items.length)
+            msg = 'No matches';
+        this._message(this._clipMsg, msg);
+        for (const it of items.slice(0, 100)) {
+            const box = new St.BoxLayout({x_expand: true});
+            const preview = it.text.slice(0, 300).replace(/\s*\n\s*/g, ' ⏎ ');
+            box.add_child(label('goisland-clip-text', {text: preview, x_expand: true}));
+            box.add_child(iconButton('view-pin-symbolic', `goisland-row-btn${it.pinned ? ' pinned' : ''}`,
+                () => this._ext.call('ClipboardPin', [it.id, !it.pinned], () => this._loadClipboard()),
+                it.pinned ? 'Unpin' : 'Pin'));
+            box.add_child(iconButton('edit-delete-symbolic', 'goisland-row-btn',
+                () => this._ext.call('ClipboardDelete', [it.id], () => this._loadClipboard()), 'Delete'));
+            const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
+            row.connect('clicked', () => this._copy(it.text));
+            this._clipList.add_child(row);
+        }
+    }
+
+    _copy(text) {
+        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+        this._closeDash();
+    }
+
+    // ----- Web: search + saved sites -----
 
     _buildSearchPage() {
         const page = new St.BoxLayout({style_class: 'goisland-page goisland-web', vertical: true});
@@ -392,10 +642,11 @@ class Island extends St.BoxLayout {
         });
         page.add_child(this._searchEntry);
 
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-sites-card', vertical: true, x_expand: true, y_expand: true});
         const head = new St.BoxLayout({style_class: 'goisland-section-head'});
         head.add_child(label('goisland-group', {text: 'SAVED SITES', x_expand: true}));
-        head.add_child(label('goisland-hint', {text: 'Right-click a site to remove it'}));
-        page.add_child(head);
+        head.add_child(label('goisland-hint', {text: 'Right-click to remove'}));
+        card.add_child(head);
 
         this._addRow = new St.BoxLayout({style_class: 'goisland-add-row', visible: false});
         this._addUrl = new St.Entry({style_class: 'goisland-entry', hint_text: 'example.com', can_focus: true, x_expand: true});
@@ -427,10 +678,11 @@ class Island extends St.BoxLayout {
         save.connect('clicked', submit);
         for (const a of [this._addUrl, this._addName, save])
             this._addRow.add_child(a);
-        page.add_child(this._addRow);
+        card.add_child(this._addRow);
 
         this._siteGrid = new St.BoxLayout({vertical: true, style_class: 'goisland-site-grid'});
-        page.add_child(scrollView(this._siteGrid));
+        card.add_child(scrollView(this._siteGrid));
+        page.add_child(card);
         this._sites = [];
         return page;
     }
@@ -514,10 +766,16 @@ class Island extends St.BoxLayout {
     setState(state) {
         const prev = this._state;
         this._state = state ?? IDLE;
-        if (this._state.kind === 'media')
+        const k = this._state.kind;
+        if (k === 'media')
             this._media = this._state;
-        else if (this._state.kind === 'idle')
+        else if (k === 'idle')
             this._media = null;
+        // A running timer outranks media, so seeing media/idle means no timer.
+        if (k === 'timer')
+            this._timer = this._state;
+        else if (k === 'idle' || k === 'media')
+            this._timer = null;
         this._render(prev);
     }
 
@@ -547,38 +805,38 @@ class Island extends St.BoxLayout {
             this.relayout(true);
             return;
         }
-        // Structural change: fade the old content out, morph an empty
-        // shape (cheap: no relayout of text/lists per frame), then fade the
-        // new content in once the shape has settled.
+
         const gen = ++this._morphGen;
-        const out = this._mode === 'dashboard' ? this._dash : this._content;
-        out.remove_all_transitions();
-        out.ease({
-            opacity: 0,
-            duration: FADE_OUT_MS,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => {
-                if (!this._wallClock || gen !== this._morphGen)
-                    return; // destroyed or superseded
-                this._apply();
-                const inn = this._mode === 'dashboard' ? this._dash : this._content;
-                inn.remove_all_transitions();
-                inn.opacity = 0;
-                inn.hide();
-                this.relayout(true, () => {
-                    if (gen !== this._morphGen)
-                        return;
-                    inn.show();
-                    inn.ease({
-                        opacity: 255,
-                        duration: FADE_IN_MS,
-                        mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
-                    });
-                    this._afterMorph?.();
-                    this._afterMorph = null;
-                });
-            },
-        });
+        const leaving = this._mode === 'dashboard' ? this._dash : this._content;
+        leaving.remove_all_transitions();
+        const morph = () => {
+            if (!this._wallClock || gen !== this._morphGen)
+                return; // destroyed or superseded
+            this._apply();
+            const entering = this._mode === 'dashboard' ? this._dash : this._content;
+            entering.remove_all_transitions();
+            entering.opacity = 0;
+            this.relayout(true);
+            entering.ease({
+                opacity: 255,
+                delay: REVEAL_DELAY_MS,
+                duration: FADE_IN_MS,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+        };
+        // The small pill content just disappears (it's tiny and about to be
+        // replaced); the big dashboard gets a very short fade.
+        if (leaving === this._dash && leaving.opacity > 0) {
+            leaving.ease({
+                opacity: 0,
+                duration: FADE_OUT_MS,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: morph,
+            });
+        } else {
+            leaving.opacity = 0;
+            morph();
+        }
     }
 
     // Push state into widgets (no animation).
@@ -593,6 +851,7 @@ class Island extends St.BoxLayout {
             this.remove_style_class_name(`accent-${a}`);
         if (mode !== 'dashboard' && ACCENTS.includes(s.accent))
             this.add_style_class_name(`accent-${s.accent}`);
+        this.ensure_style();
 
         this._dash.visible = mode === 'dashboard';
         this._content.visible = mode !== 'dashboard';
@@ -613,31 +872,36 @@ class Island extends St.BoxLayout {
             this._icon.icon_name = s.icon || 'dialog-information-symbolic';
             this._icon.show();
         }
+        this._pillEq.actor.visible = s.kind === 'media' && mode === 'compact';
+        this._pillEq.running = this._pillEq.actor.visible && !!s.playing;
 
-        this._applyMedia();
-        this._syncEqualizer();
+        this._applyHome();
         this._tick();
         this._syncTicker();
     }
 
-    _applyMedia() {
+    _applyHome() {
         const m = this._media;
-        this._mEmpty.visible = !m;
-        this._mCol.visible = !!m;
+        this._mTitle.text = m?.title ?? 'Not playing';
+        this._mSub.text = m ? m.subtitle ?? '' : 'Start music in any player';
         this._mArt.visible = !!m?.art;
-        this._mIcon.visible = !!m && !m.art;
-        if (!m)
-            return;
-        if (m.art)
+        if (m?.art)
             this._mArt.style = `background-image: url("file://${encodeURI(m.art)}");`;
-        this._mTitle.text = m.title ?? '';
-        this._mSub.text = m.subtitle ?? '';
-        this._mSub.visible = !!m.subtitle;
-        this._progress.visible = !!m.timing;
-        this._playBtn.child.icon_name = m.playing ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
+        this._mEq.actor.visible = !!m;
+        this._mEq.running = !!m?.playing && this._dashOpen;
+        this._progress.visible = !!m?.timing;
+        this._controls.reactive = !!m;
+        this._controls.opacity = m ? 255 : 90;
+        this._playBtn.child.icon_name = m?.playing ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
+
+        const now = GLib.DateTime.new_now_local();
+        this._todayDate.text = now.format('%a, %-d %b').toUpperCase();
+        const h = now.get_hour();
+        this._todayTitle.text = h < 5 ? 'Working late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+        this._focusRow.btn.label = this._timer ? 'Stop' : 'Start';
     }
 
-    // Live parts: clock, countdown/elapsed, media progress.
+    // Live parts: clock, countdown/elapsed, media progress, focus timer.
     _tick() {
         if (!this._wallClock)
             return;
@@ -657,13 +921,20 @@ class Island extends St.BoxLayout {
         this._trailing.text = trailing;
         this._trailing.visible = trailing !== '';
 
+        if (!this._dashOpen)
+            return;
+        this._dashClock.text = this._wallClock.clock;
+        this._focusRow.sub.text = this._timer
+            ? `${this._timer.title} · ${fmtClock((this._timer.endsAt - now) / 1000)} left`
+            : '25 min of deep work';
+
         const m = this._media;
         const t = m?.timing;
-        if (t && this._dashOpen && this._tab === 'media') {
+        if (t && this._tab === 'home') {
             const elapsed = m.playing ? (now - t.at) / 1000 * (t.rate || 1) : 0;
             const pos = Math.min(t.length, Math.max(0, t.position + elapsed));
             this._posLabel.text = fmtClock(pos);
-            this._lenLabel.text = fmtClock(t.length);
+            this._remLabel.text = `-${fmtClock(t.length - pos)}`;
             const w = this._track.width;
             if (w > 0)
                 this._fill.width = Math.round(w * (t.length ? pos / t.length : 0));
@@ -678,7 +949,7 @@ class Island extends St.BoxLayout {
     _syncTicker() {
         const s = this._state;
         const needed = !!(s.endsAt || s.startedAt ||
-            (this._dashOpen && this._tab === 'media' && this._media?.playing));
+            (this._dashOpen && this._tab === 'home' && (this._media?.playing || this._timer)));
         if (needed && !this._tickId) {
             this._tickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
                 this._tick();
@@ -709,10 +980,10 @@ class Island extends St.BoxLayout {
         if (button !== Clutter.BUTTON_PRIMARY)
             return Clutter.EVENT_PROPAGATE;
         const s = this._state;
-        if (s.kind !== 'media' && s.click) // e.g. dismiss a notification
+        if (s.kind !== 'media' && s.kind !== 'timer' && s.click) // e.g. dismiss a notification
             this._ext.action(s.click);
         else
-            this.openDash(this._media ? 'media' : this._tab);
+            this.openDash('home');
         return Clutter.EVENT_STOP;
     }
 
@@ -737,6 +1008,20 @@ class Island extends St.BoxLayout {
 
     // ---------- dashboard ----------
 
+    // From `island open [tab]` (bind it to a keyboard shortcut).
+    toggleDash(tab) {
+        tab = TAB_ALIASES[tab] ?? tab;
+        const valid = TABS.some(([id]) => id === tab);
+        if (this._dashOpen) {
+            if (valid && tab !== this._tab)
+                this._showTab(tab);
+            else
+                this._closeDash();
+            return;
+        }
+        this.openDash(valid ? tab : 'home');
+    }
+
     openDash(tab) {
         if (this._dashOpen)
             return;
@@ -747,37 +1032,16 @@ class Island extends St.BoxLayout {
             return;
         }
         this._dashOpen = true;
-        this._afterMorph = () => this._focusTab();
+        this._tab = tab; // so the morph targets the right size
         this._render(this._state);
         this._showTab(tab);
-    }
-
-    _focusTab() {
-        if (!this._dashOpen)
-            return;
-        const target = {
-            ports: this._portEntry, clipboard: this._clipFilter, search: this._searchEntry,
-        }[this._tab] ?? this; // the island itself, so Esc works without a focus ring
-        target.grab_key_focus();
-    }
-
-    // From `island open [tab]` (bind it to a keyboard shortcut).
-    toggleDash(tab) {
-        const valid = TABS.some(([id]) => id === tab);
-        if (this._dashOpen) {
-            if (valid && tab !== this._tab)
-                this._showTab(tab);
-            else
-                this._closeDash();
-            return;
-        }
-        this.openDash(valid ? tab : this._media ? 'media' : this._tab);
     }
 
     _closeDash(render = true) {
         if (!this._dashOpen)
             return;
         this._dashOpen = false;
+        this._mEq.running = false;
         if (this._grab) {
             Main.popModal(this._grab);
             this._grab = null;
@@ -793,9 +1057,14 @@ class Island extends St.BoxLayout {
             btn.checked = tid === id;
         for (const [pid, page] of Object.entries(this._pages))
             page.visible = pid === id;
+        this._tabName.text = TABS.find(([tid]) => tid === id)?.[1] ?? '';
 
         this._stopDocker();
-        if (id === 'docker') {
+        let focus = this;
+        if (id === 'home') {
+            this._applyHome();
+            this._loadDockerCount();
+        } else if (id === 'docker') {
             this._loadDocker();
             this._dockerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, DOCKER_REFRESH_MS, () => {
                 this._loadDocker();
@@ -804,18 +1073,19 @@ class Island extends St.BoxLayout {
         } else if (id === 'ports') {
             this._portEntry.text = '';
             this._loadPorts();
-            this._portEntry.grab_key_focus();
+            focus = this._portEntry;
         } else if (id === 'clipboard') {
             this._clipFilter.text = '';
             this._loadClipboard();
-            this._clipFilter.grab_key_focus();
+            focus = this._clipFilter;
         } else if (id === 'search') {
             this._addRow.hide();
             this._loadSites();
-            this._searchEntry.grab_key_focus();
-        } else {
-            this.grab_key_focus();
+            focus = this._searchEntry;
         }
+        focus.grab_key_focus();
+        this._mEq.running = id === 'home' && !!this._media?.playing;
+        this.relayout(true); // tabs have different heights
         this._tick();
         this._syncTicker();
     }
@@ -832,181 +1102,22 @@ class Island extends St.BoxLayout {
         lbl.visible = !!text;
     }
 
-    // ----- Docker tab -----
-
-    _loadDocker() {
-        this._ext.call('DockerList', [], (res, err) => {
-            if (!this._dashOpen || this._tab !== 'docker')
-                return;
-            if (err) {
-                this._dockerList.destroy_all_children();
-                this._message(this._dockerMsg, err.message.replace(/^.*?Error\.Failed: /, ''));
-                return;
-            }
-            const list = JSON.parse(res[0]);
-            this._message(this._dockerMsg, list.length ? '' : 'No running containers');
-            this._renderDocker(list);
-        });
-    }
-
-    _renderDocker(list) {
-        this._dockerList.destroy_all_children();
-        let project = null;
-        for (const c of list) {
-            if (c.project !== project) {
-                project = c.project;
-                this._dockerList.add_child(label('goisland-group', {text: (project || 'standalone').toUpperCase()}));
-            }
-            const row = new St.BoxLayout({style_class: 'goisland-row'});
-            const healthy = c.state === 'running' && !/unhealthy/.test(c.status);
-            row.add_child(new St.Widget({
-                style_class: `goisland-dot ${healthy ? 'ok' : 'bad'}`, y_align: Clutter.ActorAlign.CENTER,
-            }));
-            const col = new St.BoxLayout({vertical: true, x_expand: true});
-            col.add_child(label('goisland-row-title', {text: c.name}));
-            const meta = [c.status, c.ports && `:${c.ports}`, c.image].filter(Boolean).join('  ·  ');
-            col.add_child(label('goisland-row-sub', {text: meta}));
-            row.add_child(col);
-            for (const [op, icon] of [['restart', 'view-refresh-symbolic'], ['stop', 'media-playback-stop-symbolic']]) {
-                row.add_child(iconButton(icon, 'goisland-row-btn', () => {
-                    row.opacity = 128;
-                    this._ext.call('DockerAction', [c.id, op], () => this._loadDocker());
-                }, `${op} ${c.name}`));
-            }
-            this._dockerList.add_child(row);
-        }
-    }
-
-    // ----- Ports tab -----
-
-    _loadPorts() {
-        this._ext.call('PortsList', [], (res, err) => {
-            if (!this._dashOpen || this._tab !== 'ports')
-                return;
-            this._ports = err ? [] : JSON.parse(res[0]);
-            this._renderPorts(err ? 'Could not list ports' : null);
-        });
-    }
-
-    _renderPorts(error = null) {
-        this._portList.destroy_all_children();
-        const q = this._portEntry.text.trim().replace(/^:/, '').toLowerCase();
-        const items = q
-            ? this._ports.filter(l => `${l.port} ${l.process ?? ''} ${l.container ?? ''} ${l.cmd ?? ''}`.toLowerCase().includes(q))
-            : this._ports;
-        this._message(this._portMsg, error ?? (items.length ? '' : q ? 'No matches (Enter kills that port)' : 'Nothing listening'));
-        for (const l of items) {
-            const mine = !!(l.container || l.pid);
-            const row = new St.BoxLayout({style_class: `goisland-row${mine ? '' : ' muted'}`});
-            row.add_child(label('goisland-port', {text: `:${l.port}`}));
-            const col = new St.BoxLayout({vertical: true, x_expand: true});
-            const owner = l.container ? `${l.container}  ·  container` : l.process ? `${l.process}  ·  pid ${l.pid}` : 'System service';
-            col.add_child(label('goisland-row-title', {text: owner}));
-            col.add_child(label('goisland-row-sub', {text: [l.addr, l.cmd].filter(Boolean).join('  ·  ')}));
-            row.add_child(col);
-            if (l.container || l.pid) {
-                const verb = l.container ? 'Stop' : 'Kill';
-                const btn = new St.Button({style_class: 'goisland-pill-btn danger', label: verb, can_focus: true, y_align: Clutter.ActorAlign.CENTER});
-                let armed = false;
-                btn.connect('clicked', () => {
-                    if (!armed) { // two-step confirm
-                        armed = true;
-                        btn.label = 'Sure?';
-                        btn.add_style_pseudo_class('armed');
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
-                            if (armed && btn.get_stage()) {
-                                armed = false;
-                                btn.label = verb;
-                                btn.remove_style_pseudo_class('armed');
-                            }
-                            return GLib.SOURCE_REMOVE;
-                        });
-                        return;
-                    }
-                    armed = false;
-                    row.opacity = 128;
-                    this._freePort(l.port);
-                });
-                row.add_child(btn);
-            }
-            this._portList.add_child(row);
-        }
-    }
-
-    _freePort(port) {
-        // The daemon also pops the island with the result once the dashboard closes.
-        this._ext.call('PortFree', [port], () => {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
-                if (this._dashOpen && this._tab === 'ports')
-                    this._loadPorts();
-                return GLib.SOURCE_REMOVE;
-            });
-        });
-    }
-
-    // ----- Clipboard tab -----
-
-    _loadClipboard() {
-        this._ext.call('ClipboardList', [], (res, err) => {
-            if (err) {
-                this._clipItems = [];
-                this._message(this._clipMsg, 'Daemon not running');
-            } else {
-                this._clipItems = JSON.parse(res[0]) ?? [];
-            }
-            this._renderClipboard();
-        });
-    }
-
-    _filteredClips() {
-        const q = this._clipFilter.text.trim().toLowerCase();
-        return q ? this._clipItems.filter(it => it.text.toLowerCase().includes(q)) : this._clipItems;
-    }
-
-    _renderClipboard() {
-        this._clipList.destroy_all_children();
-        const items = this._filteredClips();
-        if (this._clipItems.length && !items.length)
-            this._message(this._clipMsg, 'No matches');
-        else
-            this._message(this._clipMsg, this._clipItems.length ? '' : 'Copy something and it shows up here');
-        for (const it of items.slice(0, 100)) {
-            const box = new St.BoxLayout({x_expand: true});
-            const preview = it.text.slice(0, 300).replace(/\s*\n\s*/g, ' ⏎ ');
-            box.add_child(label('goisland-clip-text', {text: preview, x_expand: true}));
-            const pin = iconButton('view-pin-symbolic', `goisland-row-btn${it.pinned ? ' pinned' : ''}`,
-                () => this._ext.call('ClipboardPin', [it.id, !it.pinned], () => this._loadClipboard()),
-                it.pinned ? 'Unpin' : 'Pin');
-            const del = iconButton('edit-delete-symbolic', 'goisland-row-btn',
-                () => this._ext.call('ClipboardDelete', [it.id], () => this._loadClipboard()), 'Delete');
-            box.add_child(pin);
-            box.add_child(del);
-            const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
-            row.connect('clicked', () => this._copy(it.text));
-            this._clipList.add_child(row);
-        }
-    }
-
-    _copy(text) {
-        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
-        this._closeDash();
-    }
-
     // ---------- layout ----------
 
     _size() {
-        const barH = Math.max(24, Main.panel.height - 6);
+        const barH = Main.panel.height;
         switch (this._mode) {
         case 'idle': {
+            this._content.set_size(-1, -1); // measure natural width
             const [, natural] = this._content.get_preferred_width(barH);
-            return [Math.max(140, Math.ceil(natural) + 36), barH];
+            return [Math.max(150, Math.ceil(natural) + 44), barH];
         }
         case 'notify':
-            return [400, 64];
+            return [420, 72];
         case 'dashboard':
-            return [660, 440];
+            return [DASH_WIDTH, DASH_HEIGHT[this._tab] ?? DASH_HEIGHT.default];
         default:
-            return [300, barH];
+            return [320, barH];
         }
     }
 
@@ -1014,7 +1125,6 @@ class Island extends St.BoxLayout {
     // clock. (Clutter's set_progress_func is unusable from GJS: it freezes
     // the transition.) Geometry is rounded so text never renders blurry.
     _springTo(target, duration, onDone = null, key = 'geom') {
-        this._springs ??= {};
         this._springs[key]?.stop();
         const from = {};
         for (const k of Object.keys(target))
@@ -1037,30 +1147,34 @@ class Island extends St.BoxLayout {
         tl.start();
     }
 
-    relayout(animate, onDone = null) {
+    relayout(animate) {
         const mon = Main.layoutManager.primaryMonitor;
         if (!mon)
             return;
         const [width, height] = this._size();
-        const barH = Math.max(24, Main.panel.height - 6);
-        const t = {
-            x: mon.x + Math.round((mon.width - width) / 2),
-            y: mon.y + Math.round((Main.panel.height - barH) / 2),
-            width,
-            height,
-        };
-        const unchanged = this.x === t.x && this.y === t.y && this.width === t.width && this.height === t.height;
-        if (!animate || unchanged) {
-            if (!animate) {
-                this._springs?.geom?.stop();
-                delete this._springs?.geom;
-            }
-            if (!this._springs?.geom)
-                this.set(t);
-            onDone?.();
+        const t = {x: mon.x + Math.round((mon.width - width) / 2), y: mon.y, width, height};
+
+        // Pin the visible layer to its final inner size so the morph reveals
+        // it instead of reflowing it every frame.
+        const node = this.get_theme_node();
+        const innerW = width - node.get_horizontal_padding() -
+            node.get_border_width(St.Side.LEFT) - node.get_border_width(St.Side.RIGHT);
+        const innerH = height - node.get_vertical_padding() -
+            node.get_border_width(St.Side.TOP) - node.get_border_width(St.Side.BOTTOM);
+        const layer = this._mode === 'dashboard' ? this._dash : this._content;
+        layer.set_size(Math.max(0, innerW), Math.max(0, innerH));
+
+        const same = a => a && a.x === t.x && a.y === t.y && a.width === t.width && a.height === t.height;
+        if (animate && this._springs.geom && same(this._target))
+            return; // already heading there
+        this._target = t;
+        if (!animate || same(this)) {
+            this._springs.geom?.stop();
+            delete this._springs.geom;
+            this.set(t);
             return;
         }
-        this._springTo(t, MORPH_MS, onDone);
+        this._springTo(t, MORPH_MS);
     }
 
     _show() {
@@ -1081,7 +1195,7 @@ export default class GoIslandExtension extends Extension {
         });
 
         // Take over the clock: keep the dateMenu button (its menu still
-        // anchors there, opened via right-click) but hide it under the pill.
+        // anchors there, opened via right-click) but hide it under the notch.
         this._dateMenu = Main.panel.statusArea.dateMenu;
         this._dateMenu?.container.set_opacity(0);
 
@@ -1137,10 +1251,10 @@ export default class GoIslandExtension extends Extension {
                 return;
             }
             this._proxy = proxy;
-            this._signalId = proxy.connectSignal('StateChanged',
-                (_p, _sender, [json]) => this._applyState(json));
-            this._openId = proxy.connectSignal('OpenDashboard',
-                (_p, _sender, [tab]) => this._island?.toggleDash(tab));
+            this._signalIds = [
+                proxy.connectSignal('StateChanged', (_p, _sender, [json]) => this._applyState(json)),
+                proxy.connectSignal('OpenDashboard', (_p, _sender, [tab]) => this._island?.toggleDash(tab)),
+            ];
             this.call('GetState', [], (result, err) => {
                 if (!err && !cancellable.is_cancelled())
                     this._applyState(result[0]);
@@ -1151,13 +1265,10 @@ export default class GoIslandExtension extends Extension {
     _disconnect() {
         this._cancellable?.cancel();
         this._cancellable = null;
-        if (this._proxy && this._signalId)
-            this._proxy.disconnectSignal(this._signalId);
-        if (this._proxy && this._openId)
-            this._proxy.disconnectSignal(this._openId);
-        this._openId = 0;
+        for (const id of this._signalIds ?? [])
+            this._proxy?.disconnectSignal(id);
+        this._signalIds = [];
         this._proxy = null;
-        this._signalId = 0;
         this._island?.setState(IDLE);
     }
 

@@ -2,7 +2,7 @@
 
 A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with a pill. When nothing is happening the pill shows the time. When something happens, the pill grows down out of the top bar.
 
-- **Left-click** opens the dashboard, with tabs for Now Playing, Docker, Ports, Clipboard and Web.
+- **Left-click** opens the dashboard, with tabs for Home, Docker, Ports, Clipboard and Web.
 - **Right-click** opens the regular calendar and notifications menu.
 - **Esc** or clicking outside the dashboard closes it.
 - **`island open [tab]`** toggles the dashboard from the command line. Bind it to a key in Settings → Keyboard → Custom Shortcuts, for example Super+Space → `island open`.
@@ -11,7 +11,7 @@ A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with
 
 | Tab | What it does |
 |---|---|
-| Now Playing | Large album art, a live progress bar, and previous / play-pause / next. |
+| Home | A Now Playing card (art, live progress with time remaining, controls) and a Today card with a one-click focus timer and a container summary. |
 | Docker | Running containers grouped by compose project, with health, ports and image. Each one has restart and stop buttons. Refreshes live. |
 | Ports | Every listening TCP port and which process or container owns it. **Kill** frees the port (two clicks to confirm). You can also type a port number and press Enter to free it. Ports published by Docker stop their container. |
 | Clipboard | A history of everything you copy, saved across reboots. Click an entry to copy it again; you can also pin, delete or filter. Copies flagged by password managers are skipped. |
