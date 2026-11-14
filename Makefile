@@ -20,7 +20,7 @@ install-daemon: build
 
 install-extension:
 	mkdir -p $(EXT_DIR)
-	cp extension/$(UUID)/* $(EXT_DIR)/
+	cp -r extension/$(UUID)/. $(EXT_DIR)/
 	@echo "Extension copied. First install: restart GNOME Shell (X11: Alt+F2, r), then:"
 	@echo "  gnome-extensions enable $(UUID)"
 

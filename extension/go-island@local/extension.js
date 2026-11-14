@@ -45,6 +45,7 @@ const IFACE_XML = `
       <arg name="id" type="u" direction="in"/><arg name="pinned" type="b" direction="in"/>
     </method>
     <method name="ClipboardClear"/>
+    <method name="AgentsList"><arg name="sessions" type="s" direction="out"/></method>
     <signal name="StateChanged"><arg name="state" type="s"/></signal>
     <signal name="OpenDashboard"><arg name="tab" type="s"/></signal>
   </interface>
@@ -65,14 +66,24 @@ const MODES = ['idle', 'compact', 'notify', 'dashboard'];
 const ACCENTS = ['ok', 'warn', 'error'];
 const TABS = [
     ['home', 'Home', 'user-home-symbolic'],
+    ['agents', 'Agents', 'utilities-terminal-symbolic'],
     ['docker', 'Docker', 'network-server-symbolic'],
     ['ports', 'Ports', 'network-wired-symbolic'],
     ['clipboard', 'Clipboard', 'edit-paste-symbolic'],
     ['search', 'Web', 'web-browser-symbolic'],
 ];
-const TAB_ALIASES = {media: 'home', web: 'search'};
+const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {home: 292, search: 340, default: 480};
+const DASH_HEIGHT = {home: 292, search: 340, agents: 400, default: 480};
+const AGENT_REFRESH_MS = 2000;
+const LIVE_KINDS = new Set(['agent', 'task', 'service']);
+const AGENT_STATES = {
+    working: ['Working', 'blue'],
+    approval: ['Needs approval', 'yellow'],
+    done: ['Finished', 'green'],
+    error: ['Error', 'red'],
+    ready: ['Idle', 'grey'],
+};
 const SITE_COLS = 8;
 const TILE_COLORS = ['#0a84ff', '#30d158', '#ff9f0a', '#ff375f', '#bf5af2', '#64d2ff', '#ff453a', '#5e5ce6'];
 // Password managers mark secrets with this mime type; never record them.
@@ -134,6 +145,30 @@ function openUri(uri) {
     } catch (e) {
         console.error(`go-island: open ${uri}: ${e.message}`);
     }
+}
+
+// Focus the first window owned by any of the given pids (nearest first),
+// e.g. agent → shell → terminal/IDE. Returns whether a window was found.
+function focusPids(pids) {
+    const wins = global.get_window_actors().map(a => a.meta_window).filter(w => w && !w.skip_taskbar);
+    for (const pid of pids ?? []) {
+        const mine = wins.filter(w => w.get_pid() === pid);
+        if (mine.length) {
+            mine.sort((a, b) => b.get_user_time() - a.get_user_time());
+            Main.activateWindow(mine[0]);
+            return true;
+        }
+    }
+    return false;
+}
+
+function ago(ms) {
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 60)
+        return 'now';
+    if (s < 3600)
+        return `${Math.floor(s / 60)}m ago`;
+    return `${Math.floor(s / 3600)}h ago`;
 }
 
 // A tiny animated "now playing" equalizer.
@@ -217,6 +252,10 @@ class Island extends St.BoxLayout {
         this._buildDash();
 
         this.connect('button-release-event', (_a, event) => this._onClick(event));
+        this.connect('notify::hover', () => {
+            if (!this._dashOpen && LIVE_KINDS.has(this._state.kind))
+                this._render(this._state);
+        });
         this.connect('captured-event', (_a, event) => this._onCapturedEvent(event));
         this.connect('destroy', () => {
             for (const tl of Object.values(this._springs))
@@ -285,6 +324,7 @@ class Island extends St.BoxLayout {
         const body = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
         this._pages = {
             home: this._buildHomePage(),
+            agents: this._buildAgentsPage(),
             docker: this._buildDockerPage(),
             ports: this._buildPortsPage(),
             clipboard: this._buildClipboardPage(),
@@ -390,6 +430,58 @@ class Island extends St.BoxLayout {
                 this._dockerRow.sub.text = `${list.length} running${bad ? ` · ${bad} unhealthy` : ''}`;
             }
         });
+    }
+
+    // ----- Agents -----
+
+    _buildAgentsPage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page', vertical: true});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', vertical: true, x_expand: true, y_expand: true});
+        this._agentList = new St.BoxLayout({vertical: true, style_class: 'goisland-list'});
+        this._agentMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
+        card.add_child(this._agentMsg);
+        card.add_child(scrollView(this._agentList));
+        page.add_child(card);
+        return page;
+    }
+
+    _loadAgents() {
+        this._ext.call('AgentsList', [], (res, err) => {
+            if (!this._dashOpen || this._tab !== 'agents')
+                return;
+            const list = err ? [] : JSON.parse(res[0]);
+            this._message(this._agentMsg, err ? 'Daemon not running'
+                : list.length ? '' : 'No agent sessions yet. Run `island claude install`, then start Claude Code.');
+            this._renderAgents(list);
+        });
+    }
+
+    _renderAgents(list) {
+        this._agentList.destroy_all_children();
+        for (const a of list) {
+            const [stateName, color] = AGENT_STATES[a.state] ?? AGENT_STATES.ready;
+            const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-agent-row'});
+            box.add_child(new St.Widget({style_class: `goisland-dot ${color}`, y_align: Clutter.ActorAlign.CENTER}));
+            const col = new St.BoxLayout({vertical: true, x_expand: true});
+            const head = new St.BoxLayout({style_class: 'goisland-agent-head'});
+            head.add_child(label('goisland-row-title', {text: `${a.agent} · ${a.project || 'session'}`}));
+            head.add_child(label(`goisland-agent-state ${color}`, {text: stateName}));
+            col.add_child(head);
+            col.add_child(label('goisland-row-sub', {text: a.detail || a.title || ''}));
+            box.add_child(col);
+            const meta = new St.BoxLayout({vertical: true, y_align: Clutter.ActorAlign.CENTER});
+            const usage = [a.costUsd ? `$${a.costUsd.toFixed(2)}` : '', a.contextPct ? `${Math.round(a.contextPct)}% ctx` : '']
+                .filter(Boolean).join('  ·  ');
+            meta.add_child(label('goisland-agent-usage', {text: usage || ' ', x_align: Clutter.ActorAlign.END}));
+            meta.add_child(label('goisland-agent-when', {text: ago(a.updatedAt), x_align: Clutter.ActorAlign.END}));
+            box.add_child(meta);
+            const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
+            row.connect('clicked', () => {
+                if (focusPids(a.focus))
+                    this._closeDash();
+            });
+            this._agentList.add_child(row);
+        }
     }
 
     // ----- Docker -----
@@ -787,6 +879,9 @@ class Island extends St.BoxLayout {
             return 'idle';
         if (s.kind === 'media')
             return 'compact';
+        // Long-lived activity stays slim; hover to see the detail line.
+        if (LIVE_KINDS.has(s.kind) && !s.accent)
+            return this.hover && s.subtitle ? 'notify' : 'compact';
         return s.subtitle ? 'notify' : 'compact';
     }
 
@@ -869,7 +964,10 @@ class Island extends St.BoxLayout {
             this._icon.hide();
         } else {
             this._art.hide();
-            this._icon.icon_name = s.icon || 'dialog-information-symbolic';
+            if (s.icon === 'agent')
+                this._icon.gicon = this._ext.agentIcon;
+            else
+                this._icon.icon_name = s.icon || 'dialog-information-symbolic';
             this._icon.show();
         }
         this._pillEq.actor.visible = s.kind === 'media' && mode === 'compact';
@@ -980,10 +1078,16 @@ class Island extends St.BoxLayout {
         if (button !== Clutter.BUTTON_PRIMARY)
             return Clutter.EVENT_PROPAGATE;
         const s = this._state;
+        // Context-aware items (agents, builds, services) jump to their window.
+        if (s.focus?.length && focusPids(s.focus)) {
+            if (s.click)
+                this._ext.action(s.click);
+            return Clutter.EVENT_STOP;
+        }
         if (s.kind !== 'media' && s.kind !== 'timer' && s.click) // e.g. dismiss a notification
             this._ext.action(s.click);
         else
-            this.openDash('home');
+            this.openDash(s.kind === 'agent' ? 'agents' : 'home');
         return Clutter.EVENT_STOP;
     }
 
@@ -1061,7 +1165,13 @@ class Island extends St.BoxLayout {
 
         this._stopDocker();
         let focus = this;
-        if (id === 'home') {
+        if (id === 'agents') {
+            this._loadAgents();
+            this._dockerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, AGENT_REFRESH_MS, () => {
+                this._loadAgents();
+                return GLib.SOURCE_CONTINUE;
+            });
+        } else if (id === 'home') {
             this._applyHome();
             this._loadDockerCount();
         } else if (id === 'docker') {
@@ -1188,6 +1298,7 @@ class Island extends St.BoxLayout {
 
 export default class GoIslandExtension extends Extension {
     enable() {
+        this.agentIcon = Gio.icon_new_for_string(`${this.path}/icons/agent.svg`);
         this._island = new Island(this);
         Main.layoutManager.addTopChrome(this._island, {
             affectsInputRegion: true,

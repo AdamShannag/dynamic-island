@@ -21,7 +21,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   island notify [-t ms] [-i icon] [-a ok|warn|error] TITLE [BODY]
   island run [-n name] -- COMMAND [ARGS...]   show a command in the island while it runs
-  island open [media|docker|ports|clipboard|search]   toggle the dashboard
+  island open [home|agents|docker|ports|clipboard|web]   toggle the dashboard
+  island claude install|uninstall             report Claude Code sessions to the island
   island kill-port PORT                       free a port (kills the process / stops the container)
   island pomodoro start|stop|toggle
   island action NAME                          e.g. media.play-pause, notify.dismiss
@@ -39,12 +40,15 @@ func main() {
 	if len(os.Args) < 2 {
 		usage()
 	}
+	args := os.Args[2:]
+	if os.Args[1] == "claude" {
+		os.Exit(claudeCmd(args)) // handles its own (optional) bus connection
+	}
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		fail(err)
 	}
 	obj = conn.Object(dbusapi.BusName, dbusapi.Path)
-	args := os.Args[2:]
 
 	switch os.Args[1] {
 	case "notify":
@@ -60,6 +64,8 @@ func main() {
 		err = call("Notify", fs.Arg(0), body, *icon, *accent, int32(*timeout)).Err
 	case "run":
 		os.Exit(run(args))
+	case "claude":
+		os.Exit(claudeCmd(args))
 	case "open":
 		tab := ""
 		if len(args) > 0 {

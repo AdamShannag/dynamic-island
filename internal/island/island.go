@@ -29,6 +29,7 @@ type View struct {
 	StartedAt int64    `json:"startedAt,omitempty"` // unix ms; UI shows elapsed time
 	Playing   bool     `json:"playing,omitempty"`
 	Timing    *Timing  `json:"timing,omitempty"`
+	Focus     []int    `json:"focus,omitempty"`   // pids; clicking focuses the first with a window
 	Actions   []string `json:"actions,omitempty"` // action names the UI may offer
 }
 
@@ -66,8 +67,9 @@ type Activity struct {
 
 // Common priorities so plugins agree on ordering.
 const (
-	PriorityCI      = 8  // background CI status (below media)
+	PriorityService = 9  // running dev servers (below media)
 	PriorityAmbient = 10 // long-lived background state (media)
+	PriorityAgent   = 12 // a coding agent working
 	PriorityTimer   = 15 // pomodoro
 	PriorityTask    = 20 // a running `island run` command
 	PriorityStatus  = 30 // short status blips (charging)

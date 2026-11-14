@@ -14,6 +14,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
+	"go-island/internal/agents"
 	"go-island/internal/clipboard"
 	"go-island/internal/docker"
 	"go-island/internal/island"
@@ -90,6 +91,16 @@ const introXML = `
       <arg name="pinned" type="b" direction="in"/>
     </method>
     <method name="ClipboardClear"/>
+    <method name="AgentEvent">
+      <arg name="event" type="s" direction="in"/>
+      <arg name="focus" type="ai" direction="in"/>
+    </method>
+    <method name="AgentStatus">
+      <arg name="status" type="s" direction="in"/>
+    </method>
+    <method name="AgentsList">
+      <arg name="sessions" type="s" direction="out"/>
+    </method>
     <method name="Open">
       <arg name="tab" type="s" direction="in"/>
     </method>
@@ -114,10 +125,21 @@ type api struct {
 	mu    sync.Mutex
 	tasks map[uint32]task
 
-	conn  *dbus.Conn
-	clip  *clipboard.Store
-	sites *sites.Store
+	conn   *dbus.Conn
+	agents *agents.Tracker
+	clip   *clipboard.Store
+	sites  *sites.Store
 }
+
+func (a *api) AgentEvent(event string, focus []int32) *dbus.Error {
+	pids := make([]int, len(focus))
+	for i, p := range focus {
+		pids[i] = int(p)
+	}
+	return dbusErr(a.agents.HookEvent([]byte(event), pids))
+}
+func (a *api) AgentStatus(status string) *dbus.Error { return dbusErr(a.agents.Status([]byte(status))) }
+func (a *api) AgentsList() (string, *dbus.Error)     { return toJSON(a.agents.List()) }
 
 // Open asks the UI to toggle the dashboard (optionally on a given tab).
 func (a *api) Open(tab string) *dbus.Error {
@@ -272,7 +294,7 @@ func (a *api) TaskEnd(id uint32, exitCode int32) *dbus.Error {
 
 // Serve claims the bus name, exports the API and wires StateChanged signals.
 func Serve(conn *dbus.Conn, m *island.Manager, clip *clipboard.Store, st *sites.Store) error {
-	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn}
+	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn, agents: agents.NewTracker(m)}
 	m.HandleAction("notify.dismiss", func() { m.ClearPrefix("notify.") })
 
 	if err := conn.Export(a, Path, Iface); err != nil {

@@ -31,15 +31,13 @@ type Listener struct {
 
 var procRe = regexp.MustCompile(`\("([^"]+)",pid=(\d+)`)
 
-// List returns listening TCP sockets, one entry per (port, process).
+// List returns listening TCP sockets, one entry per (port, process),
+// annotated with the Docker container that publishes each port.
 func List(ctx context.Context) ([]Listener, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "ss", "-ltnpH").Output()
+	socks, err := Sockets(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("ss: %w", err)
+		return nil, err
 	}
-
 	containers := map[int]docker.Container{} // published port -> container
 	if list, err := docker.List(ctx); err == nil {
 		for _, c := range list {
@@ -51,6 +49,22 @@ func List(ctx context.Context) ([]Listener, error) {
 		}
 	}
 
+	for i := range socks {
+		if c, ok := containers[socks[i].Port]; ok {
+			socks[i].Container, socks[i].ContainerID = c.Name, c.ID
+		}
+	}
+	return socks, nil
+}
+
+// Sockets lists listening TCP sockets without Docker lookups (cheap).
+func Sockets(ctx context.Context) ([]Listener, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ss", "-ltnpH").Output()
+	if err != nil {
+		return nil, fmt.Errorf("ss: %w", err)
+	}
 	seen := map[string]bool{}
 	var res []Listener
 	for _, line := range strings.Split(string(out), "\n") {
@@ -77,10 +91,7 @@ func List(ctx context.Context) ([]Listener, error) {
 			l.PID, _ = strconv.Atoi(m[2])
 			l.Cmd = cmdline(l.PID)
 		}
-		if c, ok := containers[port]; ok {
-			l.Container, l.ContainerID = c.Name, c.ID
-		}
-		key := fmt.Sprintf("%d/%d/%s", port, l.PID, l.Container)
+		key := fmt.Sprintf("%d/%d", port, l.PID)
 		if seen[key] { // same socket on IPv4 + IPv6
 			continue
 		}

@@ -7,10 +7,50 @@ A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with
 - **Esc** or clicking outside the dashboard closes it.
 - **`island open [tab]`** toggles the dashboard from the command line. Bind it to a key in Settings → Keyboard → Custom Shortcuts, for example Super+Space → `island open`.
 
+## Context awareness
+
+You don't need to wrap anything. The daemon checks your processes about once a second and recognises dev commands:
+
+- **Go:** `go build`, `test`, `mod`, `generate` and `run`
+- **Maven:** including IntelliJ's built-in runner
+- **Gradle**
+- **JavaScript:** npm, pnpm, yarn and bun
+- **Others:** cargo, make, `docker build`, pytest, uvicorn and Django
+- **IDE run configurations:** JetBrains Java and Go run configurations
+
+It also traces each command back to the app that started it: GoLand, IntelliJ, VS Code, Cursor, a terminal, or Claude Code.
+
+- **Builds and tests** appear as a slim pill with a live timer. Hover over it to see the project and the app. Tasks launched from an IDE also show a "Finished" popup.
+- **Dev servers** (`go run`, `npm run dev`, `spring-boot:run`, `bootRun`, IDE run configurations) appear as a service along with their ports, for example `:8080`. Services rank below music.
+- **Clicking** jumps to the window that started the command.
+
+Linux won't let one process read another unrelated process's exit code. Commands the watcher detects on its own are therefore reported as *Finished*, not passed or failed. `island run` and the bash hook do know the exit code.
+
+## Claude Code
+
+```sh
+island claude install      # adds hooks + wraps your status line (backs up ~/.claude/settings.json first)
+island claude uninstall    # removes exactly what install added
+```
+
+The island shows a Claude session as:
+
+| State | Shown as |
+|---|---|
+| Working | A slim pill: `Claude · project`, a live timer, and the current tool on hover (e.g. `$ go test ./...` or `Editing ports.go`) |
+| Needs approval | A yellow popup with the command or tool waiting for you |
+| Finished | A popup with the turn's duration, its cost, and the start of Claude's reply. Only for turns longer than 5 s. |
+| Error | A red popup with the API error (rate limit, overloaded and so on), from the `StopFailure` hook |
+
+Clicking any of these focuses the terminal or IDE the session runs in. The **Agents** tab lists every session with its state, cost and context usage.
+
+Cost and context usage come from Claude Code's documented status-line feed. Your own status-line command still runs and still prints the same output. Transcripts are not parsed, because their format is internal and changes between versions.
+
 ## Dashboard
 
 | Tab | What it does |
 |---|---|
+| Agents | Claude Code sessions with their state, cost, context usage and when they were last active. Click a session to focus its window. |
 | Home | A Now Playing card (art, live progress with time remaining, controls) and a Today card with a one-click focus timer and a container summary. |
 | Docker | Running containers grouped by compose project, with health, ports and image. Each one has restart and stop buttons. Refreshes live. |
 | Ports | Every listening TCP port and which process or container owns it. **Kill** frees the port (two clicks to confirm). You can also type a port number and press Enter to free it. Ports published by Docker stop their container. |

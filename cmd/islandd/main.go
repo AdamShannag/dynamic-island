@@ -69,6 +69,7 @@ func main() {
 		plugins.NewNotifications(cfg.Notifications.IgnoreApps),
 		plugins.NewPomodoro(cfg.Pomodoro.FocusMinutes, cfg.Pomodoro.BreakMinutes),
 		plugins.NewDocker(),
+		plugins.NewContext(),
 	}
 
 	var wg sync.WaitGroup
