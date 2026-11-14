@@ -1,0 +1,42 @@
+.goisland {
+  background-color: rgba(8, 8, 10, 0.94);
+  color: #fff;
+  border-radius: 19px;
+  padding: 6px 14px 6px 6px;
+  spacing: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.goisland.notify   { border-radius: 24px; padding: 10px 18px 10px 14px; spacing: 12px; }
+.goisland.expanded { border-radius: 28px; padding: 14px 18px 14px 14px; spacing: 14px; }
+
+/* Album art */
+.goisland-art {
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+  background-size: cover;
+  background-position: center;
+}
+.goisland.expanded .goisland-art { width: 84px; height: 84px; border-radius: 16px; }
+
+/* Fallback icon */
+.goisland-icon { icon-size: 18px; padding-left: 4px; }
+.goisland.notify .goisland-icon   { icon-size: 28px; padding-left: 0; }
+.goisland.expanded .goisland-icon { icon-size: 48px; padding: 18px; }
+
+.goisland-title    { font-weight: bold; font-size: 10.5pt; }
+.goisland-subtitle { font-size: 9pt; color: rgba(255, 255, 255, 0.62); }
+.goisland.expanded .goisland-title { font-size: 12pt; }
+
+.goisland-status { icon-size: 14px; color: rgba(255, 255, 255, 0.7); }
+
+.goisland-controls { spacing: 22px; padding-top: 8px; }
+.goisland-btn {
+  padding: 6px;
+  border-radius: 99px;
+  color: #fff;
+}
+.goisland-btn:hover  { background-color: rgba(255, 255, 255, 0.14); }
+.goisland-btn:active { background-color: rgba(255, 255, 255, 0.24); }
+.goisland-btn-icon   { icon-size: 18px; }
