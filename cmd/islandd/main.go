@@ -14,13 +14,14 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"go-island/internal/config"
 	"go-island/internal/dbusapi"
 	"go-island/internal/island"
 	"go-island/internal/plugins"
 )
 
 func main() {
-	disable := flag.String("disable", "", "comma-separated plugins to disable (mpris,battery)")
+	disable := flag.String("disable", "", "comma-separated plugins to disable (also settable in config)")
 	flag.Parse()
 	log.SetFlags(0) // journald adds timestamps
 
@@ -39,20 +40,32 @@ func main() {
 	}
 	log.Printf("serving %s", dbusapi.BusName)
 
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("config %s: %v (using defaults)", config.Path(), err)
+	}
 	off := map[string]bool{}
-	for _, n := range strings.Split(*disable, ",") {
+	for _, n := range append(strings.Split(*disable, ","), cfg.Disable...) {
 		off[strings.TrimSpace(n)] = true
+	}
+	if e := cfg.Notifications.Enabled; e != nil && !*e {
+		off["notifications"] = true
 	}
 
 	// Register new plugins here.
 	all := []island.Plugin{
 		plugins.NewMPRIS(),
 		plugins.NewBattery(),
+		plugins.NewNotifications(cfg.Notifications.IgnoreApps),
+		plugins.NewPomodoro(cfg.Pomodoro.FocusMinutes, cfg.Pomodoro.BreakMinutes),
+		plugins.NewGitHub(cfg.GitHub.Repos, cfg.GitHub.OnlyMine, cfg.GitHub.IntervalSeconds),
+		plugins.NewDocker(),
 	}
 
 	var wg sync.WaitGroup
 	for _, p := range all {
 		if off[p.Name()] {
+			log.Printf("plugin %s disabled", p.Name())
 			continue
 		}
 		wg.Add(1)

@@ -1,15 +1,15 @@
 // island is the CLI for the Go Island daemon.
-//
-//	island notify [-t ms] [-i icon] TITLE [BODY]
-//	island action NAME        (e.g. media.play-pause)
-//	island state
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/godbus/dbus/v5"
 
@@ -18,10 +18,18 @@ import (
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  island notify [-t ms] [-i icon] TITLE [BODY]
-  island action NAME
+  island notify [-t ms] [-i icon] [-a ok|warn|error] TITLE [BODY]
+  island run [-n name] -- COMMAND [ARGS...]   show a command in the island while it runs
+  island pomodoro start|stop|toggle
+  island action NAME                          e.g. media.play-pause, notify.dismiss
   island state`)
 	os.Exit(2)
+}
+
+var obj dbus.BusObject
+
+func call(method string, args ...any) *dbus.Call {
+	return obj.Call(dbusapi.Iface+"."+method, 0, args...)
 }
 
 func main() {
@@ -32,29 +40,36 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	obj := conn.Object(dbusapi.BusName, dbusapi.Path)
-	method := func(name string) string { return dbusapi.Iface + "." + name }
+	obj = conn.Object(dbusapi.BusName, dbusapi.Path)
+	args := os.Args[2:]
 
 	switch os.Args[1] {
 	case "notify":
 		fs := flag.NewFlagSet("notify", flag.ExitOnError)
 		timeout := fs.Int("t", 5000, "timeout in milliseconds")
 		icon := fs.String("i", "", "icon name (default dialog-information-symbolic)")
-		fs.Parse(os.Args[2:])
+		accent := fs.String("a", "", "accent: ok, warn or error")
+		fs.Parse(args)
 		if fs.NArg() < 1 {
 			usage()
 		}
 		body := strings.Join(fs.Args()[1:], " ")
-		var id uint32
-		err = obj.Call(method("Notify"), 0, fs.Arg(0), body, *icon, int32(*timeout)).Store(&id)
-	case "action":
-		if len(os.Args) != 3 {
+		err = call("Notify", fs.Arg(0), body, *icon, *accent, int32(*timeout)).Err
+	case "run":
+		os.Exit(run(args))
+	case "pomodoro":
+		if len(args) != 1 {
 			usage()
 		}
-		err = obj.Call(method("Action"), 0, os.Args[2]).Err
+		err = call("Action", "pomodoro."+args[0]).Err
+	case "action":
+		if len(args) != 1 {
+			usage()
+		}
+		err = call("Action", args[0]).Err
 	case "state":
 		var s string
-		if err = obj.Call(method("GetState"), 0).Store(&s); err == nil {
+		if err = call("GetState").Store(&s); err == nil {
 			fmt.Println(s)
 		}
 	default:
@@ -63,6 +78,47 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+}
+
+// run executes a command, mirroring it in the island, and exits with its code.
+// If the daemon is unreachable the command still runs.
+func run(args []string) int {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	name := fs.String("n", "", "name to show (default: the command line)")
+	fs.Parse(args)
+	cmdArgs := fs.Args()
+	if len(cmdArgs) == 0 {
+		usage()
+	}
+	title := *name
+	if title == "" {
+		title = strings.Join(cmdArgs, " ")
+	}
+
+	var id uint32
+	tracked := call("TaskStart", title).Store(&id) == nil
+
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT) // let the child handle Ctrl-C, then report
+	code := 0
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		switch {
+		case errors.As(err, &ee):
+			code = ee.ExitCode()
+			if code < 0 { // killed by a signal
+				code = 128 + int(ee.Sys().(syscall.WaitStatus).Signal())
+			}
+		default:
+			fmt.Fprintln(os.Stderr, "island:", err)
+			code = 127
+		}
+	}
+	if tracked {
+		call("TaskEnd", id, int32(code))
+	}
+	return code
 }
 
 func fail(err error) {

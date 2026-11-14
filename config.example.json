@@ -1,0 +1,16 @@
+{
+  "disable": [],
+  "notifications": {
+    "enabled": true,
+    "ignoreApps": ["Spotify"]
+  },
+  "pomodoro": {
+    "focusMinutes": 25,
+    "breakMinutes": 5
+  },
+  "github": {
+    "repos": ["owner/repo"],
+    "onlyMine": true,
+    "intervalSeconds": 60
+  }
+}

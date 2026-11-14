@@ -13,15 +13,47 @@ import (
 )
 
 // View is exactly what the UI renders. It is serialized to JSON and sent
-// over D-Bus, so keep it flat and UI-agnostic.
+// over D-Bus, so keep it flat and UI-agnostic. Live values (timers, media
+// position) are sent as timestamps so the UI ticks locally without the
+// daemon emitting a signal every second.
 type View struct {
-	Kind     string   `json:"kind"` // idle | media | battery | notify
-	Title    string   `json:"title,omitempty"`
-	Subtitle string   `json:"subtitle,omitempty"`
-	Icon     string   `json:"icon,omitempty"` // freedesktop icon name
-	Art      string   `json:"art,omitempty"`  // local image path
-	Playing  bool     `json:"playing,omitempty"`
-	Actions  []string `json:"actions,omitempty"` // action names the UI may offer
+	Kind      string   `json:"kind"` // idle | media | battery | notify | task | timer | ci
+	Title     string   `json:"title,omitempty"`
+	Subtitle  string   `json:"subtitle,omitempty"`
+	Icon      string   `json:"icon,omitempty"`      // freedesktop icon name
+	Art       string   `json:"art,omitempty"`       // local image path
+	Accent    string   `json:"accent,omitempty"`    // "" | ok | warn | error
+	Trailing  string   `json:"trailing,omitempty"`  // short text on the right
+	Click     string   `json:"click,omitempty"`     // action fired when the pill is clicked
+	EndsAt    int64    `json:"endsAt,omitempty"`    // unix ms; UI shows a countdown
+	StartedAt int64    `json:"startedAt,omitempty"` // unix ms; UI shows elapsed time
+	Playing   bool     `json:"playing,omitempty"`
+	Timing    *Timing  `json:"timing,omitempty"`
+	Actions   []string `json:"actions,omitempty"` // action names the UI may offer
+}
+
+// Timing describes media playback so the UI can draw a live progress bar.
+type Timing struct {
+	Length   float64 `json:"length"`   // seconds
+	Position float64 `json:"position"` // seconds, as of At
+	At       int64   `json:"at"`       // unix ms
+	Rate     float64 `json:"rate"`
+}
+
+// UnixMs is a helper for View timestamps.
+func UnixMs(t time.Time) int64 { return t.UnixMilli() }
+
+// FormatDuration renders 1h02m, 3m05s or 42s.
+func FormatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h, m, s := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh%02dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm%02ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
 }
 
 // Activity is a plugin's request to occupy the island.
@@ -34,7 +66,10 @@ type Activity struct {
 
 // Common priorities so plugins agree on ordering.
 const (
+	PriorityCI      = 8  // background CI status (below media)
 	PriorityAmbient = 10 // long-lived background state (media)
+	PriorityTimer   = 15 // pomodoro
+	PriorityTask    = 20 // a running `island run` command
 	PriorityStatus  = 30 // short status blips (charging)
 	PriorityAlert   = 40 // warnings (low battery)
 	PriorityNotify  = 50 // explicit user notifications

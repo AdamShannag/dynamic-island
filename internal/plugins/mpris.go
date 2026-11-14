@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -58,6 +59,13 @@ func (p *MPRIS) Run(ctx context.Context, h island.Host) error {
 	if err := conn.AddMatchSignal(
 		dbus.WithMatchInterface("org.freedesktop.DBus.Properties"),
 		dbus.WithMatchMember("PropertiesChanged"),
+		dbus.WithMatchObjectPath(mprisPath),
+	); err != nil {
+		return err
+	}
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchInterface(mprisPlayer),
+		dbus.WithMatchMember("Seeked"),
 		dbus.WithMatchObjectPath(mprisPath),
 	); err != nil {
 		return err
@@ -119,9 +127,11 @@ func (p *MPRIS) call(method string) {
 }
 
 type player struct {
-	name   string
-	status string // Playing | Paused | Stopped
-	meta   map[string]dbus.Variant
+	name     string
+	status   string // Playing | Paused | Stopped
+	meta     map[string]dbus.Variant
+	position int64 // microseconds
+	rate     float64
 }
 
 func (p *MPRIS) players() []player {
@@ -144,6 +154,8 @@ func (p *MPRIS) players() []player {
 		pl := player{name: n}
 		pl.status, _ = props["PlaybackStatus"].Value().(string)
 		pl.meta, _ = props["Metadata"].Value().(map[string]dbus.Variant)
+		pl.position, _ = props["Position"].Value().(int64)
+		pl.rate, _ = props["Rate"].Value().(float64)
 		out = append(out, pl)
 	}
 	return out
@@ -204,15 +216,18 @@ func (p *MPRIS) update(h island.Host) {
 		Art:      p.resolveArt(artURL),
 		Playing:  best.status == "Playing",
 		Actions:  []string{"media.previous", "media.play-pause", "media.next"},
+		Timing:   timing(best),
 	}
 
 	p.mu.Lock()
 	p.selected = best.name
-	unchanged := p.last != nil && reflect.DeepEqual(*p.last, v)
-	p.last = &v
+	unchanged := p.last != nil && sameMedia(*p.last, v)
+	if !unchanged {
+		p.last = &v
+	}
 	p.mu.Unlock()
 	if unchanged {
-		return // don't re-arm the paused TTL on unrelated signals
+		return // don't re-arm the paused TTL or spam the UI on unrelated signals
 	}
 	var ttl time.Duration
 	if !v.Playing {
@@ -295,4 +310,48 @@ func artCacheDir() string {
 		dir = os.TempDir()
 	}
 	return filepath.Join(dir, "go-island", "art")
+}
+
+func timing(pl *player) *island.Timing {
+	var length int64
+	switch l := pl.meta["mpris:length"].Value().(type) {
+	case int64:
+		length = l
+	case uint64:
+		length = int64(l)
+	}
+	if length <= 0 {
+		return nil
+	}
+	rate := pl.rate
+	if rate <= 0 {
+		rate = 1
+	}
+	return &island.Timing{
+		Length:   float64(length) / 1e6,
+		Position: float64(pl.position) / 1e6,
+		At:       island.UnixMs(time.Now()),
+		Rate:     rate,
+	}
+}
+
+// sameMedia reports whether b only differs from a by normal playback
+// progress (so the UI's local extrapolation is still correct).
+func sameMedia(a, b island.View) bool {
+	ta, tb := a.Timing, b.Timing
+	a.Timing, b.Timing = nil, nil
+	if !reflect.DeepEqual(a, b) {
+		return false
+	}
+	if ta == nil || tb == nil {
+		return ta == tb
+	}
+	if ta.Length != tb.Length || ta.Rate != tb.Rate {
+		return false
+	}
+	expected := ta.Position
+	if a.Playing {
+		expected += float64(tb.At-ta.At) / 1000 * ta.Rate
+	}
+	return math.Abs(tb.Position-expected) < 2
 }
