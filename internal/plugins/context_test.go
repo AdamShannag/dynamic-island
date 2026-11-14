@@ -31,6 +31,8 @@ func TestClassify(t *testing.T) {
 		{"python3 -m pytest tests", "pytest", kindTask, true},
 		{"/tmp/GoLand/___go_build_github_com_acme_cmd_api", "run api", kindRun, true},
 		{"bash", "", 0, false},
+		{"make -C /some/dir -j8 build", "make build", kindTask, true},
+		{"make VAR=1 test", "make test", kindTask, true},
 	}
 	for _, c := range cases {
 		p := &procInfo{pid: 10, ppid: 1, args: strings.Fields(c.cmd)}

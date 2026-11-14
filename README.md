@@ -12,7 +12,7 @@ A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with
 - **Colour picker (eyedropper):** pick any pixel on screen. The HEX value is copied, and the island shows a swatch along with RGB and HSL values. It uses the desktop portal.
 - **Presentation mode (sunglasses):** hides track names, album art, command details, clipboard history and notes. It also pauses mirroring of desktop notifications, stops recording clipboard copies, and turns GNOME's notification banners off (restoring them afterwards). The face puts on sunglasses. It **turns on automatically when a screen share starts** and off again when the share ends, unless you turned it on yourself.
 
-The **Transform** tab has an input box that is pre-filled with your **selected text**, or the clipboard if nothing is selected. Below it are chips for JSON pretty-print, Base64 encode and decode, URL encode and decode, UPPER, lower, Title, snake, camel and kebab. Each one shows its result in the output box and copies it. **Use as input** lets you chain transforms, for example pretty-print and then Base64-encode.
+The **Transform** tab has an input box that is pre-filled with your **latest clipboard text**. Below it are chips for JSON pretty-print, Base64 encode and decode, URL encode and decode, UPPER, lower, Title, snake, camel and kebab. Each one shows its result in the output box and copies it. **Use as input** lets you chain transforms, for example pretty-print and then Base64-encode.
 
 ## Volume and brightness
 
@@ -163,6 +163,16 @@ Optional. Copy `config.example.json` to `~/.config/go-island/config.json`, then 
 ```
 
 Data lives in `~/.local/share/go-island/`: `clipboard.json` and `sites.json` (both mode 0600), plus `site-icons/`.
+
+## Resource use and stability
+
+- **Daemon:** about 14 MB of RAM and roughly 0.15% of one CPU core. It caches process scans, and its heap is capped softly at 32 MB.
+- **Extension:**
+  - Cursor tracking runs at 30 fps only near the eyes, at about 4 fps elsewhere, and stops when the face is hidden.
+  - The equalizer steps at about 5 fps, and only while it's on screen.
+  - Live timers tick once a second.
+  - Docker stats run only while the Docker tab is open.
+- **Clipboard:** a GNOME Shell crash was traced to clipboard reads completing into a JavaScript callback. The extension now reads the clipboard only to record history: once per burst of changes (debounced 400 ms), never two reads at a time, and never for text it copied itself. Everything else uses the daemon's history.
 
 ## D-Bus API (`org.goisland.Island` at `/org/goisland/Island`)
 

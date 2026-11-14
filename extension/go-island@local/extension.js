@@ -100,7 +100,8 @@ const TABS = [
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
 const DASH_HEIGHT = {transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
-const OSD_MS = 1600; // how long the volume/brightness bar stays up
+const OSD_MS = 1600;
+const CLIP_DEBOUNCE_MS = 400; // collapse bursts of clipboard owner changes into one read // how long the volume/brightness bar stays up
 
 // Personality.
 const POINTER_MS = 33;           // ~30 fps pointer tracking (eyes, magnet, shake)
@@ -207,7 +208,12 @@ function ago(ms) {
     return `${Math.floor(s / 3600)}h ago`;
 }
 
-// A tiny animated "now playing" equalizer.
+// A tiny "now playing" equalizer. It steps at a few frames per second
+// (like a real level meter) instead of animating every frame, which keeps
+// the shell nearly idle while music plays.
+const EQ_STEP_MS = 180;
+const EQ_PATTERN = [[0.5, 0.9, 0.4, 0.7], [0.8, 0.5, 0.9, 0.4], [0.4, 1.0, 0.6, 0.8], [0.9, 0.6, 0.5, 1.0], [0.6, 0.4, 0.8, 0.5]];
+
 class Equalizer {
     constructor(styleClass) {
         this.actor = new St.BoxLayout({style_class: `goisland-eq ${styleClass}`, y_align: Clutter.ActorAlign.CENTER});
@@ -219,25 +225,37 @@ class Equalizer {
             return bar;
         });
         this._running = false;
+        this._timer = 0;
+        this._step = 0;
+        this.actor.connect('notify::mapped', () => this._sync());
+        this.actor.connect('destroy', () => this._stop());
     }
 
     set running(run) {
-        if (run === this._running)
-            return;
         this._running = run;
-        this._bars.forEach((bar, i) => {
-            bar.remove_all_transitions();
-            bar.scale_y = 0.35;
-            if (run) {
-                bar.ease({
-                    scale_y: 1,
-                    duration: [420, 300, 520, 360][i],
-                    mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
-                    repeatCount: -1,
-                    autoReverse: true,
-                });
-            }
-        });
+        this._sync();
+    }
+
+    // Only tick while playing *and* on screen.
+    _sync() {
+        const on = this._running && this.actor.mapped;
+        if (on && !this._timer) {
+            this._timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, EQ_STEP_MS, () => {
+                const row = EQ_PATTERN[this._step++ % EQ_PATTERN.length];
+                this._bars.forEach((bar, i) => (bar.scale_y = row[i]));
+                return GLib.SOURCE_CONTINUE;
+            });
+        } else if (!on) {
+            this._stop();
+            this._bars.forEach(bar => (bar.scale_y = 0.35));
+        }
+    }
+
+    _stop() {
+        if (this._timer) {
+            GLib.source_remove(this._timer);
+            this._timer = 0;
+        }
     }
 }
 
@@ -880,19 +898,15 @@ class Island extends St.BoxLayout {
         return page;
     }
 
-    // Fill the input from the selection (if any) or the clipboard.
+    // Fill the input with the latest clipboard text. It comes from the
+    // daemon's history, not a live clipboard read: reads are the one thing
+    // that has crashed GNOME Shell, so the UI never does them on demand.
     _loadTransformInput() {
-        const cb = St.Clipboard.get_default();
-        const fill = (text, from) => {
-            if (!text?.trim())
-                return false;
-            this._xfIn.text = text;
-            this._xfInfo.text = `from ${from}`;
-            return true;
-        };
-        cb.get_text(St.ClipboardType.PRIMARY, (_c, sel) => {
-            if (!fill(sel, 'selection'))
-                cb.get_text(St.ClipboardType.CLIPBOARD, (_c2, clip) => fill(clip, 'clipboard'));
+        this._ext.latestClip(text => {
+            if (text && !this._xfIn.text) {
+                this._xfIn.text = text;
+                this._xfInfo.text = 'from clipboard';
+            }
         });
     }
 
@@ -907,7 +921,7 @@ class Island extends St.BoxLayout {
             return;
         }
         this._xfOut.text = out;
-        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, out);
+        this._ext.copy(out);
         this._flash(chip, 'Copied', name, 'good');
     }
 
@@ -1054,7 +1068,7 @@ class Island extends St.BoxLayout {
     }
 
     _copy(text) {
-        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+        this._ext.copy(text);
         this._closeDash();
     }
 
@@ -1075,7 +1089,7 @@ class Island extends St.BoxLayout {
             if (!q)
                 return;
             if (this._calcValue !== null) { // a calculation: copy the result
-                St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, this._calcValue);
+                this._ext.copy(this._calcValue);
                 this._calcHint.text = 'Copied';
                 return;
             }
@@ -1097,7 +1111,7 @@ class Island extends St.BoxLayout {
             if (q)
                 this._showQR(q);
             else
-                St.Clipboard.get_default().get_text(St.ClipboardType.CLIPBOARD, (_c, t) => t?.trim() && this._showQR(t.trim()));
+                this._ext.latestClip(t => t && this._showQR(t.trim()));
         }, 'QR code of this text (or the clipboard)');
         qrBtn.y_align = Clutter.ActorAlign.FILL;
         searchRow.add_child(qrBtn);
@@ -1492,7 +1506,7 @@ class Island extends St.BoxLayout {
         const needed = !!(s.endsAt || s.startedAt ||
             (this._dashOpen && this._tab === 'home' && (this._media?.playing || this._timer)));
         if (needed && !this._tickId) {
-            this._tickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            this._tickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
                 this._tick();
                 return GLib.SOURCE_CONTINUE;
             });
@@ -1695,17 +1709,25 @@ class Island extends St.BoxLayout {
         this._shake = [];
         this._cpuPrev = null;
         this._cpuHot = 0;
-        this._pointerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POINTER_MS, () => {
-            this._onPointer();
-            return GLib.SOURCE_CONTINUE;
-        });
-        this._cpuId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
+        this._schedulePointer(POINTER_MS);
+        this._cpuId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => {
             this._sampleCpu();
             return GLib.SOURCE_CONTINUE;
         });
         this._idleMon = global.backend.get_core_idle_monitor();
         this._idleWatch = this._idleMon.add_idle_watch(SLEEP_AFTER_MS, () => this._setAsleep(true));
         this._activeWatch = 0;
+    }
+
+    // Self-rescheduling pointer poll: ~30 fps only when the cursor is near
+    // the eyes or over the island, ~4 fps when it's far, and a slow 1 Hz
+    // check when there's nothing to animate (face hidden, asleep).
+    _schedulePointer(ms) {
+        this._pointerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+            this._pointerId = 0;
+            this._schedulePointer(this._onPointer());
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _stopPersonality() {
@@ -1803,18 +1825,26 @@ class Island extends St.BoxLayout {
     // ~30 fps: the eyes follow the cursor, and a deliberate shake over the
     // island makes it wobble. (Nothing here moves the island itself: any
     // pointer-driven movement fights hover detection and jitters.)
+    // Returns the delay until the next poll.
     _onPointer() {
+        const faceVisible = this._face.actor.mapped && !this._asleep;
+        if (!faceVisible && !this.hover)
+            return 1000; // nothing to animate
         const [px, py] = global.get_pointer();
-        if (this._face.actor.mapped) {
+        let next = POINTER_MS;
+        if (faceVisible) {
             const [fx, fy] = this._face.actor.get_transformed_position();
-            this._face.track(px - (fx + this._face.actor.width / 2), py - (fy + this._face.actor.height / 2));
+            const dx = px - (fx + this._face.actor.width / 2), dy = py - (fy + this._face.actor.height / 2);
+            this._face.track(dx, dy);
+            if (Math.hypot(dx, dy) > 500 * scale() && this._face.mood !== 'dizzy' && !this.hover)
+                next = 250; // far away: the eyes barely move
         }
 
         const resting = this._mode === 'idle' || this._mode === 'compact';
         if (!this.hover || !resting) {
             if (this._shake.length)
                 this._shake = [];
-            return;
+            return next;
         }
         const now = GLib.get_monotonic_time() / 1000;
         const h = this._shake;
@@ -1837,6 +1867,7 @@ class Island extends St.BoxLayout {
             this._shake = [];
             this.wobble();
         }
+        return POINTER_MS;
     }
 
     // ---------- layout ----------
@@ -1928,6 +1959,10 @@ class Island extends St.BoxLayout {
 
 export default class GoIslandExtension extends Extension {
     enable() {
+        this._enabled = true;
+        this._clipReading = false;
+        this._clipAgain = false;
+        this._clipTimer = 0;
         this.agentIcon = Gio.icon_new_for_string(`${this.path}/icons/agent.svg`);
         this.spyIcon = Gio.icon_new_for_string(`${this.path}/icons/spy.svg`);
         this.presenting = false;
@@ -1991,6 +2026,11 @@ export default class GoIslandExtension extends Extension {
     }
 
     disable() {
+        this._enabled = false;
+        if (this._clipTimer) {
+            GLib.source_remove(this._clipTimer);
+            this._clipTimer = 0;
+        }
         if (this._origOsdShow) {
             Main.osdWindowManager.show = this._origOsdShow;
             this._origOsdShow = null;
@@ -2036,14 +2076,73 @@ export default class GoIslandExtension extends Extension {
         this._island?.setPresenting(on);
     }
 
+    // ---------- clipboard ----------
+    //
+    // A GNOME Shell crash (SIGSEGV in a GJS callback trampoline, invoked
+    // when a clipboard transfer completed) traced back to clipboard reads.
+    // So reads are rare and strictly serial:
+    //   - only for history capture, debounced (bursts of owner changes
+    //     collapse into one read),
+    //   - never more than one in flight,
+    //   - never for text the island copied itself (it already knows it),
+    //   - the native callback only schedules work; nothing runs inside it.
+    // Everything else (Transform, QR) uses the daemon's history instead.
+
     _onClipboardChanged(type, source) {
-        if (type !== Meta.SelectionType.SELECTION_CLIPBOARD || !source || !this._proxy)
+        if (type !== Meta.SelectionType.SELECTION_CLIPBOARD || !source || !this._proxy || this.presenting)
             return;
+        if (Date.now() - (this._selfCopyAt ?? 0) < 1000)
+            return; // our own copy(); already recorded
         if (source.get_mimetypes().includes(SECRET_MIME))
             return;
+        if (this._clipTimer)
+            GLib.source_remove(this._clipTimer);
+        this._clipTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, CLIP_DEBOUNCE_MS, () => {
+            this._clipTimer = 0;
+            this._readClipboard();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _readClipboard() {
+        if (this._clipReading) {
+            this._clipAgain = true; // read once more after the current one
+            return;
+        }
+        this._clipReading = true;
         St.Clipboard.get_default().get_text(St.ClipboardType.CLIPBOARD, (_cb, text) => {
-            if (text && text.trim())
-                this.call('ClipboardAdd', [text]);
+            const copy = text ? String(text) : '';
+            GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                this._clipReading = false;
+                if (!this._enabled)
+                    return GLib.SOURCE_REMOVE;
+                if (copy.trim())
+                    this.call('ClipboardAdd', [copy]);
+                if (this._clipAgain) {
+                    this._clipAgain = false;
+                    this._readClipboard();
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+    }
+
+    // Copy text to the clipboard and record it, without reading it back.
+    copy(text) {
+        this._selfCopyAt = Date.now();
+        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+        if (!this.presenting)
+            this.call('ClipboardAdd', [text]);
+    }
+
+    // The most recent clipboard text, from the daemon's history.
+    latestClip(cb) {
+        this.call('ClipboardList', [], (res, err) => {
+            if (err)
+                return cb(null);
+            const items = JSON.parse(res[0]) ?? [];
+            items.sort((a, b) => b.at - a.at);
+            cb(items[0]?.text ?? null);
         });
     }
 
@@ -2064,7 +2163,7 @@ export default class GoIslandExtension extends Extension {
                 proxy.connectSignal('StateChanged', (_p, _sender, [json]) => this._applyState(json)),
                 proxy.connectSignal('OpenDashboard', (_p, _sender, [tab]) => this._island?.toggleDash(tab)),
                 proxy.connectSignal('ColorPicked', (_p, _sender, [hex]) =>
-                    St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, hex)),
+                    this.copy(hex)),
             ];
             if (this.presenting)
                 this.call('SetPresenting', [true]);

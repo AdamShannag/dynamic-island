@@ -7,6 +7,8 @@ import (
 	"flag"
 	"log"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,6 +28,11 @@ func main() {
 	disable := flag.String("disable", "", "comma-separated plugins to disable (also settable in config)")
 	flag.Parse()
 	log.SetFlags(0) // journald adds timestamps
+
+	// Stay small: a soft heap limit makes the GC work a little harder
+	// before the process grows, and two OS threads are plenty.
+	debug.SetMemoryLimit(32 << 20)
+	runtime.GOMAXPROCS(2)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

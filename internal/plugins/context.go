@@ -27,9 +27,22 @@ type Context struct {
 	tracked map[int]*tracked
 	bootT   time.Time
 	tick    int
+
+	// Process cache: a scan only lists /proc and reads processes that are
+	// new or young (a fork becomes `go test` via exec under the same pid);
+	// everything is re-validated every fullScanEvery scans.
+	procs   map[int]*procInfo
+	notMine map[int]bool
 }
 
-func NewContext() *Context { return &Context{tracked: map[int]*tracked{}} }
+func NewContext() *Context {
+	return &Context{tracked: map[int]*tracked{}, procs: map[int]*procInfo{}, notMine: map[int]bool{}}
+}
+
+const (
+	fullScanEvery = 15              // scans
+	youngFor      = 5 * time.Second // keep re-reading processes this young
+)
 
 func (c *Context) Name() string { return "context" }
 
@@ -58,6 +71,11 @@ type procInfo struct {
 	comm      string
 	args      []string
 	startTick uint64
+
+	classified bool // classification is cached; reset when args change
+	title      string
+	kind       kind
+	match      bool
 }
 
 const (
@@ -84,10 +102,14 @@ func (c *Context) Run(ctx context.Context, h island.Host) error {
 
 func (c *Context) scan(h island.Host) {
 	c.tick++
-	procs := readProcs()
+	procs := c.refreshProcs()
 	seen := map[int]bool{}
 	for _, p := range procs {
-		title, k, ok := classify(p, procs)
+		if !p.classified {
+			p.title, p.kind, p.match = classify(p, procs)
+			p.classified = true
+		}
+		title, k, ok := p.title, p.kind, p.match
 		if !ok {
 			continue
 		}
@@ -267,7 +289,16 @@ func classifyArgs(p *procInfo, base string, words func(int, int) []string) (stri
 			}
 		}
 	case "make":
-		return strings.TrimSpace("make " + strings.Join(words(1, 2), " ")), kindTask, true
+		var targets []string
+		for i := 1; i < len(args) && len(targets) < 2; i++ {
+			switch a := args[i]; {
+			case a == "-C" || a == "-f" || a == "--directory" || a == "--file":
+				i++ // skip the flag's value
+			case !strings.HasPrefix(a, "-") && !strings.Contains(a, "="):
+				targets = append(targets, a)
+			}
+		}
+		return strings.TrimSpace("make " + strings.Join(targets, " ")), kindTask, true
 	case "docker":
 		w := words(1, 2)
 		switch {
@@ -475,47 +506,106 @@ func joinNonEmpty(sep string, parts ...string) string {
 
 // ---------- /proc ----------
 
-// readProcs reads this user's processes: pid, ppid, comm, argv, start time.
-func readProcs() map[int]*procInfo {
-	out := map[int]*procInfo{}
+// refreshProcs updates the process cache and returns it.
+func (c *Context) refreshProcs() map[int]*procInfo {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
-		return out
+		return c.procs
 	}
+	full := c.tick%fullScanEvery == 1
 	uid := uint32(os.Getuid())
+	alive := make(map[int]bool, len(ents))
 	for _, e := range ents {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil {
 			continue
 		}
-		dir := "/proc/" + e.Name()
-		if st, err := os.Stat(dir); err != nil || st.Sys().(*syscall.Stat_t).Uid != uid {
+		alive[pid] = true
+		if !full {
+			if c.notMine[pid] {
+				continue
+			}
+			if p := c.procs[pid]; p != nil && time.Since(c.startTime(p)) > youngFor {
+				continue // settled: nothing to re-read
+			}
+		}
+		info, mine := readProc(pid, uid)
+		if !mine {
+			c.notMine[pid] = true
+			delete(c.procs, pid)
 			continue
 		}
-		stat, err := os.ReadFile(dir + "/stat")
-		if err != nil {
-			continue
+		if info == nil {
+			continue // exited mid-read
 		}
-		// comm is in parens and may contain spaces; fields follow the last ')'.
-		s := string(stat)
-		l, r := strings.IndexByte(s, '('), strings.LastIndexByte(s, ')')
-		if l < 0 || r < l {
-			continue
+		if old := c.procs[pid]; old != nil && old.startTick == info.startTick && equalArgs(old.args, info.args) {
+			continue // unchanged: keep the cached classification
 		}
-		fields := strings.Fields(s[r+1:])
-		if len(fields) < 20 {
-			continue
+		c.procs[pid] = info
+		// A changed process can change how its children classify.
+		for _, q := range c.procs {
+			if q.ppid == pid {
+				q.classified = false
+			}
 		}
-		ppid, _ := strconv.Atoi(fields[1])
-		startTick, _ := strconv.ParseUint(fields[19], 10, 64)
-		cmd, _ := os.ReadFile(dir + "/cmdline")
-		args := strings.Split(strings.TrimRight(string(cmd), "\x00"), "\x00")
-		if len(args) == 1 && args[0] == "" {
-			args = nil
-		}
-		out[pid] = &procInfo{pid: pid, ppid: ppid, comm: s[l+1 : r], args: args, startTick: startTick}
 	}
-	return out
+	for pid := range c.procs {
+		if !alive[pid] {
+			delete(c.procs, pid)
+		}
+	}
+	for pid := range c.notMine {
+		if !alive[pid] {
+			delete(c.notMine, pid)
+		}
+	}
+	return c.procs
+}
+
+// readProc reads one process; mine is false for other users' processes.
+func readProc(pid int, uid uint32) (*procInfo, bool) {
+	dir := "/proc/" + strconv.Itoa(pid)
+	st, err := os.Stat(dir)
+	if err != nil {
+		return nil, true
+	}
+	if st.Sys().(*syscall.Stat_t).Uid != uid {
+		return nil, false
+	}
+	stat, err := os.ReadFile(dir + "/stat")
+	if err != nil {
+		return nil, true
+	}
+	// comm is in parens and may contain spaces; fields follow the last ')'.
+	s := string(stat)
+	l, r := strings.IndexByte(s, '('), strings.LastIndexByte(s, ')')
+	if l < 0 || r < l {
+		return nil, true
+	}
+	fields := strings.Fields(s[r+1:])
+	if len(fields) < 20 {
+		return nil, true
+	}
+	ppid, _ := strconv.Atoi(fields[1])
+	startTick, _ := strconv.ParseUint(fields[19], 10, 64)
+	cmd, _ := os.ReadFile(dir + "/cmdline")
+	args := strings.Split(strings.TrimRight(string(cmd), "\x00"), "\x00")
+	if len(args) == 1 && args[0] == "" {
+		args = nil
+	}
+	return &procInfo{pid: pid, ppid: ppid, comm: s[l+1 : r], args: args, startTick: startTick}, true
+}
+
+func equalArgs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 const clkTck = 100 // USER_HZ; 100 on all mainstream Linux builds
