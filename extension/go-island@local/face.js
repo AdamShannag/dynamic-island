@@ -11,8 +11,16 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 
-const LOOK_X = 2.5; // max px the eyes shift toward the cursor
-const LOOK_Y = 1.5;
+const LOOK_X = 3;   // max logical px the eyes shift toward the cursor
+const LOOK_Y = 2;
+// Critically damped spring: no overshoot, ~0.25 s to settle. Integrated
+// exactly per frame, so it feels the same at 60, 144 or 240 Hz and never
+// stutters when a frame arrives late.
+const SPRING_OMEGA = 18;  // rad/s; higher = snappier
+const DIZZY_SPEED = 9;    // rad/s of eye orbit
+const SETTLE_FRAMES = 12; // stop the frame loop after this many still frames
+
+const scaleFactor = () => St.ThemeContext.get_for_stage(global.stage).scale_factor;
 
 export class Face {
     constructor(spyIcon) {
@@ -49,8 +57,18 @@ export class Face {
         this._moodTimer = 0;
         this._blinkTimer = 0;
         this._zzzTimer = 0;
-        this._look = [0, 0];
+        // Per-axis spring state; target comes from the cursor provider.
+        this._pos = [0, 0];
+        this._vel = [0, 0];
         this._orbit = 0;
+        this._tl = null;
+        this._lastT = 0;
+        this._still = 0;
+        this._provider = null; // () => [dx, dy] from the face centre to the cursor
+        this.actor.connect('notify::mapped', () => {
+            if (!this.actor.mapped)
+                this._stopLoop();
+        });
         this._spyOn = false;
         this._scheduleBlink();
     }
@@ -88,6 +106,8 @@ export class Face {
 
     _applyMood(mood) {
         this._mood = mood;
+        if (mood === 'dizzy')
+            this.wake();
         const glyphs = {love: ['♥', '♥'], squint: ['>', '<']}[mood];
         this._eyes.forEach(({dot, glyph}, i) => {
             dot.remove_all_transitions();
@@ -102,29 +122,78 @@ export class Face {
         this._syncZzz();
     }
 
-    // Called ~30×/s with the pointer offset from the face, in px.
-    track(dx, dy) {
-        if (this._mood === 'sleep' || this._spyOn)
+    // The island supplies where the cursor is relative to the face.
+    setTargetProvider(fn) {
+        this._provider = fn;
+    }
+
+    // Start the frame-synced animation loop (idempotent). The island calls
+    // this when the cursor moves; the loop stops itself once the eyes settle,
+    // so a still cursor costs nothing.
+    wake() {
+        if (this._tl || this._spyOn || this._mood === 'sleep' || !this.actor.mapped || !this._provider)
             return;
+        this._lastT = 0;
+        this._still = 0;
+        // A timeline bound to the actor runs on its stage view's frame
+        // clock: exactly one update per displayed frame.
+        const tl = new Clutter.Timeline({actor: this.actor, duration: 1000, repeat_count: -1});
+        tl.connect('new-frame', () => this._frame());
+        this._tl = tl;
+        tl.start();
+    }
+
+    _stopLoop() {
+        if (this._tl) {
+            this._tl.stop();
+            this._tl = null;
+        }
+    }
+
+    _frame() {
+        if (this._mood === 'sleep' || this._spyOn) {
+            this._stopLoop();
+            return;
+        }
+        const now = GLib.get_monotonic_time() / 1e6;
+        const dt = this._lastT ? Math.min(0.05, Math.max(0.001, now - this._lastT)) : 1 / 60;
+        this._lastT = now;
+        const k = scaleFactor();
+
         let tx, ty;
         if (this._mood === 'dizzy') {
-            this._orbit += 0.35;
-            tx = Math.cos(this._orbit) * 2.2;
-            ty = Math.sin(this._orbit) * 2.2;
+            this._orbit += dt * DIZZY_SPEED;
+            tx = Math.cos(this._orbit) * 2.4 * k;
+            ty = Math.sin(this._orbit) * 2.4 * k;
         } else {
-            tx = Math.max(-1, Math.min(1, dx / 260)) * LOOK_X;
-            ty = Math.max(-1, Math.min(1, dy / 160)) * LOOK_Y;
+            const [dx, dy] = this._provider();
+            // Soft saturation: responsive near the face, gently capped far away.
+            tx = Math.tanh(dx / (220 * k)) * LOOK_X * k;
+            ty = Math.tanh(dy / (140 * k)) * LOOK_Y * k;
         }
-        // Ease toward the target so motion stays soft at 30 fps.
-        const step = (cur, t) => (Math.abs(t - cur) < 0.02 ? t : cur + (t - cur) * 0.35);
-        const nx = step(this._look[0], tx), ny = step(this._look[1], ty);
-        if (nx === this._look[0] && ny === this._look[1] && this._mood !== 'dizzy')
-            return; // settled: no redraw
-        this._look = [nx, ny];
+
+        // Exact critically damped spring step for each axis.
+        const w = SPRING_OMEGA, e = Math.exp(-w * dt);
+        let moving = false;
+        for (const [a, target] of [[0, tx], [1, ty]]) {
+            const x = this._pos[a] - target, v = this._vel[a];
+            const nx = (x + (v + w * x) * dt) * e;
+            const nv = (v - w * (v + w * x) * dt) * e;
+            this._pos[a] = target + nx;
+            this._vel[a] = nv;
+            if (Math.abs(nx) > 0.01 || Math.abs(nv) > 0.05)
+                moving = true;
+        }
         for (const [i, {dot, glyph}] of this._eyes.entries()) {
-            const x = this._mood === 'dizzy' && i === 1 ? -nx : nx;
+            const x = this._mood === 'dizzy' && i === 1 ? -this._pos[0] : this._pos[0];
             dot.translation_x = glyph.translation_x = x;
-            dot.translation_y = glyph.translation_y = ny;
+            dot.translation_y = glyph.translation_y = this._pos[1];
+        }
+
+        if (moving || this._mood === 'dizzy') {
+            this._still = 0;
+        } else if (++this._still >= SETTLE_FRAMES) {
+            this._stopLoop(); // settled: zero work until the cursor moves again
         }
     }
 
@@ -184,6 +253,7 @@ export class Face {
     }
 
     destroy() {
+        this._stopLoop();
         for (const id of [this._moodTimer, this._blinkTimer, this._zzzTimer]) {
             if (id)
                 GLib.source_remove(id);

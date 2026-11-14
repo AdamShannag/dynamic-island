@@ -104,7 +104,9 @@ const OSD_MS = 1600;
 const CLIP_DEBOUNCE_MS = 400; // collapse bursts of clipboard owner changes into one read // how long the volume/brightness bar stays up
 
 // Personality.
-const POINTER_MS = 33;           // ~30 fps pointer tracking (eyes, magnet, shake)
+const POINTER_MS = 33;           // shake detection rate while hovering
+const WATCH_ACTIVE_MS = 60;      // cursor-moved check while it's moving (wakes the eyes)
+const WATCH_IDLE_MS = 150;       // ...and while it's still
 const SLEEP_AFTER_MS = 3 * 60 * 1000;
 const CPU_DIZZY = 0.85;          // busy fraction that makes the island dizzy
 const HOVER_IN_MS = 450;         // rest on a live pill this long before it expands
@@ -371,6 +373,7 @@ class Island extends St.BoxLayout {
         this._osdTimer = 0;
         this._pillEq = new Equalizer('pill');
         this._face = new Face(this._ext.spyIcon);
+        this._face.setTargetProvider(() => this._faceTarget());
         this._trailing = label('goisland-trailing');
         for (const a of [this._art, this._icon, text, this._osdTrack, this._pillEq.actor, this._face.actor, this._trailing])
             this._content.add_child(a);
@@ -1822,23 +1825,30 @@ class Island extends St.BoxLayout {
         tl.start();
     }
 
-    // ~30 fps: the eyes follow the cursor, and a deliberate shake over the
-    // island makes it wobble. (Nothing here moves the island itself: any
-    // pointer-driven movement fights hover detection and jitters.)
+    // Cursor offset from the face centre (read every frame while the eyes
+    // are animating).
+    _faceTarget() {
+        const [px, py] = global.get_pointer();
+        const f = this._face.actor;
+        const [fx, fy] = f.get_transformed_position();
+        return [px - (fx + f.width / 2), py - (fy + f.height / 2)];
+    }
+
+    // A cheap watcher: it only notices that the cursor moved and wakes the
+    // face's frame-synced loop (which does the smooth part and stops itself
+    // once the eyes settle). While hovering it also feeds shake detection.
     // Returns the delay until the next poll.
     _onPointer() {
         const faceVisible = this._face.actor.mapped && !this._asleep;
         if (!faceVisible && !this.hover)
             return 1000; // nothing to animate
         const [px, py] = global.get_pointer();
-        let next = POINTER_MS;
-        if (faceVisible) {
-            const [fx, fy] = this._face.actor.get_transformed_position();
-            const dx = px - (fx + this._face.actor.width / 2), dy = py - (fy + this._face.actor.height / 2);
-            this._face.track(dx, dy);
-            if (Math.hypot(dx, dy) > 500 * scale() && this._face.mood !== 'dizzy' && !this.hover)
-                next = 250; // far away: the eyes barely move
-        }
+        const moved = px !== this._lastPx || py !== this._lastPy;
+        this._lastPx = px;
+        this._lastPy = py;
+        if (faceVisible && moved)
+            this._face.wake();
+        let next = moved ? WATCH_ACTIVE_MS : WATCH_IDLE_MS;
 
         const resting = this._mode === 'idle' || this._mode === 'compact';
         if (!this.hover || !resting) {

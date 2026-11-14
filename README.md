@@ -168,7 +168,7 @@ Data lives in `~/.local/share/go-island/`: `clipboard.json` and `sites.json` (bo
 
 - **Daemon:** about 14 MB of RAM and roughly 0.15% of one CPU core. It caches process scans, and its heap is capped softly at 32 MB.
 - **Extension:**
-  - Cursor tracking runs at 30 fps only near the eyes, at about 4 fps elsewhere, and stops when the face is hidden.
+  - The eyes animate on the display's own frame clock (60, 144 Hz and so on) with a critically damped spring, which glides with no overshoot. That loop runs only while the eyes move and stops once they settle. A light 7–16 Hz check wakes it when the cursor moves.
   - The equalizer steps at about 5 fps, and only while it's on screen.
   - Live timers tick once a second.
   - Docker stats run only while the Docker tab is open.
