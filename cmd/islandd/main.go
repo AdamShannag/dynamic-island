@@ -14,10 +14,12 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"go-island/internal/clipboard"
 	"go-island/internal/config"
 	"go-island/internal/dbusapi"
 	"go-island/internal/island"
 	"go-island/internal/plugins"
+	"go-island/internal/sites"
 )
 
 func main() {
@@ -34,8 +36,16 @@ func main() {
 	}
 	defer conn.Close()
 
+	clip, err := clipboard.Open(clipboard.DefaultPath())
+	if err != nil {
+		log.Printf("clipboard history: %v (starting empty)", err)
+	}
+	st, err := sites.Open()
+	if err != nil {
+		log.Printf("saved sites: %v (starting empty)", err)
+	}
 	m := island.NewManager()
-	if err := dbusapi.Serve(conn, m); err != nil {
+	if err := dbusapi.Serve(conn, m, clip, st); err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("serving %s", dbusapi.BusName)
@@ -58,7 +68,6 @@ func main() {
 		plugins.NewBattery(),
 		plugins.NewNotifications(cfg.Notifications.IgnoreApps),
 		plugins.NewPomodoro(cfg.Pomodoro.FocusMinutes, cfg.Pomodoro.BreakMinutes),
-		plugins.NewGitHub(cfg.GitHub.Repos, cfg.GitHub.OnlyMine, cfg.GitHub.IntervalSeconds),
 		plugins.NewDocker(),
 	}
 

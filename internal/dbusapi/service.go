@@ -3,7 +3,10 @@
 package dbusapi
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,7 +14,11 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
+	"go-island/internal/clipboard"
+	"go-island/internal/docker"
 	"go-island/internal/island"
+	"go-island/internal/ports"
+	"go-island/internal/sites"
 )
 
 const (
@@ -45,6 +52,44 @@ const introXML = `
       <arg name="id" type="u" direction="in"/>
       <arg name="exit_code" type="i" direction="in"/>
     </method>
+    <method name="DockerList">
+      <arg name="containers" type="s" direction="out"/>
+    </method>
+    <method name="DockerAction">
+      <arg name="id" type="s" direction="in"/>
+      <arg name="op" type="s" direction="in"/>
+    </method>
+    <method name="PortsList">
+      <arg name="listeners" type="s" direction="out"/>
+    </method>
+    <method name="PortFree">
+      <arg name="port" type="u" direction="in"/>
+      <arg name="summary" type="s" direction="out"/>
+    </method>
+    <method name="SitesList">
+      <arg name="sites" type="s" direction="out"/>
+    </method>
+    <method name="SiteAdd">
+      <arg name="url" type="s" direction="in"/>
+      <arg name="name" type="s" direction="in"/>
+    </method>
+    <method name="SiteRemove">
+      <arg name="id" type="u" direction="in"/>
+    </method>
+    <method name="ClipboardAdd">
+      <arg name="text" type="s" direction="in"/>
+    </method>
+    <method name="ClipboardList">
+      <arg name="items" type="s" direction="out"/>
+    </method>
+    <method name="ClipboardDelete">
+      <arg name="id" type="u" direction="in"/>
+    </method>
+    <method name="ClipboardPin">
+      <arg name="id" type="u" direction="in"/>
+      <arg name="pinned" type="b" direction="in"/>
+    </method>
+    <method name="ClipboardClear"/>
     <signal name="StateChanged">
       <arg name="state" type="s"/>
     </signal>
@@ -62,6 +107,76 @@ type api struct {
 
 	mu    sync.Mutex
 	tasks map[uint32]task
+
+	clip  *clipboard.Store
+	sites *sites.Store
+}
+
+func (a *api) SitesList() (string, *dbus.Error) { return toJSON(a.sites.List()) }
+func (a *api) SiteRemove(id uint32) *dbus.Error { return dbusErr(a.sites.Remove(id)) }
+func (a *api) SiteAdd(url, name string) *dbus.Error {
+	_, err := a.sites.Add(url, name)
+	return dbusErr(err)
+}
+
+func dbusErr(err error) *dbus.Error {
+	if err == nil {
+		return nil
+	}
+	return dbus.MakeFailedError(err)
+}
+
+func toJSON(v any) (string, *dbus.Error) {
+	b, err := json.Marshal(v)
+	return string(b), dbusErr(err)
+}
+
+func (a *api) DockerList() (string, *dbus.Error) {
+	list, err := docker.List(context.Background())
+	if err != nil {
+		return "", dbusErr(err)
+	}
+	if list == nil {
+		list = []docker.Container{}
+	}
+	return toJSON(list)
+}
+
+func (a *api) DockerAction(id, op string) *dbus.Error {
+	return dbusErr(docker.Act(context.Background(), id, op))
+}
+
+func (a *api) PortsList() (string, *dbus.Error) {
+	list, err := ports.List(context.Background())
+	if err != nil {
+		return "", dbusErr(err)
+	}
+	if list == nil {
+		list = []ports.Listener{}
+	}
+	return toJSON(list)
+}
+
+// PortFree kills whatever listens on port and pops the island with the result.
+func (a *api) PortFree(port uint32) (string, *dbus.Error) {
+	summary, err := ports.Free(context.Background(), int(port))
+	v := island.View{Kind: "notify", Title: fmt.Sprintf("Port %d freed", port), Subtitle: summary,
+		Icon: "emblem-ok-symbolic", Accent: "ok", Click: "notify.dismiss"}
+	if err != nil {
+		v.Title, v.Icon, v.Accent = fmt.Sprintf("Port %d", port), "dialog-error-symbolic", "error"
+		v.Subtitle = strings.TrimPrefix(summary+"; "+err.Error(), "; ")
+	}
+	a.m.Set(island.Activity{ID: fmt.Sprintf("notify.port.%d", port), Priority: island.PriorityNotify,
+		TTL: 6 * time.Second, View: v})
+	return summary, dbusErr(err)
+}
+
+func (a *api) ClipboardAdd(text string) *dbus.Error  { return dbusErr(a.clip.Add(text)) }
+func (a *api) ClipboardList() (string, *dbus.Error)  { return toJSON(a.clip.List()) }
+func (a *api) ClipboardDelete(id uint32) *dbus.Error { return dbusErr(a.clip.Delete(id)) }
+func (a *api) ClipboardClear() *dbus.Error           { return dbusErr(a.clip.Clear()) }
+func (a *api) ClipboardPin(id uint32, pinned bool) *dbus.Error {
+	return dbusErr(a.clip.SetPinned(id, pinned))
 }
 
 func (a *api) GetState() (string, *dbus.Error) { return a.m.State(), nil }
@@ -144,8 +259,8 @@ func (a *api) TaskEnd(id uint32, exitCode int32) *dbus.Error {
 }
 
 // Serve claims the bus name, exports the API and wires StateChanged signals.
-func Serve(conn *dbus.Conn, m *island.Manager) error {
-	a := &api{m: m, tasks: map[uint32]task{}}
+func Serve(conn *dbus.Conn, m *island.Manager, clip *clipboard.Store, st *sites.Store) error {
+	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st}
 	m.HandleAction("notify.dismiss", func() { m.ClearPrefix("notify.") })
 
 	if err := conn.Export(a, Path, Iface); err != nil {

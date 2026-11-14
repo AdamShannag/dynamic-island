@@ -21,12 +21,6 @@ type Config struct {
 		FocusMinutes int `json:"focusMinutes"` // default 25
 		BreakMinutes int `json:"breakMinutes"` // default 5
 	} `json:"pomodoro"`
-
-	GitHub struct {
-		Repos           []string `json:"repos"`           // owner/name
-		OnlyMine        bool     `json:"onlyMine"`        // only runs triggered by you
-		IntervalSeconds int      `json:"intervalSeconds"` // default 60
-	} `json:"github"`
 }
 
 func Path() string {
