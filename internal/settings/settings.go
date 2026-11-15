@@ -25,7 +25,7 @@ var (
 	Accents  = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
 	Surfaces = []string{"black", "graphite"}
 	// Home is always shown, so it isn't listed.
-	TabIDs     = []string{"activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search"}
+	TabIDs     = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search"}
 	FeatureIDs = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery"}
 )
 
@@ -84,6 +84,14 @@ func Enabled(feature string) bool {
 	mu.RLock()
 	defer mu.RUnlock()
 	v, ok := cur.Features[feature]
+	return !ok || v
+}
+
+// TabOn reports whether a dashboard tab is shown (unknown tabs default on).
+func TabOn(tab string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	v, ok := cur.Tabs[tab]
 	return !ok || v
 }
 

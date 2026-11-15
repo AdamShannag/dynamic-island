@@ -778,3 +778,70 @@
 .goisland.theme-green .goisland-toggle:checked { background-color: #30d158; }
 .goisland.theme-teal .goisland-toggle:checked { background-color: #40c8e0; }
 .goisland.theme-graphite .goisland-toggle:checked { background-color: #8e8e93; }
+
+/* ───────────── Notes (Apple Notes style) ───────────── */
+
+.goisland-notes-page { spacing: 10px; }
+.goisland-notes-side { width: 250px; padding: 10px 8px 8px; spacing: 8px; }
+.goisland-notes-top { spacing: 6px; padding: 0 2px; }
+.goisland-notes-search { padding: 6px 10px; font-size: 9pt; border-radius: 10px; }
+.goisland-note-new {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: #ffd60a;
+  transition-duration: 120ms;
+}
+.goisland-note-new StIcon { icon-size: 17px; }
+.goisland-note-new:hover { background-color: rgba(255, 214, 10, 0.14); }
+.goisland-note-new:focus { box-shadow: none; }
+.goisland-note-list { spacing: 2px; padding-right: 4px; }
+.goisland-note-group { padding: 8px 10px 4px; }
+.goisland-note-row {
+  border-radius: 10px;
+  padding: 8px 10px;
+  transition-duration: 120ms;
+}
+.goisland-note-row:hover   { background-color: rgba(255, 255, 255, 0.05); }
+.goisland-note-row:checked { background-color: rgba(255, 214, 10, 0.22); }
+.goisland-note-row:focus   { box-shadow: none; }
+.goisland-note-title { font-size: 10pt; font-weight: 700; }
+.goisland-note-meta  { spacing: 8px; padding-top: 2px; }
+.goisland-note-when  { font-size: 8.5pt; font-weight: 600; color: rgba(245, 245, 247, 0.75); }
+.goisland-note-preview { font-size: 8.5pt; color: rgba(245, 245, 247, 0.45); }
+
+.goisland-notes-main { padding: 8px 6px 6px; spacing: 2px; }
+.goisland-notes-bar { padding: 0 6px; spacing: 2px; }
+.goisland-note-date { font-size: 8.5pt; font-weight: 600; color: rgba(245, 245, 247, 0.4); }
+.goisland-note-editor {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: #f5f5f7;
+  caret-color: #ffd60a;
+  selection-background-color: rgba(255, 214, 10, 0.35);
+  font-size: 11pt;
+  padding: 6px 16px 10px;
+}
+.goisland-note-editor:focus { border: none; box-shadow: none; }
+.goisland-note-editor StLabel.hint-text { color: rgba(245, 245, 247, 0.3); }
+.goisland.surface-graphite .goisland-note-editor { background-color: transparent; }
+
+/* ───────────── Notifications inbox ───────────── */
+
+.goisland-inbox-bar { padding: 0 4px; }
+.goisland-inbox-count { font-size: 9.5pt; font-weight: 600; color: rgba(245, 245, 247, 0.55); padding-left: 6px; }
+.goisland-inbox-app { spacing: 8px; padding: 10px 12px 4px; }
+.goisland-inbox-app-icon { icon-size: 16px; }
+.goisland-inbox-app-name { padding: 0; }
+.goisland-inbox-row { spacing: 12px; }
+.goisland-inbox-body { font-size: 9pt; color: rgba(245, 245, 247, 0.6); padding-top: 2px; }
+.goisland-inbox-when { font-size: 8pt; color: rgba(245, 245, 247, 0.4); padding-top: 2px; }
+
+/* Unread dot on a tab icon */
+.goisland-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 4px;
+  background-color: #ff453a;
+}

@@ -61,8 +61,14 @@ const IFACE_XML = `
       <arg name="patch" type="s" direction="in"/><arg name="settings" type="s" direction="out"/>
     </method>
     <signal name="SettingsChanged"><arg name="settings" type="s"/></signal>
-    <method name="NotesGet"><arg name="text" type="s" direction="out"/></method>
-    <method name="NotesSave"><arg name="text" type="s" direction="in"/></method>
+    <method name="NotesList"><arg name="notes" type="s" direction="out"/></method>
+    <method name="NoteCreate"><arg name="note" type="s" direction="out"/></method>
+    <method name="NoteSave"><arg name="id" type="u" direction="in"/><arg name="text" type="s" direction="in"/></method>
+    <method name="NotePin"><arg name="id" type="u" direction="in"/><arg name="pinned" type="b" direction="in"/></method>
+    <method name="NoteDelete"><arg name="id" type="u" direction="in"/></method>
+    <method name="InboxList"><arg name="items" type="s" direction="out"/></method>
+    <method name="InboxRemove"><arg name="id" type="u" direction="in"/></method>
+    <method name="InboxClear"/>
     <method name="QR">
       <arg name="text" type="s" direction="in"/><arg name="png" type="s" direction="out"/>
     </method>
@@ -96,6 +102,7 @@ const MODES = ['idle', 'compact', 'notify', 'dashboard', 'osd'];
 const ACCENTS = ['ok', 'warn', 'error'];
 const TABS = [
     ['home', 'Home', 'user-home-symbolic'],
+    ['inbox', 'Notifications', 'preferences-system-notifications-symbolic'],
     ['activity', 'Activity', 'utilities-system-monitor-symbolic'],
     ['agents', 'Agents', 'utilities-terminal-symbolic'],
     ['docker', 'Docker', 'network-server-symbolic'],
@@ -107,7 +114,7 @@ const TABS = [
 ];
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {settings: 520, activity: 470, transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
+const DASH_HEIGHT = {inbox: 480, settings: 520, activity: 470, transform: 470, home: 292, search: 360, agents: 400, notes: 480, qr: 430, logs: 520, default: 500};
 const OSD_MS = 1600;
 const CLIP_DEBOUNCE_MS = 400; // collapse bursts of clipboard owner changes into one read // how long the volume/brightness bar stays up
 
@@ -526,11 +533,16 @@ class Island extends St.BoxLayout {
         tabsWrap.add_child(this._tabIndicator);
         tabsWrap.add_child(tabs);
         this._tabButtons = {};
+        this._tabDots = {};
         for (const [id, name, icon] of TABS) {
-            const btn = new St.Button({
-                style_class: 'goisland-tab', can_focus: true, accessible_name: name,
-                child: new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon'}),
-            });
+            const face = new St.Widget({layout_manager: new Clutter.BinLayout()});
+            face.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon',
+                x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER}));
+            const dot = new St.Widget({style_class: 'goisland-tab-dot', visible: false,
+                x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.START});
+            face.add_child(dot);
+            this._tabDots[id] = dot;
+            const btn = new St.Button({style_class: 'goisland-tab', can_focus: true, accessible_name: name, child: face});
             btn.connect('clicked', () => this._showTab(id));
             tabs.add_child(btn);
             this._tabButtons[id] = btn;
@@ -567,6 +579,7 @@ class Island extends St.BoxLayout {
             clipboard: this._buildClipboardPage(),
             transform: this._buildTransformPage(),
             notes: this._buildNotesPage(),
+            inbox: this._buildInboxPage(),
             qr: this._buildQRPage(),
             settings: this._buildSettingsPage(),
             logs: this._buildLogsPage(),
@@ -1345,57 +1358,346 @@ class Island extends St.BoxLayout {
         });
     }
 
-    // ----- Notes -----
+    // ----- Notes (Apple Notes style: list + editor) -----
 
     _buildNotesPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-notes-card', ...VERTICAL, x_expand: true, y_expand: true});
-        this._notes = new St.Entry({
-            style_class: 'goisland-notes', hint_text: 'Jot something down. It saves automatically.',
-            can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.START,
+        const page = new St.BoxLayout({style_class: 'goisland-page goisland-notes-page'});
+
+        // Left: search, new note, list
+        const side = new St.BoxLayout({style_class: 'goisland-card goisland-notes-side', ...VERTICAL, y_expand: true});
+        const top = new St.BoxLayout({style_class: 'goisland-notes-top'});
+        this._noteSearch = new St.Entry({
+            style_class: 'goisland-entry goisland-notes-search', hint_text: 'Search', can_focus: true, x_expand: true,
+            primary_icon: new St.Icon({icon_name: 'system-search-symbolic', style_class: 'goisland-entry-icon'}),
         });
-        const ct = this._notes.clutter_text;
+        this._noteSearch.clutter_text.connect('text-changed', () => this._renderNoteList());
+        top.add_child(this._noteSearch);
+        top.add_child(iconButton('document-new-symbolic', 'goisland-note-new', () => this._newNote(), 'New note'));
+        side.add_child(top);
+        this._noteList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-note-list'});
+        side.add_child(scrollView(this._noteList));
+        page.add_child(side);
+
+        // Right: date, pin, delete, editor
+        const main = new St.BoxLayout({style_class: 'goisland-card goisland-notes-main', ...VERTICAL, x_expand: true, y_expand: true});
+        const bar = new St.BoxLayout({style_class: 'goisland-notes-bar'});
+        this._noteDate = label('goisland-note-date', {x_expand: true, x_align: Clutter.ActorAlign.CENTER});
+        this._notePinBtn = iconButton('view-pin-symbolic', 'goisland-row-btn', () => this._togglePin(), 'Pin note');
+        bar.add_child(this._noteDate);
+        bar.add_child(this._notePinBtn);
+        bar.add_child(iconButton('user-trash-symbolic', 'goisland-row-btn', () => this._deleteNote(), 'Delete note'));
+        main.add_child(bar);
+        this._noteEditor = new St.Entry({
+            style_class: 'goisland-note-editor', hint_text: 'Start typing…', can_focus: true,
+            x_expand: true, y_align: Clutter.ActorAlign.START,
+        });
+        const ct = this._noteEditor.clutter_text;
         ct.single_line_mode = false;
         ct.activatable = false;
         ct.line_wrap = true;
         ct.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        this._notesSaveId = 0;
-        this._notesLoaded = false;
-        ct.connect('text-changed', () => {
-            if (!this._notesLoaded)
-                return;
-            this._notesStatus.text = 'Editing…';
-            if (this._notesSaveId)
-                GLib.source_remove(this._notesSaveId);
-            this._notesSaveId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
-                this._notesSaveId = 0;
-                this._ext.call('NotesSave', [this._notes.text], (_r, err) => {
-                    this._notesStatus.text = err ? 'Not saved' : 'Saved';
-                });
-                return GLib.SOURCE_REMOVE;
-            });
-        });
+        ct.connect('text-changed', () => this._onNoteEdited());
         const box = new St.BoxLayout({...VERTICAL, x_expand: true});
-        box.add_child(this._notes);
-        card.add_child(scrollView(box));
-        this._notesStatus = label('goisland-hint goisland-notes-status', {text: '', x_align: Clutter.ActorAlign.END});
-        page.add_child(card);
-        page.add_child(this._notesStatus);
+        box.add_child(this._noteEditor);
+        main.add_child(scrollView(box));
+        this._noteEmpty = label('goisland-empty', {text: 'No notes yet. Click the pencil to start one.', x_align: Clutter.ActorAlign.CENTER, visible: false});
+        main.add_child(this._noteEmpty);
+        page.add_child(main);
+
+        this._notesData = [];
+        this._noteId = null;
+        this._noteSaveId = 0;
+        this._noteRows = new Map();
         return page;
     }
 
-    _loadNotes() {
-        this._notesLoaded = false;
+    _loadNotes(selectId = null) {
         if (this._ext.presenting) {
-            this._notes.text = '';
-            this._notesStatus.text = 'Hidden while presenting';
+            this._notesData = [];
+            this._renderNoteList();
+            this._noteEmpty.text = 'Hidden while presenting';
+            this._showNote(null);
             return;
         }
-        this._ext.call('NotesGet', [], (res, err) => {
-            this._notes.text = err ? '' : res[0];
-            this._notesLoaded = !err;
-            this._notesStatus.text = err ? 'Daemon not running' : '';
+        this._ext.call('NotesList', [], (res, err) => {
+            this._notesData = err ? [] : JSON.parse(res[0]) ?? [];
+            this._noteEmpty.text = err ? 'Daemon not running' : 'No notes yet. Click the pencil to start one.';
+            this._renderNoteList();
+            const keep = selectId ?? this._noteId;
+            const next = this._notesData.find(n => n.id === keep) ?? this._notesData[0] ?? null;
+            this._showNote(next);
         });
+    }
+
+    _noteTitle(n) {
+        const line = (n.text ?? '').split('\n').find(l => l.trim()) ?? '';
+        return line.trim().slice(0, 80) || 'New Note';
+    }
+
+    _notePreview(n) {
+        const lines = (n.text ?? '').split('\n').filter(l => l.trim());
+        return (lines[1] ?? 'No additional text').trim().slice(0, 80);
+    }
+
+    _noteWhen(ms) {
+        const d = GLib.DateTime.new_from_unix_local(Math.floor(ms / 1000));
+        const now = GLib.DateTime.new_now_local();
+        if (d.format('%F') === now.format('%F'))
+            return d.format(this._ext.clock24 ? '%H:%M' : '%l:%M %p').trim();
+        if (now.difference(d) < 7 * 24 * 3600 * 1e6)
+            return d.format('%A');
+        return d.format('%-d %b %Y');
+    }
+
+    _renderNoteList() {
+        const q = this._noteSearch.text.trim().toLowerCase();
+        const notes = q ? this._notesData.filter(n => (n.text ?? '').toLowerCase().includes(q)) : this._notesData;
+        const entries = [];
+        let section = null;
+        for (const n of notes) {
+            const sec = n.pinned ? 'PINNED' : 'NOTES';
+            if (sec !== section && (n.pinned || notes.some(x => x.pinned))) {
+                section = sec;
+                entries.push({header: sec});
+            }
+            entries.push({n});
+        }
+        this._noteRows = new Map();
+        this._fillList(this._noteList, entries, e => {
+            if (e.header)
+                return label('goisland-group goisland-note-group', {text: e.header});
+            const n = e.n;
+            const col = new St.BoxLayout({...VERTICAL, x_expand: true});
+            const title = label('goisland-note-title', {text: this._noteTitle(n)});
+            const meta = new St.BoxLayout({style_class: 'goisland-note-meta'});
+            const when = label('goisland-note-when', {text: this._noteWhen(n.updated)});
+            const prev = label('goisland-note-preview', {text: this._notePreview(n), x_expand: true});
+            meta.add_child(when);
+            meta.add_child(prev);
+            col.add_child(title);
+            col.add_child(meta);
+            const row = new St.Button({style_class: 'goisland-note-row', can_focus: true, child: col, x_expand: true});
+            if (n.id === this._noteId)
+                row.add_style_pseudo_class('checked');
+            row.connect('clicked', () => this._showNote(n));
+            this._noteRows.set(n.id, {row, title, when, prev});
+            return row;
+        });
+    }
+
+    _showNote(n) {
+        this._flushNoteSave();
+        // Like Apple Notes: leaving an empty note deletes it.
+        const prev = this._notesData.find(x => x.id === this._noteId);
+        if (prev && !prev.text.trim() && prev.id !== n?.id) {
+            this._ext.call('NoteDelete', [prev.id]);
+            this._notesData = this._notesData.filter(x => x.id !== prev.id);
+            this._noteRows.get(prev.id)?.row.destroy();
+            this._noteRows.delete(prev.id);
+        }
+        for (const [id, r] of this._noteRows) {
+            if (id === n?.id)
+                r.row.add_style_pseudo_class('checked');
+            else
+                r.row.remove_style_pseudo_class('checked');
+        }
+        this._noteId = n?.id ?? null;
+        this._noteLoading = true;
+        this._noteEditor.text = n?.text ?? '';
+        this._noteLoading = false;
+        this._noteEditor.visible = !!n;
+        this._noteEmpty.visible = !n;
+        this._notePinBtn.visible = !!n;
+        if (this._notePinBtn.visible) {
+            if (n.pinned)
+                this._notePinBtn.add_style_class_name('pinned');
+            else
+                this._notePinBtn.remove_style_class_name('pinned');
+        }
+        const d = n ? GLib.DateTime.new_from_unix_local(Math.floor(n.updated / 1000)) : null;
+        this._noteDate.text = d ? d.format('%-d %B %Y at %H:%M') : '';
+    }
+
+    _onNoteEdited() {
+        if (this._noteLoading || this._noteId === null)
+            return;
+        const n = this._notesData.find(x => x.id === this._noteId);
+        if (!n)
+            return;
+        n.text = this._noteEditor.text;
+        n.updated = Date.now();
+        const r = this._noteRows.get(n.id);
+        if (r) { // live-update the list row in place
+            setText(r.title, this._noteTitle(n));
+            setText(r.prev, this._notePreview(n));
+            setText(r.when, this._noteWhen(n.updated));
+        }
+        if (this._noteSaveId)
+            GLib.source_remove(this._noteSaveId);
+        this._noteSaveId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            this._noteSaveId = 0;
+            this._ext.call('NoteSave', [n.id, n.text]);
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _flushNoteSave() {
+        if (!this._noteSaveId)
+            return;
+        GLib.source_remove(this._noteSaveId);
+        this._noteSaveId = 0;
+        const n = this._notesData.find(x => x.id === this._noteId);
+        if (n)
+            this._ext.call('NoteSave', [n.id, n.text]);
+    }
+
+    _newNote() {
+        this._flushNoteSave();
+        this._ext.call('NoteCreate', [], (res, err) => {
+            if (err)
+                return;
+            const n = JSON.parse(res[0]);
+            this._noteSearch.text = '';
+            this._loadNotes(n.id);
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 120, () => {
+                this._noteEditor.grab_key_focus();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+    }
+
+    _togglePin() {
+        const n = this._notesData.find(x => x.id === this._noteId);
+        if (n)
+            this._ext.call('NotePin', [n.id, !n.pinned], () => this._loadNotes(n.id));
+    }
+
+    _deleteNote() {
+        const id = this._noteId;
+        if (id === null)
+            return;
+        if (this._noteSaveId) {
+            GLib.source_remove(this._noteSaveId);
+            this._noteSaveId = 0;
+        }
+        const idx = this._notesData.findIndex(x => x.id === id);
+        const next = this._notesData[idx + 1] ?? this._notesData[idx - 1] ?? null;
+        this._noteId = null;
+        this._ext.call('NoteDelete', [id], () => this._loadNotes(next?.id ?? null));
+    }
+
+    // ----- Notifications inbox -----
+
+    _buildInboxPage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const bar = new St.BoxLayout({style_class: 'goisland-toolbar goisland-inbox-bar'});
+        this._inboxCount = label('goisland-inbox-count', {x_expand: true});
+        const clear = new St.Button({style_class: 'goisland-pill-btn', label: 'Clear all', can_focus: true});
+        clear.connect('clicked', () => this._ext.call('InboxClear', [], () => this._loadInbox()));
+        bar.add_child(this._inboxCount);
+        bar.add_child(clear);
+        page.add_child(bar);
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        this._inboxEmpty = this._emptyState();
+        this._inboxList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
+        this._inboxScroll = scrollView(this._inboxList);
+        card.add_child(this._inboxEmpty.actor);
+        card.add_child(this._inboxScroll);
+        page.add_child(card);
+        return page;
+    }
+
+    _loadInbox() {
+        this.setUnread(false);
+        if (this._ext.presenting) {
+            this._inboxList.destroy_all_children();
+            this._inboxScroll.hide();
+            setText(this._inboxCount, '');
+            this._inboxEmpty.show({icon: 'preferences-system-notifications-symbolic', title: 'Hidden while presenting'});
+            return;
+        }
+        this._ext.call('InboxList', [], (res, err) => {
+            if (!this._dashOpen || this._tab !== 'inbox')
+                return;
+            const items = err ? [] : JSON.parse(res[0]);
+            setText(this._inboxCount, items.length ? `${items.length} notification${items.length === 1 ? '' : 's'}` : '');
+            if (!items.length) {
+                this._inboxSig = null;
+                this._inboxList.destroy_all_children();
+                this._inboxScroll.hide();
+                this._inboxEmpty.show({icon: 'preferences-system-notifications-symbolic', title: "You're all caught up",
+                    hint: err ? 'Daemon not running' : 'Notifications from your apps collect here'});
+                return;
+            }
+            this._inboxEmpty.hide();
+            this._inboxScroll.show();
+            this._renderInbox(items);
+        });
+    }
+
+    _renderInbox(items) {
+        const sig = items.map(i => i.id).join(',');
+        if (sig === this._inboxSig && this._inboxWhen) {
+            items.forEach((it, k) => this._inboxWhen[k] && setText(this._inboxWhen[k], ago(it.at)));
+            return;
+        }
+        this._inboxSig = sig;
+        this._inboxWhen = [];
+        // Group consecutive notifications from the same app.
+        const entries = [];
+        let app = null;
+        for (const it of items) {
+            if (it.app !== app) {
+                app = it.app;
+                entries.push({header: it});
+            }
+            entries.push({it});
+        }
+        let k = 0;
+        this._fillList(this._inboxList, entries, e => {
+            if (e.header) {
+                const h = new St.BoxLayout({style_class: 'goisland-inbox-app'});
+                const icon = new St.Icon({style_class: 'goisland-inbox-app-icon', y_align: Clutter.ActorAlign.CENTER});
+                const appInfo = this._ext.lookupApp(e.header);
+                if (appInfo)
+                    icon.gicon = appInfo.get_icon();
+                else
+                    icon.icon_name = 'application-x-executable-symbolic';
+                h.add_child(icon);
+                h.add_child(label('goisland-group goisland-inbox-app-name', {text: (e.header.app || 'App').toUpperCase(), x_expand: true}));
+                return h;
+            }
+            const it = e.it;
+            const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-inbox-row'});
+            const col = new St.BoxLayout({...VERTICAL, x_expand: true});
+            col.add_child(label('goisland-row-title', {text: it.title}));
+            if (it.body) {
+                const body = new St.Label({style_class: 'goisland-inbox-body', text: it.body.slice(0, 280)});
+                body.clutter_text.line_wrap = true;
+                body.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                col.add_child(body);
+            }
+            box.add_child(col);
+            const when = label('goisland-inbox-when', {text: ago(it.at), y_align: Clutter.ActorAlign.START});
+            this._inboxWhen[k++] = when;
+            box.add_child(when);
+            box.add_child(iconButton('window-close-symbolic', 'goisland-row-btn', () =>
+                this._ext.call('InboxRemove', [it.id], () => this._loadInbox()), 'Dismiss'));
+            const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
+            row.connect('clicked', () => {
+                this._ext.activateNotification({title: it.title, subtitle: it.body, app: it.app, desktopEntry: it.desktopEntry});
+                this._ext.call('InboxRemove', [it.id]);
+                this._closeDash();
+            });
+            return row;
+        });
+    }
+
+    // Unread dot on the Notifications tab icon.
+    setUnread(on) {
+        const dot = this._tabDots?.inbox;
+        if (dot)
+            dot.visible = on && !(this._dashOpen && this._tab === 'inbox');
     }
 
     // ----- QR -----
@@ -1682,6 +1984,8 @@ class Island extends St.BoxLayout {
         // With "Music in the pill" off, the pill stays on the clock (Home
         // still has the Now Playing card).
         this._state = k === 'media' && !featureOn(this._settings, 'mediaPill') ? IDLE : raw;
+        if (raw.mirror && raw !== prev && !(this._dashOpen && this._tab === 'inbox'))
+            this.setUnread(true);
         this._react(prev);
         this._render(prev);
     }
@@ -2150,6 +2454,7 @@ class Island extends St.BoxLayout {
     _closeDash(render = true) {
         if (!this._dashOpen)
             return;
+        this._flushNoteSave?.();
         this._dashOpen = false;
         this._mEq.running = false;
         if (this._grab) {
@@ -2213,8 +2518,15 @@ class Island extends St.BoxLayout {
             this._loadTransformInput();
             focus = this._xfIn;
         } else if (id === 'notes') {
+            this._noteSearch.text = '';
             this._loadNotes();
-            focus = this._notes;
+            focus = this._noteEditor;
+        } else if (id === 'inbox') {
+            this._loadInbox();
+            this._dockerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+                this._loadInbox();
+                return GLib.SOURCE_CONTINUE;
+            });
         } else if (id === 'clipboard') {
             this._clipFilter.text = '';
             this._loadClipboard();
@@ -2388,7 +2700,7 @@ class Island extends St.BoxLayout {
         this._face.setSpy(on);
         this._apply();
         this.relayout(true); // the idle width depends on face vs. sunglasses
-        if (this._dashOpen && (this._tab === 'clipboard' || this._tab === 'notes'))
+        if (this._dashOpen && ['clipboard', 'notes', 'inbox'].includes(this._tab))
             this._showTab(this._tab);
     }
 
@@ -2759,17 +3071,28 @@ export default class GoIslandExtension extends Extension {
             match.activate();
             return true;
         }
+        const app = this.lookupApp(view);
+        if (app) {
+            app.activate();
+            Main.overview.hide();
+            return true;
+        }
+        return false;
+    }
+
+    lookupApp(view) {
         const apps = Shell.AppSystem.get_default();
         for (const id of [view.desktopEntry, view.app?.toLowerCase(), view.app].filter(Boolean)) {
             const app = apps.lookup_app(`${id}.desktop`) ?? apps.lookup_heuristic_basename(`${id}.desktop`) ??
                 apps.lookup_desktop_wmclass(id) ?? apps.lookup_startup_wmclass(id);
-            if (app) {
-                app.activate();
-                Main.overview.hide();
-                return true;
-            }
+            if (app)
+                return app;
         }
-        return false;
+        return null;
+    }
+
+    get clock24() {
+        return new Gio.Settings({schema_id: 'org.gnome.desktop.interface'}).get_string('clock-format') !== '12h';
     }
 
     // Send a partial settings patch to the daemon; it saves and broadcasts.

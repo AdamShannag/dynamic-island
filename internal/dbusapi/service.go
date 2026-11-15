@@ -17,7 +17,9 @@ import (
 	"go-island/internal/agents"
 	"go-island/internal/clipboard"
 	"go-island/internal/docker"
+	"go-island/internal/inbox"
 	"go-island/internal/island"
+	"go-island/internal/notes"
 	"go-island/internal/plugins"
 	"go-island/internal/ports"
 	"go-island/internal/settings"
@@ -110,12 +112,30 @@ const introXML = `
     <method name="AgentsList">
       <arg name="sessions" type="s" direction="out"/>
     </method>
-    <method name="NotesGet">
-      <arg name="text" type="s" direction="out"/>
+    <method name="NotesList">
+      <arg name="notes" type="s" direction="out"/>
     </method>
-    <method name="NotesSave">
+    <method name="NoteCreate">
+      <arg name="note" type="s" direction="out"/>
+    </method>
+    <method name="NoteSave">
+      <arg name="id" type="u" direction="in"/>
       <arg name="text" type="s" direction="in"/>
     </method>
+    <method name="NotePin">
+      <arg name="id" type="u" direction="in"/>
+      <arg name="pinned" type="b" direction="in"/>
+    </method>
+    <method name="NoteDelete">
+      <arg name="id" type="u" direction="in"/>
+    </method>
+    <method name="InboxList">
+      <arg name="items" type="s" direction="out"/>
+    </method>
+    <method name="InboxRemove">
+      <arg name="id" type="u" direction="in"/>
+    </method>
+    <method name="InboxClear"/>
     <method name="QR">
       <arg name="text" type="s" direction="in"/>
       <arg name="png" type="s" direction="out"/>
@@ -170,6 +190,7 @@ type api struct {
 	conn   *dbus.Conn
 	ctxw   *plugins.Context
 	sys    *sysmon.Monitor
+	notes  *notes.Store
 	agents *agents.Tracker
 	clip   *clipboard.Store
 	sites  *sites.Store
@@ -285,11 +306,21 @@ func (a *api) ClipboardAdd(text string) *dbus.Error {
 	return dbusErr(a.clip.Add(text))
 }
 
-func (a *api) NotesGet() (string, *dbus.Error) {
-	t, err := tools.NotesGet()
-	return t, dbusErr(err)
+func (a *api) NotesList() (string, *dbus.Error) { return toJSON(a.notes.List()) }
+func (a *api) NoteCreate() (string, *dbus.Error) {
+	n, err := a.notes.Create()
+	if err != nil {
+		return "", dbusErr(err)
+	}
+	return toJSON(n)
 }
-func (a *api) NotesSave(text string) *dbus.Error { return dbusErr(tools.NotesSave(text)) }
+func (a *api) NoteSave(id uint32, text string) *dbus.Error { return dbusErr(a.notes.Save(id, text)) }
+func (a *api) NotePin(id uint32, pinned bool) *dbus.Error  { return dbusErr(a.notes.Pin(id, pinned)) }
+func (a *api) NoteDelete(id uint32) *dbus.Error            { return dbusErr(a.notes.Delete(id)) }
+
+func (a *api) InboxList() (string, *dbus.Error)  { return toJSON(inbox.List()) }
+func (a *api) InboxRemove(id uint32) *dbus.Error { inbox.Remove(id); return nil }
+func (a *api) InboxClear() *dbus.Error           { inbox.Clear(); return nil }
 func (a *api) QR(text string) (string, *dbus.Error) {
 	p, err := tools.QR(text)
 	return p, dbusErr(err)
@@ -404,7 +435,11 @@ func (a *api) TaskEnd(id uint32, exitCode int32) *dbus.Error {
 
 // Serve claims the bus name, exports the API and wires StateChanged signals.
 func Serve(conn *dbus.Conn, m *island.Manager, clip *clipboard.Store, st *sites.Store, ctxw *plugins.Context) error {
-	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn, agents: agents.NewTracker(m), ctxw: ctxw, sys: sysmon.New()}
+	noteStore, err := notes.Open()
+	if err != nil {
+		fmt.Println("notes:", err)
+	}
+	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn, agents: agents.NewTracker(m), ctxw: ctxw, sys: sysmon.New(), notes: noteStore}
 	m.HandleAction("notify.dismiss", func() { m.ClearPrefix("notify.") })
 
 	if err := conn.Export(a, Path, Iface); err != nil {

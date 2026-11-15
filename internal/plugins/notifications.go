@@ -11,6 +11,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"go-island/internal/inbox"
 	"go-island/internal/island"
 	"go-island/internal/settings"
 )
@@ -67,10 +68,18 @@ func (n *Notifications) Run(ctx context.Context, h island.Host) error {
 			case dbus.TypeError:
 				return fmt.Errorf("BecomeMonitor: %v", msg.Body)
 			case dbus.TypeMethodCall:
-				if h.Presenting() || !settings.Enabled("mirrorNotifications") {
-					continue // never mirror on a shared screen, or when turned off
+				v, ttl, ok := n.view(msg)
+				if !ok {
+					continue
 				}
-				if v, ttl, ok := n.view(msg); ok {
+				if settings.TabOn("inbox") {
+					inbox.Add(inbox.Item{App: v.App, DesktopEntry: v.DesktopEntry, Icon: v.Icon, Art: v.Art,
+						Title: v.Title, Body: v.Subtitle})
+				}
+				if h.Presenting() || !settings.Enabled("mirrorNotifications") {
+					continue // history yes, popup no: on a shared screen, or when turned off
+				}
+				{
 					n.seq++
 					h.Set(island.Activity{
 						ID: fmt.Sprintf("notify.mirror.%d", n.seq), Priority: island.PriorityNotify,
@@ -93,6 +102,12 @@ func (n *Notifications) view(msg *dbus.Message) (island.View, time.Duration, boo
 	body, _ := msg.Body[4].(string)
 	hints, _ := msg.Body[6].(map[string]dbus.Variant)
 	if summary == "" || n.ignore[strings.ToLower(app)] {
+		return island.View{}, 0, false
+	}
+	// GNOME's notification relay (org.gnome.Shell.Notifications) forwards
+	// every Notify call into the shell again, tagging the copy with
+	// x-shell-sender hints. Count only the original.
+	if _, fwd := hints["x-shell-sender"]; fwd {
 		return island.View{}, 0, false
 	}
 
