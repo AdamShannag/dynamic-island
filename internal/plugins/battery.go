@@ -9,6 +9,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"go-island/internal/island"
+	"go-island/internal/settings"
 )
 
 const (
@@ -91,7 +92,12 @@ func (b *Battery) Run(ctx context.Context, h island.Host) error {
 		}
 		label := fmt.Sprintf("%.0f%%", newPct)
 
+		quiet := !settings.Enabled("battery")
 		switch {
+		case quiet:
+			if newCharging && !charging {
+				nextWarn = 0
+			}
 		case newCharging && !charging:
 			nextWarn = 0
 			h.Clear("battery.low")
@@ -108,7 +114,7 @@ func (b *Battery) Run(ctx context.Context, h island.Host) error {
 			})
 		}
 
-		if !newCharging && nextWarn < len(lowThresholds) && newPct <= lowThresholds[nextWarn] {
+		if !quiet && !newCharging && nextWarn < len(lowThresholds) && newPct <= lowThresholds[nextWarn] {
 			for nextWarn < len(lowThresholds) && newPct <= lowThresholds[nextWarn] {
 				nextWarn++
 			}

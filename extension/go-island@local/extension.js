@@ -56,6 +56,11 @@ const IFACE_XML = `
     <method name="AgentsList"><arg name="sessions" type="s" direction="out"/></method>
     <method name="ActivityList"><arg name="items" type="s" direction="out"/></method>
     <method name="SystemStats"><arg name="stats" type="s" direction="out"/></method>
+    <method name="GetSettings"><arg name="settings" type="s" direction="out"/></method>
+    <method name="SetSettings">
+      <arg name="patch" type="s" direction="in"/><arg name="settings" type="s" direction="out"/>
+    </method>
+    <signal name="SettingsChanged"><arg name="settings" type="s"/></signal>
     <method name="NotesGet"><arg name="text" type="s" direction="out"/></method>
     <method name="NotesSave"><arg name="text" type="s" direction="in"/></method>
     <method name="QR">
@@ -102,7 +107,7 @@ const TABS = [
 ];
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {activity: 470, transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
+const DASH_HEIGHT = {settings: 520, activity: 470, transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
 const OSD_MS = 1600;
 const CLIP_DEBOUNCE_MS = 400; // collapse bursts of clipboard owner changes into one read // how long the volume/brightness bar stays up
 
@@ -204,6 +209,30 @@ function focusPids(pids) {
     return false;
 }
 
+// ---------- settings ----------
+const ACCENT_COLORS = {
+    blue: '#0a84ff', purple: '#bf5af2', pink: '#ff375f', orange: '#ff9f0a',
+    green: '#30d158', teal: '#40c8e0', graphite: '#8e8e93',
+};
+const SURFACES = [['black', 'Black'], ['graphite', 'Graphite']];
+const FEATURES = [
+    ['face', 'Face', 'Eyes next to the clock that follow your cursor'],
+    ['mediaPill', 'Music in the pill', 'Show the playing track in the pill (Home always shows it)'],
+    ['osd', 'Volume & brightness', 'Show volume and brightness changes in the island'],
+    ['hideBanners', "Hide GNOME's banners", 'Only the island shows notifications'],
+    ['mirrorNotifications', 'Notifications', 'Show app notifications in the island'],
+    ['clipboardHistory', 'Clipboard history', 'Remember what you copy'],
+    ['usb', 'USB devices', 'Pop up when a device is plugged in'],
+    ['battery', 'Battery', 'Charging and low-battery popups'],
+];
+const DEFAULT_SETTINGS = {
+    accent: 'blue', surface: 'black',
+    tabs: {},      // missing = shown
+    features: {},  // missing = on
+};
+const featureOn = (st, key) => st?.features?.[key] !== false;
+const tabOn = (st, id) => id === 'home' || st?.tabs?.[id] !== false;
+
 const SPARK_POINTS = 60; // one minute of history at 1 sample/s
 const ROWS_PER_FRAME = 4; // list rows built per frame (keeps every frame well under 16 ms)
 
@@ -257,6 +286,48 @@ function ago(ms) {
     if (s < 3600)
         return `${Math.floor(s / 60)}m ago`;
     return `${Math.floor(s / 3600)}h ago`;
+}
+
+// A small on/off toggle drawn by the island itself, so it follows the
+// island's accent colour and looks the same on every theme/GNOME version.
+class Toggle {
+    constructor(state) {
+        this.actor = new St.Widget({style_class: 'goisland-toggle', y_align: Clutter.ActorAlign.CENTER});
+        this._knob = new St.Widget({style_class: 'goisland-toggle-knob'});
+        this.actor.add_child(this._knob);
+        this._state = null;
+        this.set(state, false);
+    }
+
+    get state() {
+        return this._state;
+    }
+
+    set state(v) {
+        this.set(v, true);
+    }
+
+    set(v, animate) {
+        v = !!v;
+        if (v === this._state)
+            return;
+        this._state = v;
+        if (v)
+            this.actor.add_style_pseudo_class('checked');
+        else
+            this.actor.remove_style_pseudo_class('checked');
+        const k = scale();
+        const x = (v ? 20 : 2) * k;
+        this._knob.y = 2 * k;
+        if (animate)
+            this._knob.ease({x, duration: 170, mode: Clutter.AnimationMode.EASE_OUT_CUBIC});
+        else
+            this._knob.x = x;
+    }
+
+    toggle() {
+        this.state = !this._state;
+    }
 }
 
 // "Now playing" equalizer: each bar is a blend of two sine waves at
@@ -481,6 +552,7 @@ class Island extends St.BoxLayout {
         });
         this._spyBtn.connect('clicked', () => this._ext.setPresenting(!this._ext.presenting, false));
         header.add_child(this._spyBtn);
+        header.add_child(iconButton('emblem-system-symbolic', 'goisland-head-btn', () => this._showTab('settings'), 'Settings'));
         this._dashClock = label('goisland-dash-clock');
         header.add_child(this._dashClock);
         this._dash.add_child(header);
@@ -496,6 +568,7 @@ class Island extends St.BoxLayout {
             transform: this._buildTransformPage(),
             notes: this._buildNotesPage(),
             qr: this._buildQRPage(),
+            settings: this._buildSettingsPage(),
             logs: this._buildLogsPage(),
             search: this._buildSearchPage(),
         };
@@ -1594,19 +1667,137 @@ class Island extends St.BoxLayout {
 
     setState(state) {
         const prev = this._state;
-        this._state = state ?? IDLE;
-        const k = this._state.kind;
+        const raw = state ?? IDLE;
+        this._raw = raw;
+        const k = raw.kind;
         if (k === 'media')
-            this._media = this._state;
+            this._media = raw;
         else if (k === 'idle')
             this._media = null;
         // A running timer outranks media, so seeing media/idle means no timer.
         if (k === 'timer')
-            this._timer = this._state;
+            this._timer = raw;
         else if (k === 'idle' || k === 'media')
             this._timer = null;
+        // With "Music in the pill" off, the pill stays on the clock (Home
+        // still has the Now Playing card).
+        this._state = k === 'media' && !featureOn(this._settings, 'mediaPill') ? IDLE : raw;
         this._react(prev);
         this._render(prev);
+    }
+
+    // ---------- settings ----------
+
+    applySettings(st) {
+        this._settings = st;
+        for (const c of [...(this.style_class ?? '').split(' ')]) {
+            if (c.startsWith('theme-') || c.startsWith('surface-'))
+                this.remove_style_class_name(c);
+        }
+        this.add_style_class_name(`theme-${st.accent ?? 'blue'}`);
+        this.add_style_class_name(`surface-${st.surface ?? 'black'}`);
+
+        for (const [id] of TABS)
+            this._tabButtons[id].visible = tabOn(st, id);
+        this._dockerRow.row.visible = tabOn(st, 'docker');
+        if (this._dashOpen && this._selectedTab && !tabOn(st, this._selectedTab))
+            this._showTab('home');
+        else if (this._selectedTab)
+            this._runIndicator();
+
+        this._syncSettingsPage();
+        this.setState(this._raw ?? IDLE); // re-evaluate face / music pill
+    }
+
+    _buildSettingsPage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const box = new St.BoxLayout({...VERTICAL, style_class: 'goisland-settings'});
+        this._settingControls = [];
+
+        // Appearance
+        const look = this._settingsCard(box, 'APPEARANCE');
+        const accentRow = this._settingsRow(look, 'Accent colour', null);
+        const swatches = new St.BoxLayout({style_class: 'goisland-swatches', y_align: Clutter.ActorAlign.CENTER});
+        for (const [name, hex] of Object.entries(ACCENT_COLORS)) {
+            const dot = new St.Widget({style_class: 'goisland-swatch-dot', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+            dot.set_style(`background-color: ${hex};`);
+            const btn = new St.Button({style_class: 'goisland-swatch', can_focus: true, accessible_name: name, child: dot});
+            btn.connect('clicked', () => this._ext.updateSettings({accent: name}));
+            swatches.add_child(btn);
+            this._settingControls.push(st => (btn.checked = (st.accent ?? 'blue') === name));
+        }
+        accentRow.add_child(swatches);
+        const surfaceRow = this._settingsRow(look, 'Surface', null);
+        const seg = new St.BoxLayout({style_class: 'goisland-seg', y_align: Clutter.ActorAlign.CENTER});
+        for (const [id, name] of SURFACES) {
+            const btn = new St.Button({style_class: 'goisland-seg-btn', label: name, can_focus: true});
+            btn.connect('clicked', () => this._ext.updateSettings({surface: id}));
+            seg.add_child(btn);
+            this._settingControls.push(st => (btn.checked = (st.surface ?? 'black') === id));
+        }
+        surfaceRow.add_child(seg);
+
+        // Tabs
+        const tabs = this._settingsCard(box, 'TABS');
+        const home = this._settingsRow(tabs, 'Home', 'Always shown', 'user-home-symbolic');
+        home.add_child(label('goisland-setting-locked', {text: 'Always on'}));
+        for (const [id, name, icon] of TABS.filter(([tid]) => tid !== 'home'))
+            this._settingsToggle(tabs, name, null, icon, st => tabOn(st, id), on => ({tabs: {[id]: on}}));
+
+        // Features
+        const feats = this._settingsCard(box, 'FEATURES');
+        for (const [key, name, desc] of FEATURES)
+            this._settingsToggle(feats, name, desc, null, st => featureOn(st, key), on => ({features: {[key]: on}}));
+
+        page.add_child(scrollView(box));
+        return page;
+    }
+
+    _settingsCard(parent, title) {
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-settings-card', ...VERTICAL, x_expand: true});
+        card.add_child(label('goisland-group', {text: title}));
+        parent.add_child(card);
+        return card;
+    }
+
+    _settingsRow(card, title, desc, icon = null) {
+        const row = new St.BoxLayout({style_class: 'goisland-setting-row', x_expand: true});
+        if (icon)
+            row.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-setting-icon', y_align: Clutter.ActorAlign.CENTER}));
+        const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        col.add_child(label('goisland-setting-title', {text: title}));
+        if (desc)
+            col.add_child(label('goisland-setting-desc', {text: desc}));
+        row.add_child(col);
+        card.add_child(row);
+        return row;
+    }
+
+    _settingsToggle(card, title, desc, icon, get, patch) {
+        const row = new St.Button({style_class: 'goisland-row goisland-setting-toggle', can_focus: true, x_expand: true});
+        const inner = new St.BoxLayout({style_class: 'goisland-setting-row', x_expand: true});
+        if (icon)
+            inner.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-setting-icon', y_align: Clutter.ActorAlign.CENTER}));
+        const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        col.add_child(label('goisland-setting-title', {text: title}));
+        if (desc)
+            col.add_child(label('goisland-setting-desc', {text: desc}));
+        inner.add_child(col);
+        const sw = new Toggle(true);
+        inner.add_child(sw.actor);
+        row.child = inner;
+        row.connect('clicked', () => {
+            sw.toggle(); // instant feedback; the daemon's reply confirms it
+            this._ext.updateSettings(patch(sw.state));
+        });
+        card.add_child(row);
+        this._settingControls.push(st => sw.set(get(st), true));
+    }
+
+    _syncSettingsPage() {
+        const st = this._settings ?? DEFAULT_SETTINGS;
+        for (const sync of this._settingControls ?? [])
+            sync(st);
     }
 
     // Called instead of GNOME's OSD popup (volume, brightness, mic…).
@@ -1724,7 +1915,7 @@ class Island extends St.BoxLayout {
         this._title.visible = mode !== 'idle';
         this._subtitle.text = s.subtitle ?? '';
         this._subtitle.visible = mode === 'notify' && !!s.subtitle && !masked;
-        this._face.actor.visible = mode === 'idle';
+        this._face.actor.visible = mode === 'idle' && featureOn(this._settings, 'face');
         this._art.style = null;
         if (mode === 'idle') {
             this._art.hide();
@@ -1970,8 +2161,10 @@ class Island extends St.BoxLayout {
         for (const [pid, page] of Object.entries(this._pages))
             page.visible = pid === id;
         // Sub-pages keep their parent tab selected and name themselves.
-        const parent = {logs: 'docker', qr: this._qrReturn ?? 'clipboard'}[id] ?? id;
-        this._tabName.text = {qr: '›  QR code', logs: '›  Logs'}[id] ?? '';
+        // Sub-pages keep their parent tab highlighted; Settings has none.
+        const SUBPAGES = {logs: 'docker', qr: this._qrReturn ?? 'clipboard', settings: null};
+        const parent = id in SUBPAGES ? SUBPAGES[id] : id;
+        this._tabName.text = {qr: '›  QR code', logs: '›  Logs', settings: 'Settings'}[id] ?? '';
         this._selectTab(parent);
 
         this._stopDocker();
@@ -2036,7 +2229,9 @@ class Island extends St.BoxLayout {
         for (const [tid, btn] of Object.entries(this._tabButtons))
             btn.checked = tid === id;
         this._selectedTab = id;
-        this._runIndicator();
+        this._tabIndicator.visible = !!id;
+        if (id)
+            this._runIndicator();
     }
 
     // The highlight follows the selected button every frame (its position
@@ -2430,19 +2625,9 @@ export default class GoIslandExtension extends Extension {
         // Volume / brightness / mic popups morph out of the island instead.
         // Falls back to GNOME's own popup over fullscreen apps (the island
         // hides there) and while the dashboard is open.
-        const osd = Main.osdWindowManager;
-        this._origOsdShow = osd.show;
-        const ext = this;
-        osd.show = function (monitorIndex, icon, label, level, maxLevel) {
-            const island = ext._island;
-            const primary = Main.layoutManager.primaryMonitor;
-            if (island && !island._dashOpen && primary && !primary.inFullscreen &&
-                (monitorIndex === -1 || monitorIndex === Main.layoutManager.primaryIndex)) {
-                island.showOsd(icon, label, level, maxLevel);
-                return;
-            }
-            ext._origOsdShow.call(this, monitorIndex, icon, label, level, maxLevel);
-        };
+        this.settings = DEFAULT_SETTINGS;
+        this._island.applySettings(this.settings);
+        this._setOsdTakeover(true);
         Main.panel.connectObject('notify::height', () => this._island.relayout(false), this);
 
         // Screen sharing turns on presentation mode automatically (and off
@@ -2472,14 +2657,12 @@ export default class GoIslandExtension extends Extension {
 
     disable() {
         this._enabled = false;
+        this._setOsdTakeover(false);
         if (this._clipTimer) {
             GLib.source_remove(this._clipTimer);
             this._clipTimer = 0;
         }
-        if (this._origOsdShow) {
-            Main.osdWindowManager.show = this._origOsdShow;
-            this._origOsdShow = null;
-        }
+
         St.ThemeContext.get_for_stage(global.stage).disconnectObject(this);
         this.setPresenting(false, false); // restores notification banners
         global.backend.get_remote_access_controller?.()?.disconnectObject(this);
@@ -2521,6 +2704,44 @@ export default class GoIslandExtension extends Extension {
         this._island?.setPresenting(on);
     }
 
+    _setOsdTakeover(on) {
+        const osd = Main.osdWindowManager;
+        if (on && !this._origOsdShow) {
+            this._origOsdShow = osd.show;
+            const ext = this;
+            osd.show = function (monitorIndex, icon, label, level, maxLevel) {
+                const island = ext._island;
+                const primary = Main.layoutManager.primaryMonitor;
+                if (island && !island._dashOpen && primary && !primary.inFullscreen &&
+                    (monitorIndex === -1 || monitorIndex === Main.layoutManager.primaryIndex)) {
+                    island.showOsd(icon, label, level, maxLevel);
+                    return;
+                }
+                ext._origOsdShow.call(this, monitorIndex, icon, label, level, maxLevel);
+            };
+        } else if (!on && this._origOsdShow) {
+            osd.show = this._origOsdShow;
+            this._origOsdShow = null;
+        }
+    }
+
+    applySettings(st) {
+        this.settings = st;
+        this._island?.applySettings(st);
+        this._setOsdTakeover(featureOn(st, 'osd'));
+        this._blockBanners(!!this._proxy && featureOn(st, 'hideBanners'));
+    }
+
+    // Send a partial settings patch to the daemon; it saves and broadcasts.
+    updateSettings(patch) {
+        this.call('SetSettings', [JSON.stringify(patch)], (res, err) => {
+            if (!err)
+                this.applySettings(JSON.parse(res[0]));
+            else
+                this._island?.applySettings(this.settings); // revert optimistic toggles
+        });
+    }
+
     // GNOME shows a banner only when MessageTray._bannerBlocked is false,
     // and panel menus toggle that flag as they open/close. While the island
     // is connected (it shows notifications itself), pin it on by shadowing
@@ -2558,7 +2779,8 @@ export default class GoIslandExtension extends Extension {
     // Everything else (Transform, QR) uses the daemon's history instead.
 
     _onClipboardChanged(type, source) {
-        if (type !== Meta.SelectionType.SELECTION_CLIPBOARD || !source || !this._proxy || this.presenting)
+        if (type !== Meta.SelectionType.SELECTION_CLIPBOARD || !source || !this._proxy || this.presenting ||
+            !featureOn(this.settings, 'clipboardHistory'))
             return;
         if (Date.now() - (this._selfCopyAt ?? 0) < 1000)
             return; // our own copy(); already recorded
@@ -2628,7 +2850,11 @@ export default class GoIslandExtension extends Extension {
                 return;
             }
             this._proxy = proxy;
-            this._blockBanners(true);
+            this._blockBanners(featureOn(this.settings, 'hideBanners'));
+            this.call('GetSettings', [], (res, err) => {
+                if (!err && !cancellable.is_cancelled())
+                    this.applySettings(JSON.parse(res[0]));
+            });
             GLib.timeout_add_seconds(GLib.PRIORITY_LOW, 3, () => {
                 this._island?.prewarm();
                 return GLib.SOURCE_REMOVE;
@@ -2636,6 +2862,7 @@ export default class GoIslandExtension extends Extension {
             this._signalIds = [
                 proxy.connectSignal('StateChanged', (_p, _sender, [json]) => this._applyState(json)),
                 proxy.connectSignal('OpenDashboard', (_p, _sender, [tab]) => this._island?.toggleDash(tab)),
+                proxy.connectSignal('SettingsChanged', (_p, _sender, [json]) => this.applySettings(JSON.parse(json))),
                 proxy.connectSignal('ColorPicked', (_p, _sender, [hex]) =>
                     this.copy(hex)),
             ];

@@ -12,6 +12,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"go-island/internal/island"
+	"go-island/internal/settings"
 )
 
 // Notifications mirrors desktop notifications (Slack, Telegram, calendar,
@@ -66,8 +67,8 @@ func (n *Notifications) Run(ctx context.Context, h island.Host) error {
 			case dbus.TypeError:
 				return fmt.Errorf("BecomeMonitor: %v", msg.Body)
 			case dbus.TypeMethodCall:
-				if h.Presenting() {
-					continue // never mirror personal notifications on a shared screen
+				if h.Presenting() || !settings.Enabled("mirrorNotifications") {
+					continue // never mirror on a shared screen, or when turned off
 				}
 				if v, ttl, ok := n.view(msg); ok {
 					n.seq++

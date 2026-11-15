@@ -21,6 +21,7 @@ import (
 	"go-island/internal/dbusapi"
 	"go-island/internal/island"
 	"go-island/internal/plugins"
+	"go-island/internal/settings"
 	"go-island/internal/sites"
 )
 
@@ -58,6 +59,9 @@ func main() {
 	}
 	log.Printf("serving %s", dbusapi.BusName)
 
+	if err := settings.Load(); err != nil {
+		log.Printf("settings: %v (using defaults)", err)
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		log.Printf("config %s: %v (using defaults)", config.Path(), err)

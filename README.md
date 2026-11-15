@@ -7,6 +7,26 @@ A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with
 - **Esc** or clicking outside the dashboard closes it.
 - **`island open [tab]`** toggles the dashboard from the command line. Bind it to a key in Settings → Keyboard → Custom Shortcuts, for example Super+Space → `island open`.
 
+## Settings
+
+Click the **gear** in the dashboard header.
+
+- **Appearance:**
+  - **Accent colour:** blue, purple, pink, orange, green, teal or graphite. It's used for highlights, switches, progress bars, the equalizer and port chips.
+  - **Surface:** Black or Graphite.
+- **Tabs:** turn any tab except Home on or off.
+- **Features:** turn these on or off:
+  - the face
+  - music in the pill
+  - volume and brightness in the island
+  - hiding GNOME's banners
+  - notification mirroring
+  - clipboard history
+  - USB popups
+  - battery popups
+
+Changes apply instantly. They're saved by the daemon in `~/.config/go-island/settings.json`, so features the daemon runs (notification mirroring, clipboard history, USB and battery) really stop when you turn them off.
+
 ## Tools in the header
 
 - **Colour picker (eyedropper):** pick any pixel on screen. The HEX value is copied, and the island shows a swatch along with RGB and HSL values. It uses the desktop portal.

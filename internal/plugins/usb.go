@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go-island/internal/island"
+	"go-island/internal/settings"
 )
 
 // USB pops the island when a device is plugged in: drives, keyboards,
@@ -39,12 +40,15 @@ func (u *USB) Run(ctx context.Context, h island.Host) error {
 			if _, ok := known[id]; ok {
 				continue
 			}
+			if !settings.Enabled("usb") {
+				continue
+			}
 			if v, ok := describeUSB(id, dev); ok {
 				h.Set(island.Activity{ID: "usb." + id, Priority: island.PriorityStatus, TTL: 3500 * time.Millisecond, View: v})
 			}
 		}
 		for id, dev := range known {
-			if _, ok := now[id]; !ok && dev != "" {
+			if _, ok := now[id]; !ok && dev != "" && settings.Enabled("usb") {
 				h.Set(island.Activity{ID: "usb." + id, Priority: island.PriorityStatus, TTL: 2 * time.Second,
 					View: island.View{Kind: "usb", Title: dev, Subtitle: "Disconnected", Icon: "media-eject-symbolic"}})
 			}

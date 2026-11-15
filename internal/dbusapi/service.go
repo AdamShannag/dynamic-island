@@ -20,6 +20,7 @@ import (
 	"go-island/internal/island"
 	"go-island/internal/plugins"
 	"go-island/internal/ports"
+	"go-island/internal/settings"
 	"go-island/internal/sites"
 	"go-island/internal/sysmon"
 	"go-island/internal/tools"
@@ -126,6 +127,16 @@ const introXML = `
     <method name="SetPresenting">
       <arg name="on" type="b" direction="in"/>
     </method>
+    <method name="GetSettings">
+      <arg name="settings" type="s" direction="out"/>
+    </method>
+    <method name="SetSettings">
+      <arg name="patch" type="s" direction="in"/>
+      <arg name="settings" type="s" direction="out"/>
+    </method>
+    <signal name="SettingsChanged">
+      <arg name="settings" type="s"/>
+    </signal>
     <method name="SystemStats">
       <arg name="stats" type="s" direction="out"/>
     </method>
@@ -173,6 +184,21 @@ func (a *api) AgentEvent(event string, focus []int32) *dbus.Error {
 }
 func (a *api) AgentStatus(status string) *dbus.Error { return dbusErr(a.agents.Status([]byte(status))) }
 func (a *api) AgentsList() (string, *dbus.Error)     { return toJSON(a.agents.List()) }
+
+func (a *api) GetSettings() (string, *dbus.Error) { return toJSON(settings.Get()) }
+
+// SetSettings merges a partial patch, saves it, and tells the UI.
+func (a *api) SetSettings(patch string) (string, *dbus.Error) {
+	s, err := settings.Update([]byte(patch))
+	if err != nil {
+		return "", dbusErr(err)
+	}
+	out, derr := toJSON(s)
+	if derr == nil {
+		_ = a.conn.Emit(Path, Iface+".SettingsChanged", out)
+	}
+	return out, derr
+}
 
 func (a *api) SystemStats() (string, *dbus.Error) { return toJSON(a.sys.Sample()) }
 
@@ -253,8 +279,8 @@ func (a *api) PortFree(port uint32) (string, *dbus.Error) {
 }
 
 func (a *api) ClipboardAdd(text string) *dbus.Error {
-	if a.m.Presenting() {
-		return nil // don't record copies made on a shared screen
+	if a.m.Presenting() || !settings.Enabled("clipboardHistory") {
+		return nil // don't record copies made on a shared screen (or when turned off)
 	}
 	return dbusErr(a.clip.Add(text))
 }
