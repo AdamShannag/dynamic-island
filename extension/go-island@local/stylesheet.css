@@ -318,7 +318,7 @@
 }
 .goisland-hint { font-size: 8pt; color: rgba(245, 245, 247, 0.32); }
 
-.goisland-scroll StScrollBar { padding: 2px; }
+.goisland-scroll StScrollBar { padding: 0 0 0 6px; width: 6px; }
 .goisland-scroll StScrollBar StBin#trough { background-color: transparent; }
 .goisland-scroll StScrollBar StButton#vhandle {
   background-color: rgba(255, 255, 255, 0.18);
@@ -934,7 +934,7 @@
 
 /* ───────────── Apple-style building blocks ───────────── */
 
-.goisland-groups { spacing: 16px; padding-right: 4px; }
+.goisland-groups { spacing: 16px; }
 .goisland-igroup { spacing: 6px; }
 .goisland-igroup-head { padding: 0 14px; }
 .goisland-igroup-title {
@@ -1007,7 +1007,7 @@
 .goisland-irow.muted .goisland-port-pill { color: rgba(245, 245, 247, 0.45); background-color: rgba(255, 255, 255, 0.05); }
 
 /* Notifications: iOS-style cards */
-.goisland-ncards { spacing: 8px; padding-right: 4px; }
+.goisland-ncards { spacing: 8px; }
 .goisland-ncard {
   background-color: #141416;
   border: 1px solid rgba(255, 255, 255, 0.05);

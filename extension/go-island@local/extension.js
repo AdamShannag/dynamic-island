@@ -187,7 +187,9 @@ function scrollView(child) {
         y_expand: true,
         hscrollbar_policy: St.PolicyType.NEVER,
         vscrollbar_policy: St.PolicyType.AUTOMATIC,
-        overlay_scrollbars: true,
+        // Not overlay: the bar gets its own lane beside the content, so
+        // cards never paint over it.
+        overlay_scrollbars: false,
     });
     if (sv.set_child)
         sv.set_child(child);
