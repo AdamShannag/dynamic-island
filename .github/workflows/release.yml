@@ -42,7 +42,7 @@ jobs:
         id: version
         run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
       - name: install nfpm
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
+        run: GOTOOLCHAIN=go1.25.0 go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
       - name: build tarball and .deb packages
         run: |
           make dist deb VERSION=${{ steps.version.outputs.version }} NFPM="$(go env GOPATH)/bin/nfpm"

@@ -68,7 +68,7 @@ jobs:
           shellcheck -S warning install.sh uninstall.sh packaging/apt-repo.sh packaging/scripts/*
           shellcheck -S warning -s bash contrib/island-hook.bash
       - name: install nfpm
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
+        run: GOTOOLCHAIN=go1.25.0 go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
       - name: build .deb packages
         run: make deb NFPM="$(go env GOPATH)/bin/nfpm"
       - name: inspect packages
