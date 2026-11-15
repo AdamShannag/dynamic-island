@@ -500,13 +500,82 @@
   padding: 8px 10px;
 }
 
-/* ───────────── Transform ───────────── */
+/* ───────────── Transform (tool sidebar + live conversion) ───────────── */
 
-.goisland-xf-card { padding: 10px 6px 6px; spacing: 2px; }
-.goisland-xf-head { padding: 0 10px; }
-.goisland-xf-head .goisland-group { padding: 0; }
-.goisland-xf-text { font-family: monospace; font-size: 9.5pt; padding: 6px 10px; }
-.goisland-xf-out { color: #6cb6ff; }
+.goisland-xf-page { spacing: 10px; }
+.goisland-xf-side { width: 196px; padding: 8px 6px; spacing: 1px; }
+.goisland-xf-group { padding: 8px 10px 4px; }
+.goisland-xf-tool {
+  border-radius: 9px;
+  padding: 4px 8px;
+  transition-duration: 120ms;
+}
+.goisland-xf-tool:hover   { background-color: rgba(255, 255, 255, 0.05); }
+.goisland-xf-tool:checked { background-color: rgba(255, 255, 255, 0.11); }
+.goisland-xf-tool:focus   { box-shadow: none; }
+.goisland-xf-tool-box { spacing: 10px; }
+.goisland-xf-glyph {
+  width: 30px;
+  height: 22px;
+  border-radius: 6px;
+}
+.goisland-xf-glyph-text { font-size: 7.5pt; font-weight: 800; color: #ffffff; }
+.goisland-xf-glyph.g-format { background-color: #0a84ff; }
+.goisland-xf-glyph.g-encode { background-color: #bf5af2; }
+.goisland-xf-glyph.g-case   { background-color: #ff9f0a; }
+.goisland-xf-tool-name { font-size: 9.5pt; font-weight: 600; }
+
+.goisland-xf-main { spacing: 6px; }
+.goisland-xf-head { padding: 2px 4px 4px; spacing: 12px; }
+.goisland-xf-title { font-size: 13pt; font-weight: 700; }
+.goisland-xf-desc  { font-size: 9pt; color: rgba(245, 245, 247, 0.5); padding-top: 1px; }
+
+.goisland-xf-pane { padding: 8px 6px 6px; spacing: 2px; }
+.goisland-xf-pane-bar { padding: 0 8px 2px; spacing: 6px; }
+.goisland-xf-pane-title { padding: 0; letter-spacing: 0.5px; }
+.goisland-xf-count { font-size: 8pt; font-feature-settings: "tnum"; color: rgba(245, 245, 247, 0.35); padding-left: 6px; }
+.goisland-xf-mini {
+  font-size: 8.5pt;
+  font-weight: 600;
+  padding: 3px 11px;
+  border-radius: 999px;
+  color: rgba(245, 245, 247, 0.75);
+  background-color: rgba(255, 255, 255, 0.07);
+  transition-duration: 120ms;
+}
+.goisland-xf-mini:hover  { background-color: rgba(255, 255, 255, 0.13); color: #fff; }
+.goisland-xf-mini:focus  { box-shadow: none; }
+.goisland-xf-mini.accent { background-color: #0a84ff; color: #fff; }
+
+.goisland-xf-text {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: #f5f5f7;
+  caret-color: #0a84ff;
+  font-family: monospace;
+  font-size: 9.5pt;
+  padding: 4px 10px 6px;
+}
+.goisland-xf-text:focus { border: none; box-shadow: none; }
+.goisland-xf-text StLabel.hint-text { color: rgba(245, 245, 247, 0.3); }
+.goisland.surface-graphite .goisland-xf-text { background-color: transparent; }
+.goisland-xf-out.placeholder { color: rgba(245, 245, 247, 0.3); }
+.goisland-xf-out.error { color: #ff6961; }
+
+.goisland-xf-swap-row { padding: 0; }
+.goisland-xf-swap {
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  color: rgba(245, 245, 247, 0.7);
+  background-color: #141417;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition-duration: 120ms;
+}
+.goisland-xf-swap StIcon { icon-size: 14px; }
+.goisland-xf-swap:hover { color: #fff; background-color: #1e1e22; }
+.goisland-xf-swap:focus { box-shadow: none; }
 
 /* ───────────── Activity ───────────── */
 
@@ -845,3 +914,20 @@
   border-radius: 4px;
   background-color: #ff453a;
 }
+
+/* Transform accents + unread dot placement */
+.goisland.theme-blue .goisland-xf-mini.accent { background-color: #0a84ff; }
+.goisland.theme-blue .goisland-xf-text { caret-color: #0a84ff; }
+.goisland.theme-purple .goisland-xf-mini.accent { background-color: #bf5af2; }
+.goisland.theme-purple .goisland-xf-text { caret-color: #bf5af2; }
+.goisland.theme-pink .goisland-xf-mini.accent { background-color: #ff375f; }
+.goisland.theme-pink .goisland-xf-text { caret-color: #ff375f; }
+.goisland.theme-orange .goisland-xf-mini.accent { background-color: #ff9f0a; }
+.goisland.theme-orange .goisland-xf-text { caret-color: #ff9f0a; }
+.goisland.theme-green .goisland-xf-mini.accent { background-color: #30d158; }
+.goisland.theme-green .goisland-xf-text { caret-color: #30d158; }
+.goisland.theme-teal .goisland-xf-mini.accent { background-color: #40c8e0; }
+.goisland.theme-teal .goisland-xf-text { caret-color: #40c8e0; }
+.goisland.theme-graphite .goisland-xf-mini.accent { background-color: #8e8e93; }
+.goisland.theme-graphite .goisland-xf-text { caret-color: #8e8e93; }
+.goisland-tab-dot { width: 7px; height: 7px; border-radius: 4px; background-color: #ff453a; }

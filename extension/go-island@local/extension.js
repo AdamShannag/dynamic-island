@@ -20,7 +20,7 @@ import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {Face} from './face.js';
-import {calc, formatNumber, TRANSFORMS} from './util.js';
+import {calc, formatNumber, TOOLS} from './util.js';
 
 const BUS_NAME = 'org.goisland.Island';
 const OBJ_PATH = '/org/goisland/Island';
@@ -114,7 +114,7 @@ const TABS = [
 ];
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {inbox: 480, settings: 520, activity: 470, transform: 470, home: 292, search: 360, agents: 400, notes: 480, qr: 430, logs: 520, default: 500};
+const DASH_HEIGHT = {inbox: 480, settings: 520, activity: 470, transform: 500, home: 292, search: 360, agents: 400, notes: 480, qr: 430, logs: 520, default: 500};
 const OSD_MS = 1600;
 const CLIP_DEBOUNCE_MS = 400; // collapse bursts of clipboard owner changes into one read // how long the volume/brightness bar stays up
 
@@ -535,11 +535,14 @@ class Island extends St.BoxLayout {
         this._tabButtons = {};
         this._tabDots = {};
         for (const [id, name, icon] of TABS) {
-            const face = new St.Widget({layout_manager: new Clutter.BinLayout()});
-            face.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon',
-                x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER}));
+            // Exact positions (fixed layout): icon centred in the 32 px button,
+            // unread dot in its top-right corner.
+            const k = scale();
+            const face = new St.Widget({width: 32 * k, height: 32 * k});
+            face.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon', icon_size: 17,
+                x: Math.round(7.5 * k), y: Math.round(7.5 * k)}));
             const dot = new St.Widget({style_class: 'goisland-tab-dot', visible: false,
-                x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.START});
+                x: Math.round(21 * k), y: Math.round(4 * k)});
             face.add_child(dot);
             this._tabDots[id] = dot;
             const btn = new St.Button({style_class: 'goisland-tab', can_focus: true, accessible_name: name, child: face});
@@ -1271,10 +1274,49 @@ class Island extends St.BoxLayout {
         return page;
     }
 
-    // ----- Transform -----
+    // ----- Transform (tool sidebar + live conversion) -----
 
     _buildTransformPage() {
-        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const page = new St.BoxLayout({style_class: 'goisland-page goisland-xf-page'});
+
+        // Sidebar: tools grouped like a Mac sidebar, each with a glyph badge.
+        const side = new St.BoxLayout({style_class: 'goisland-card goisland-xf-side', ...VERTICAL, y_expand: true});
+        this._xfRows = {};
+        let group = null;
+        for (const tool of TOOLS) {
+            if (tool.group !== group) {
+                group = tool.group;
+                side.add_child(label('goisland-group goisland-xf-group', {text: group.toUpperCase()}));
+            }
+            const box = new St.BoxLayout({style_class: 'goisland-xf-tool-box', x_expand: true});
+            const badge = new St.Bin({
+                style_class: `goisland-xf-glyph g-${group.toLowerCase()}`, y_align: Clutter.ActorAlign.CENTER,
+                child: new St.Label({text: tool.glyph, style_class: 'goisland-xf-glyph-text',
+                    x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER}),
+            });
+            box.add_child(badge);
+            box.add_child(label('goisland-xf-tool-name', {text: tool.name, x_expand: true}));
+            const btn = new St.Button({style_class: 'goisland-xf-tool', can_focus: true, child: box, x_expand: true});
+            btn.child.x_align = Clutter.ActorAlign.FILL; // left-aligned like a sidebar, not centred
+            btn.connect('clicked', () => this._selectTool(tool.id));
+            side.add_child(btn);
+            this._xfRows[tool.id] = btn;
+        }
+        page.add_child(side);
+
+        // Main: title + modes, input, swap, output.
+        const main = new St.BoxLayout({style_class: 'goisland-xf-main', ...VERTICAL, x_expand: true, y_expand: true});
+        const head = new St.BoxLayout({style_class: 'goisland-xf-head'});
+        const titles = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        this._xfTitle = label('goisland-xf-title');
+        this._xfDesc = label('goisland-xf-desc');
+        titles.add_child(this._xfTitle);
+        titles.add_child(this._xfDesc);
+        head.add_child(titles);
+        this._xfModes = new St.BoxLayout({style_class: 'goisland-seg', y_align: Clutter.ActorAlign.CENTER});
+        head.add_child(this._xfModes);
+        main.add_child(head);
+
         const multiline = (styleClass, hint) => {
             const e = new St.Entry({style_class: styleClass, hint_text: hint, can_focus: true, x_expand: true, y_align: Clutter.ActorAlign.START});
             const ct = e.clutter_text;
@@ -1284,77 +1326,141 @@ class Island extends St.BoxLayout {
             ct.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
             return e;
         };
-        const pane = (title, child, extra) => {
-            const card = new St.BoxLayout({style_class: 'goisland-card goisland-xf-card', ...VERTICAL, x_expand: true, y_expand: true});
-            const head = new St.BoxLayout({style_class: 'goisland-xf-head'});
-            head.add_child(label('goisland-group', {text: title, x_expand: true}));
-            if (extra)
-                head.add_child(extra);
-            card.add_child(head);
+        const pane = (title, child, buttons) => {
+            const card = new St.BoxLayout({style_class: 'goisland-card goisland-xf-pane', ...VERTICAL, x_expand: true, y_expand: true});
+            const bar = new St.BoxLayout({style_class: 'goisland-xf-pane-bar'});
+            const titleLbl = label('goisland-group goisland-xf-pane-title', {text: title});
+            titleLbl.clutter_text.ellipsize = Pango.EllipsizeMode.NONE; // letter-spacing isn't measured
+            bar.add_child(titleLbl);
+            const count = label('goisland-xf-count', {x_expand: true});
+            bar.add_child(count);
+            for (const b of buttons)
+                bar.add_child(b);
+            card.add_child(bar);
             const box = new St.BoxLayout({...VERTICAL, x_expand: true});
             box.add_child(child);
             card.add_child(scrollView(box));
-            return card;
+            return {card, count};
+        };
+        const mini = (text, cls, fn) => {
+            const b = new St.Button({style_class: `goisland-xf-mini ${cls}`, label: text, can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+            b.connect('clicked', fn);
+            return b;
         };
 
-        this._xfIn = multiline('goisland-notes goisland-xf-text', 'Paste or type text. Your selection or clipboard is filled in when you open this tab.');
-        this._xfInfo = label('goisland-hint');
-        page.add_child(pane('INPUT', this._xfIn, this._xfInfo));
+        this._xfIn = multiline('goisland-xf-text', 'Type or paste text');
+        this._xfIn.clutter_text.connect('text-changed', () => this._scheduleTransform());
+        const input = pane('INPUT', this._xfIn, [
+            mini('Paste', '', () => this._ext.latestClip(t => t && (this._xfIn.text = t))),
+            mini('Clear', '', () => (this._xfIn.text = '')),
+        ]);
+        this._xfInCount = input.count;
+        main.add_child(input.card);
 
-        const chips = new St.BoxLayout({style_class: 'goisland-chips', x_align: Clutter.ActorAlign.CENTER});
-        for (const [, name, fn] of TRANSFORMS) {
-            const chip = new St.Button({style_class: 'goisland-chip', label: name, can_focus: true});
-            chip.connect('clicked', () => this._transform(chip, name, fn));
-            chips.add_child(chip);
-        }
-        page.add_child(chips);
+        // Swap: feed the output back in as input (chain tools).
+        const swapRow = new St.BoxLayout({style_class: 'goisland-xf-swap-row', x_align: Clutter.ActorAlign.CENTER});
+        const swap = iconButton('view-sort-descending-symbolic', 'goisland-xf-swap', () => {
+            if (this._xfOk && this._xfResult)
+                this._xfIn.text = this._xfResult;
+        }, 'Use output as input');
+        swapRow.add_child(swap);
+        main.add_child(swapRow);
 
-        this._xfOut = multiline('goisland-notes goisland-xf-text goisland-xf-out', 'The result appears here and is copied.');
-        const useAsInput = new St.Button({style_class: 'goisland-chip', label: 'Use as input', can_focus: true});
-        useAsInput.connect('clicked', () => {
-            if (this._xfOut.text)
-                this._xfIn.text = this._xfOut.text;
+        this._xfOut = new St.Label({style_class: 'goisland-xf-text goisland-xf-out'});
+        const oct = this._xfOut.clutter_text;
+        oct.line_wrap = true;
+        oct.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        oct.selectable = true;
+        this._xfOut.reactive = true;
+        this._xfCopy = mini('Copy', 'accent', () => {
+            if (!this._xfOk || !this._xfResult)
+                return;
+            this._ext.copy(this._xfResult);
+            this._xfCopy.label = 'Copied';
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1200, () => {
+                if (this._xfCopy.get_stage())
+                    this._xfCopy.label = 'Copy';
+                return GLib.SOURCE_REMOVE;
+            });
         });
-        page.add_child(pane('OUTPUT', this._xfOut, useAsInput));
+        const output = pane('OUTPUT', this._xfOut, [this._xfCopy]);
+        this._xfOutCount = output.count;
+        main.add_child(output.card);
+        page.add_child(main);
+
+        this._xfTool = TOOLS[0];
+        this._xfMode = 0;
+        this._xfTimer = 0;
+        this._selectTool(TOOLS[0].id);
         return page;
     }
 
-    // Fill the input with the latest clipboard text. It comes from the
-    // daemon's history, not a live clipboard read: reads are the one thing
-    // that has crashed GNOME Shell, so the UI never does them on demand.
-    _loadTransformInput() {
-        this._ext.latestClip(text => {
-            if (text && !this._xfIn.text) {
-                this._xfIn.text = text;
-                this._xfInfo.text = 'from clipboard';
-            }
+    _selectTool(id) {
+        const tool = TOOLS.find(t => t.id === id) ?? TOOLS[0];
+        if (tool !== this._xfTool)
+            this._xfMode = 0;
+        this._xfTool = tool;
+        for (const [tid, btn] of Object.entries(this._xfRows))
+            btn.checked = tid === tool.id;
+        setText(this._xfTitle, tool.name);
+        setText(this._xfDesc, tool.desc);
+        this._xfModes.destroy_all_children();
+        this._xfModes.visible = tool.modes.length > 1;
+        tool.modes.forEach((m, k) => {
+            const b = new St.Button({style_class: 'goisland-seg-btn', label: m.name, can_focus: true});
+            b.checked = k === this._xfMode;
+            b.connect('clicked', () => {
+                this._xfMode = k;
+                this._xfModes.get_children().forEach((c, j) => (c.checked = j === k));
+                this._runTransform();
+            });
+            this._xfModes.add_child(b);
+        });
+        this._runTransform();
+    }
+
+    _scheduleTransform() {
+        if (this._xfTimer)
+            GLib.source_remove(this._xfTimer);
+        this._xfTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 120, () => {
+            this._xfTimer = 0;
+            this._runTransform();
+            return GLib.SOURCE_REMOVE;
         });
     }
 
-    _transform(chip, name, fn) {
-        let out;
-        try {
-            if (!this._xfIn.text)
-                throw new Error('empty');
-            out = fn(this._xfIn.text);
-        } catch {
-            this._flash(chip, 'Invalid', name, 'bad');
-            return;
+    // Live conversion; errors show inline instead of a result.
+    _runTransform() {
+        const text = this._xfIn.text;
+        const mode = this._xfTool.modes[this._xfMode] ?? this._xfTool.modes[0];
+        const count = n => `${n.toLocaleString()} char${n === 1 ? '' : 's'}`;
+        setText(this._xfInCount, text ? count(text.length) : '');
+        let out = '', ok = true;
+        if (text || this._xfTool.id === 'timestamp') {
+            try {
+                out = mode.fn(text);
+            } catch (e) {
+                ok = false;
+                out = e.message;
+            }
         }
-        this._xfOut.text = out;
-        this._ext.copy(out);
-        this._flash(chip, 'Copied', name, 'good');
+        this._xfOk = ok;
+        this._xfResult = ok ? out : '';
+        const shown = out.length > 20000 ? `${out.slice(0, 20000)}\n… (showing the first 20,000 characters; Copy takes everything)` : out;
+        this._xfOut.text = shown || 'The result appears here as you type';
+        this._xfOut.style_class = `goisland-xf-text goisland-xf-out${!out ? ' placeholder' : ok ? '' : ' error'}`;
+        setText(this._xfOutCount, ok && out ? count(out.length) : '');
+        this._xfCopy.reactive = ok && !!out;
+        this._xfCopy.opacity = ok && out ? 255 : 110;
     }
 
-    _flash(btn, text, restore, kind) {
-        btn.label = text;
-        btn.add_style_class_name(kind);
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1100, () => {
-            if (btn.get_stage()) {
-                btn.label = restore;
-                btn.remove_style_class_name(kind);
-            }
-            return GLib.SOURCE_REMOVE;
+    // Pre-fill the input with the latest clipboard text when it's empty.
+    _loadTransformInput() {
+        if (this._xfIn.text)
+            return;
+        this._ext.latestClip(text => {
+            if (text && !this._xfIn.text)
+                this._xfIn.text = text;
         });
     }
 
@@ -2513,8 +2619,6 @@ class Island extends St.BoxLayout {
             this._loadPorts();
             focus = this._portEntry;
         } else if (id === 'transform') {
-            this._xfOut.text = '';
-            this._xfInfo.text = '';
             this._loadTransformInput();
             focus = this._xfIn;
         } else if (id === 'notes') {

@@ -32,7 +32,12 @@ Changes apply instantly. They're saved by the daemon in `~/.config/go-island/set
 - **Colour picker (eyedropper):** pick any pixel on screen. The HEX value is copied, and the island shows a swatch along with RGB and HSL values. It uses the desktop portal.
 - **Presentation mode (sunglasses):** hides track names, album art, command details, clipboard history and notes. It also pauses mirroring of desktop notifications, stops recording clipboard copies, and turns GNOME's notification banners off (restoring them afterwards). The face puts on sunglasses. It **turns on automatically when a screen share starts** and off again when the share ends, unless you turned it on yourself.
 
-The **Transform** tab has an input box that is pre-filled with your **latest clipboard text**. Below it are chips for JSON pretty-print, Base64 encode and decode, URL encode and decode, UPPER, lower, Title, snake, camel and kebab. Each one shows its result in the output box and copies it. **Use as input** lets you chain transforms, for example pretty-print and then Base64-encode.
+The **Transform** tab is a set of developer utilities with a tool sidebar:
+- **Format:** JSON (format or minify), JWT (decodes the header and payload and shows expiry), Timestamp (Unix ↔ date).
+- **Encode:** Base64 and URL, each with encode and decode.
+- **Case:** UPPERCASE, lowercase, Title Case, snake_case, camelCase, kebab-case.
+
+The output updates live as you type, and errors show inline. **Copy** puts the result on the clipboard; typing never does. **Swap** feeds the output back in as input, so you can chain tools. The input is pre-filled with your latest clipboard text.
 
 ## Volume and brightness
 
