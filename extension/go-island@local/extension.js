@@ -2535,6 +2535,14 @@ class Island extends St.BoxLayout {
     // ---------- input ----------
 
     _onClick(event) {
+        // The press that closed the dashboard (outside click) was delivered
+        // to the island during the grab, so Clutter sends its release here
+        // too. Swallow it, or it would reopen the dashboard immediately.
+        if (this._swallowRelease && Date.now() - this._swallowRelease < 1500) {
+            this._swallowRelease = 0;
+            return Clutter.EVENT_STOP;
+        }
+        this._swallowRelease = 0;
         const button = event.get_button();
         if (this._dashOpen)
             return Clutter.EVENT_STOP; // clicks on dashboard background do nothing
@@ -2592,6 +2600,7 @@ class Island extends St.BoxLayout {
         if (type === Clutter.EventType.BUTTON_PRESS || type === Clutter.EventType.TOUCH_BEGIN) {
             const target = global.stage.get_event_actor(event);
             if (!target || !this.contains(target)) {
+                this._swallowRelease = Date.now(); // see _onClick
                 this._closeDash();
                 return Clutter.EVENT_STOP;
             }
@@ -2615,13 +2624,21 @@ class Island extends St.BoxLayout {
         this.openDash(valid ? tab : 'home');
     }
 
-    openDash(tab) {
+    openDash(tab, retried = false) {
         if (this._dashOpen)
             return;
+        // Like GNOME's own menus (GrabHelper): only open with a complete
+        // grab. With keyboard-only, X11 sends outside clicks straight to the
+        // windows underneath and the dashboard could never be dismissed.
         this._grab = Main.pushModal(this, {actionMode: Shell.ActionMode.POPUP});
-        if ((this._grab.get_seat_state() & Clutter.GrabState.KEYBOARD) === 0) {
-            Main.popModal(this._grab); // another grab is active (e.g. a menu)
+        if (this._grab.get_seat_state() !== Clutter.GrabState.ALL) {
+            Main.popModal(this._grab); // something else holds input (a menu, a drag)
             this._grab = null;
+            if (!retried) // e.g. a keyboard shortcut still being released
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+                    this.openDash(tab, true);
+                    return GLib.SOURCE_REMOVE;
+                });
             return;
         }
         this._dashOpen = true;
