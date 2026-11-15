@@ -396,8 +396,8 @@ class Island extends St.BoxLayout {
         this._clip.add_child(this._dash);
 
         const header = new St.BoxLayout({style_class: 'goisland-header'});
-        // Segmented tab bar: a highlight pill glides (spring) to the selected
-        // tab, which expands to show its name; the others stay icon-only.
+        // Icon tabs: grey icons, the selected one white on a dark circle that
+        // glides (spring) between tabs.
         // Fixed layout: the highlight goes exactly where it's placed (a
         // BinLayout would re-centre it under the row).
         const tabsWrap = new St.Widget({
@@ -408,19 +408,14 @@ class Island extends St.BoxLayout {
         tabsWrap.add_child(this._tabIndicator);
         tabsWrap.add_child(tabs);
         this._tabButtons = {};
-        this._tabLabels = {};
         for (const [id, name, icon] of TABS) {
-            const box = new St.BoxLayout({style_class: 'goisland-tab-box'});
-            box.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon', y_align: Clutter.ActorAlign.CENTER}));
-            const lbl = new St.Label({text: name, style_class: 'goisland-tab-label', y_align: Clutter.ActorAlign.CENTER,
-                clip_to_allocation: true, width: 0, opacity: 0});
-            lbl.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-            box.add_child(lbl);
-            const btn = new St.Button({style_class: 'goisland-tab', can_focus: true, accessible_name: name, child: box});
+            const btn = new St.Button({
+                style_class: 'goisland-tab', can_focus: true, accessible_name: name,
+                child: new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon'}),
+            });
             btn.connect('clicked', () => this._showTab(id));
             tabs.add_child(btn);
             this._tabButtons[id] = btn;
-            this._tabLabels[id] = lbl;
         }
         this._indicator = {pos: [0, 0], vel: [0, 0], tl: null, lastT: 0, still: 0, placed: false};
         header.add_child(tabsWrap);
@@ -1788,18 +1783,8 @@ class Island extends St.BoxLayout {
     }
 
     _selectTab(id) {
-        for (const [tid, btn] of Object.entries(this._tabButtons)) {
-            const on = tid === id;
-            btn.checked = on;
-            const lbl = this._tabLabels[tid];
-            // The label has a fixed width (animated), so measure its text.
-            const [, textW] = lbl.clutter_text.get_preferred_width(-1);
-            const natural = Math.ceil(textW + lbl.get_theme_node().get_horizontal_padding());
-            lbl.ease({
-                width: on ? natural : 0, opacity: on ? 255 : 0,
-                duration: 260, mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
-            });
-        }
+        for (const [tid, btn] of Object.entries(this._tabButtons))
+            btn.checked = tid === id;
         this._selectedTab = id;
         this._runIndicator();
     }
@@ -1839,7 +1824,7 @@ class Island extends St.BoxLayout {
             }
             this._tabIndicator.set_position(Math.round(ind.pos[0] * 2) / 2, btn.y);
             this._tabIndicator.set_size(Math.max(0, ind.pos[1]), btn.height);
-            if (moving || this._tabLabels[this._selectedTab]?.get_transition('width'))
+            if (moving)
                 ind.still = 0;
             else if (++ind.still > 8) {
                 tl.stop();
