@@ -223,7 +223,8 @@ func (t *Tracker) session(id, cwd string) *Session {
 	return s
 }
 
-// publish mirrors a live session (working / approval) into the island.
+// publish mirrors a session into the island. Only an approval request
+// takes the pill; "working" is shown in the Agents tab only.
 func (t *Tracker) publish(s *Session) {
 	v := island.View{
 		Kind:      "agent",
@@ -238,7 +239,7 @@ func (t *Tracker) publish(s *Session) {
 		v.Title, v.Accent, v.Icon, v.StartedAt = agentName+" needs approval", "warn", "dialog-question-symbolic", 0
 		v.Trailing = s.Project
 		prio = island.PriorityAlert
-	} else if s.State != "working" {
+	} else {
 		t.h.Clear("agent." + s.ID)
 		return
 	}

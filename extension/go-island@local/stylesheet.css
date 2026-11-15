@@ -574,3 +574,21 @@
   color: rgba(245, 245, 247, 0.4);
 }
 .goisland-empty-small { padding: 18px 0; font-size: 9pt; }
+
+/* Empty states (e.g. Docker not running) */
+.goisland-empty-state { spacing: 8px; padding: 24px; }
+.goisland-empty-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: 26px;
+  background-color: rgba(255, 255, 255, 0.06);
+  margin-bottom: 6px;
+}
+.goisland-empty-icon  { icon-size: 22px; color: rgba(245, 245, 247, 0.55); }
+.goisland-empty-title { font-size: 11pt; font-weight: 700; }
+.goisland-empty-hint  {
+  font-size: 9pt;
+  font-family: monospace;
+  color: rgba(245, 245, 247, 0.45);
+  text-align: center;
+}

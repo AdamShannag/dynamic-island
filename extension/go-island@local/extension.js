@@ -237,6 +237,19 @@ function hexToRgb(hex) {
     return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255];
 }
 
+// Friendly explanation for a DockerList error (the daemon prefixes codes).
+function dockerProblem(message) {
+    if (message.includes('docker-not-installed'))
+        return {icon: 'dialog-information-symbolic', title: "Docker isn't installed", hint: 'Install it with: sudo apt install docker.io'};
+    if (message.includes('docker-not-running'))
+        return {icon: 'media-playback-stop-symbolic', title: "Docker isn't running", hint: 'Start it with: sudo systemctl start docker'};
+    if (message.includes('docker-permission'))
+        return {icon: 'dialog-password-symbolic', title: 'No permission to use Docker',
+            hint: 'Run: sudo usermod -aG docker $USER, then log out and back in'};
+    return {icon: 'dialog-warning-symbolic', title: "Couldn't reach Docker",
+        hint: message.replace(/^.*?Error\.Failed: /, '').slice(0, 160)};
+}
+
 function ago(ms) {
     const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
     if (s < 60)
@@ -576,7 +589,7 @@ class Island extends St.BoxLayout {
     _loadDockerCount() {
         this._ext.call('DockerList', [], (res, err) => {
             if (err) {
-                this._dockerRow.sub.text = 'Docker unavailable';
+                this._dockerRow.sub.text = dockerProblem(err.message).title;
             } else {
                 const list = JSON.parse(res[0]);
                 const bad = list.filter(c => /unhealthy/.test(c.status)).length;
@@ -854,9 +867,10 @@ class Island extends St.BoxLayout {
         const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
         const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
         this._dockerList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
-        this._dockerMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
-        card.add_child(this._dockerMsg);
-        card.add_child(scrollView(this._dockerList));
+        this._dockerEmpty = this._emptyState();
+        card.add_child(this._dockerEmpty.actor);
+        this._dockerScroll = scrollView(this._dockerList);
+        card.add_child(this._dockerScroll);
         page.add_child(card);
         return page;
     }
@@ -921,15 +935,48 @@ class Island extends St.BoxLayout {
         this._ext.call('DockerList', [], (res, err) => {
             if (!this._dashOpen || this._tab !== 'docker')
                 return;
-            if (err) {
+            const list = err ? [] : JSON.parse(res[0]);
+            if (err || !list.length) {
+                this._dockerSig = null;
                 this._dockerList.destroy_all_children();
-                this._message(this._dockerMsg, err.message.replace(/^.*?Error\.Failed: /, ''));
+                this._dockerScroll.hide();
+                this._dockerEmpty.show(err ? dockerProblem(err.message) : {
+                    icon: 'network-server-symbolic', title: 'No containers running',
+                    hint: 'Start some with docker compose up or docker run',
+                });
                 return;
             }
-            const list = JSON.parse(res[0]);
-            this._message(this._dockerMsg, list.length ? '' : 'No running containers');
+            this._dockerEmpty.hide();
+            this._dockerScroll.show();
             this._renderDocker(list);
         });
+    }
+
+    // A centred icon + title + hint, for lists with nothing to show.
+    _emptyState() {
+        const actor = new St.BoxLayout({
+            style_class: 'goisland-empty-state', ...VERTICAL, visible: false,
+            x_expand: true, y_expand: true, x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+        });
+        const badge = new St.Widget({style_class: 'goisland-empty-badge', layout_manager: new Clutter.BinLayout(), x_align: Clutter.ActorAlign.CENTER});
+        const icon = new St.Icon({style_class: 'goisland-empty-icon', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+        badge.add_child(icon);
+        const title = new St.Label({style_class: 'goisland-empty-title', x_align: Clutter.ActorAlign.CENTER});
+        const hint = new St.Label({style_class: 'goisland-empty-hint', x_align: Clutter.ActorAlign.CENTER});
+        hint.clutter_text.line_wrap = true;
+        for (const a of [badge, title, hint])
+            actor.add_child(a);
+        return {
+            actor,
+            show: spec => {
+                icon.icon_name = spec.icon;
+                setText(title, spec.title);
+                setText(hint, spec.hint ?? '');
+                hint.visible = !!spec.hint;
+                actor.show();
+            },
+            hide: () => actor.hide(),
+        };
     }
 
     _renderDocker(list) {
@@ -954,7 +1001,7 @@ class Island extends St.BoxLayout {
             entries.push({c});
         }
         this._fillList(this._dockerList, entries, e =>
-            e.header ? label('goisland-group', {text: e.header}) : this._dockerRow(e.c));
+            e.header ? label('goisland-group', {text: e.header}) : this._makeDockerRow(e.c));
     }
 
     _setDockerStats(refs, st) {
@@ -964,7 +1011,7 @@ class Island extends St.BoxLayout {
         refs.mem.style_class = `goisland-usage-mem${st && st.memPct >= 80 ? ' hot' : ''}`;
     }
 
-    _dockerRow(c) {
+    _makeDockerRow(c) {
         {
             const row = new St.BoxLayout({style_class: 'goisland-row'});
             const healthy = c.state === 'running' && !/unhealthy/.test(c.status);

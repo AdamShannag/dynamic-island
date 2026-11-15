@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -35,10 +36,7 @@ func List(ctx context.Context) ([]Container, error) {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{json .}}").Output()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, err
+		return nil, classify(err)
 	}
 	var list []Container
 	sc := bufio.NewScanner(bytes.NewReader(out))
@@ -78,6 +76,33 @@ func List(ctx context.Context) ([]Container, error) {
 		return list[i].Name < list[j].Name
 	})
 	return list, nil
+}
+
+// Errors the UI can explain. The message is a stable code prefix the
+// extension maps to friendly text, followed by the raw detail.
+const (
+	ErrNotInstalled = "docker-not-installed"
+	ErrNotRunning   = "docker-not-running"
+	ErrPermission   = "docker-permission"
+)
+
+func classify(err error) error {
+	if errors.Is(err, exec.ErrNotFound) {
+		return fmt.Errorf("%s: docker CLI not found", ErrNotInstalled)
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		msg := strings.TrimSpace(string(ee.Stderr))
+		switch low := strings.ToLower(msg); {
+		case strings.Contains(low, "permission denied"):
+			return fmt.Errorf("%s: %s", ErrPermission, msg)
+		case strings.Contains(low, "cannot connect to the docker daemon"), strings.Contains(low, "is the docker daemon running"),
+			strings.Contains(low, "no such file or directory"), strings.Contains(low, "connection refused"):
+			return fmt.Errorf("%s: %s", ErrNotRunning, msg)
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return err
 }
 
 // Act runs start, stop or restart on a container.
