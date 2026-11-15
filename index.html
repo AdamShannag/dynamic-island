@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dynamic Island APT repository</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:3rem auto;padding:0 1rem}pre{background:#111;color:#eee;padding:1rem;border-radius:8px;overflow:auto}</style>
+<h1>Dynamic Island</h1>
+<p>APT repository for <a href="https://github.com/AdamShannag/dynamic-island">Dynamic Island</a> (Ubuntu, GNOME Shell 46+, amd64 and arm64).</p>
+<pre>curl -fsSL https://adamshannag.github.io/dynamic-island/setup.sh | sudo sh
+sudo apt install dynamic-island
+island setup</pre>
+<p>Or add it by hand:</p>
+<pre>curl -fsSL https://adamshannag.github.io/dynamic-island/dynamic-island.gpg | sudo tee /usr/share/keyrings/dynamic-island.gpg &gt;/dev/null
+echo "deb [signed-by=/usr/share/keyrings/dynamic-island.gpg] https://adamshannag.github.io/dynamic-island stable main" | sudo tee /etc/apt/sources.list.d/dynamic-island.list
+sudo apt update &amp;&amp; sudo apt install dynamic-island</pre>

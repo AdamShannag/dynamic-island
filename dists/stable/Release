@@ -1,0 +1,32 @@
+Architectures: amd64 arm64
+Codename: stable
+Components: main
+Date: Sun, 15 Nov 2026 20:00:19 +0000
+Description: Dynamic Island for GNOME
+Label: Dynamic Island
+Origin: Dynamic Island
+Suite: stable
+MD5Sum:
+ f9174913cb5428cd6dd90b03cd2bfdc7              196 Release
+ 66652d0d54b0930f2963d8b4c0da45b4              982 main/binary-amd64/Packages
+ 7649949e861d04201fd69fa8aaa88ab1              684 main/binary-amd64/Packages.gz
+ 71de663f00d53db6f6b8362cdd7e3323              982 main/binary-arm64/Packages
+ 9181ae3576b47a36ae08d22565498cd9              685 main/binary-arm64/Packages.gz
+SHA1:
+ 013d95945d94a671ca8b0588e289414fd51d9cb6              196 Release
+ c3c5284ea886dc012d177826b9309e2e3e5dac6c              982 main/binary-amd64/Packages
+ ea1731b55e3d52b3abaa07f769441e853a2aba97              684 main/binary-amd64/Packages.gz
+ f98097865af1d8189945b11e2ce2e0c3ef3c2e5f              982 main/binary-arm64/Packages
+ 3d05b88f37cec942dbafa7fee3bd3180ba2f2f74              685 main/binary-arm64/Packages.gz
+SHA256:
+ a40c8c7f6346a19012ad7e5eee71c225f9ee38277bebc860e551177571bdf0e2              196 Release
+ 2c17f942e15ba6dc51d9789565bf8a2e6fe47c34e138d2ad0ced9d3e18cfe2a4              982 main/binary-amd64/Packages
+ 197777579e35cdb5b7ac1c9dd5b0555d408065e9caecafbadc3344080e3c9373              684 main/binary-amd64/Packages.gz
+ b41226ae383da04a82fc3ce3b841917debfc5606e37c75e6a7a56b6dbd097384              982 main/binary-arm64/Packages
+ c836c8ad309fc9d5a6a6af08d85cd09b1d1a6547afb196912a801da33ce6339e              685 main/binary-arm64/Packages.gz
+SHA512:
+ 9a50b61417e7e445dc9e16242a9595c7783e79b2b45d18fea481e1f5d1aeb62cfc4d607127fde3b3ca12ba0b431bec8dfb6112acbcd5770eb7a7104fddf6134d              196 Release
+ 4c13c6bbc4e0076e67b38d876ddb11ee547423f0de550c1800fc73cce2ea0d010a5d35f0bfef472cf24dd7c4ba5f78920d292c5619342481b1e8782666aa4d50              982 main/binary-amd64/Packages
+ 0ae1c4c47d8366109a09942f2a5d0bc9c3916fa365d2a6bb7cbe40148adb4ef4a65703b1cc1ddd305da67955b89143037d29e0c362c3a1ad849a15b48a8ac090              684 main/binary-amd64/Packages.gz
+ 5778ed48fb9a3a4768527f58fea10153393269e623c0523c1b4b1ed3ca0d42dfc2f42419a546d13a7e40bcd8829e273cf15ad27a12c8ec79ad98f6f173c6224f              982 main/binary-arm64/Packages
+ fff3968de2b7415b5f74a99dd1edfb3e01ada5ad171dd956c554f05d316cee5e03695dc67ef094eda73eea46b93046c06405191d8e1019c24201b72aa30a08ae              685 main/binary-arm64/Packages.gz
