@@ -205,6 +205,22 @@ function focusPids(pids) {
 }
 
 const SPARK_POINTS = 60; // one minute of history at 1 sample/s
+const ROWS_PER_FRAME = 4; // list rows built per frame (keeps every frame well under 16 ms)
+
+// Set text only when it changed (a text change triggers a relayout).
+function setText(lbl, text) {
+    if (lbl.text !== text)
+        lbl.text = text;
+}
+
+// Run fn before each redraw until it returns false (falls back to a 16 ms timer).
+function eachFrame(fn) {
+    const laters = global.compositor?.get_laters?.();
+    if (laters)
+        laters.add(Meta.LaterType.BEFORE_REDRAW, fn);
+    else
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => (fn() ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE));
+}
 
 function fmtBytes(n, digits = 1) {
     const u = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -589,6 +605,18 @@ class Island extends St.BoxLayout {
         const topCard = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
         topCard.add_child(label('goisland-group', {text: 'TOP PROCESSES'}));
         this._topList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
+        // Built once; refreshes only change text (no per-second rebuilds).
+        this._procRows = Array.from({length: 6}, () => {
+            const row = new St.BoxLayout({style_class: 'goisland-proc-row', visible: false});
+            const name = label('goisland-proc-name', {x_expand: true});
+            const cpu = label('goisland-proc-cpu');
+            const mem = label('goisland-proc-mem');
+            row.add_child(name);
+            row.add_child(cpu);
+            row.add_child(mem);
+            this._topList.add_child(row);
+            return {row, name, cpu, mem};
+        });
         topCard.add_child(this._topList);
         const runCard = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
         runCard.add_child(label('goisland-group', {text: 'RUNNING'}));
@@ -685,39 +713,49 @@ class Island extends St.BoxLayout {
 
     _renderStats(st) {
         const T = this._tiles;
-        T.cpu.value.text = `${Math.round(st.cpu)}%`;
-        T.cpu.sub.text = [`${st.cores} cores`, st.tempC ? `${Math.round(st.tempC)}°C` : '', `load ${st.load1.toFixed(2)}`]
-            .filter(Boolean).join('  ·  ');
+        setText(T.cpu.value, `${Math.round(st.cpu)}%`);
+        setText(T.cpu.sub, [`${st.cores} cores`, st.tempC ? `${Math.round(st.tempC)}°C` : '', `load ${st.load1.toFixed(2)}`]
+            .filter(Boolean).join('  ·  '));
         this._pushSample(T.cpu, st.cpu);
 
         const memPct = st.memTotal ? 100 * st.memUsed / st.memTotal : 0;
-        T.mem.value.text = fmtBytes(st.memUsed);
-        T.mem.sub.text = `of ${fmtBytes(st.memTotal, 0)}${st.swapTotal ? `  ·  swap ${fmtBytes(st.swapUsed)}` : ''}`;
+        setText(T.mem.value, fmtBytes(st.memUsed));
+        setText(T.mem.sub, `of ${fmtBytes(st.memTotal, 0)}${st.swapTotal ? `  ·  swap ${fmtBytes(st.swapUsed)}` : ''}`);
         this._pushSample(T.mem, memPct);
 
         T.disk.frac = st.diskTotal ? st.diskUsed / st.diskTotal : 0;
-        T.disk.value.text = `${Math.round(T.disk.frac * 100)}%`;
-        T.disk.sub.text = `${fmtBytes(st.diskUsed, 0)} of ${fmtBytes(st.diskTotal, 0)}`;
+        setText(T.disk.value, `${Math.round(T.disk.frac * 100)}%`);
+        setText(T.disk.sub, `${fmtBytes(st.diskUsed, 0)} of ${fmtBytes(st.diskTotal, 0)}`);
         this._syncTileBar(T.disk);
 
-        T.net.value.text = `↓ ${fmtBytes(st.netRx)}/s`;
-        T.net.sub.text = `↑ ${fmtBytes(st.netTx)}/s`;
+        setText(T.net.value, `↓ ${fmtBytes(st.netRx)}/s`);
+        setText(T.net.sub, `↑ ${fmtBytes(st.netTx)}/s`);
         this._pushSample(T.net, st.netRx + st.netTx, 64 * 1024);
 
-        this._topList.destroy_all_children();
-        for (const p of st.top) {
-            const row = new St.BoxLayout({style_class: 'goisland-proc-row'});
-            row.add_child(label('goisland-proc-name', {text: p.name || `pid ${p.pid}`, x_expand: true}));
-            row.add_child(label(`goisland-proc-cpu${p.cpu >= 50 ? ' hot' : ''}`, {text: `${p.cpu.toFixed(p.cpu < 10 ? 1 : 0)}%`}));
-            row.add_child(label('goisland-proc-mem', {text: fmtBytes(p.mem, 0)}));
-            this._topList.add_child(row);
-        }
+        this._procRows.forEach((r, k) => {
+            const p = st.top[k];
+            r.row.visible = !!p;
+            if (!p)
+                return;
+            setText(r.name, p.name || `pid ${p.pid}`);
+            setText(r.cpu, `${p.cpu.toFixed(p.cpu < 10 ? 1 : 0)}%`);
+            setText(r.mem, fmtBytes(p.mem, 0));
+            const cls = `goisland-proc-cpu${p.cpu >= 50 ? ' hot' : ''}`;
+            if (r.cpu.style_class !== cls)
+                r.cpu.style_class = cls;
+        });
     }
 
     _renderActivity(items) {
-        this._activityList.destroy_all_children();
         const now = Date.now();
-        for (const it of items) {
+        const sig = items.map(it => `${it.pid}:${(it.ports ?? []).join(',')}`).join('|');
+        if (sig === this._activitySig && this._activityTimes) {
+            items.forEach((it, k) => this._activityTimes[k] && setText(this._activityTimes[k], fmtClock((now - it.startedAt) / 1000)));
+            return;
+        }
+        this._activitySig = sig;
+        this._activityTimes = [];
+        this._fillList(this._activityList, items, (it, k) => {
             const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-activity-row'});
             const badge = new St.Widget({
                 style_class: `goisland-activity-badge ${it.kind}`,
@@ -738,14 +776,16 @@ class Island extends St.BoxLayout {
                     chips.add_child(this._portButton(port, 'goisland-port-chip'));
                 box.add_child(chips);
             }
-            box.add_child(label('goisland-activity-time live', {text: fmtClock((now - it.startedAt) / 1000), y_align: Clutter.ActorAlign.CENTER}));
+            const time = label('goisland-activity-time live', {text: fmtClock((now - it.startedAt) / 1000), y_align: Clutter.ActorAlign.CENTER});
+            this._activityTimes[k] = time;
+            box.add_child(time);
             const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
             row.connect('clicked', () => {
                 if (focusPids(it.focus))
                     this._closeDash();
             });
-            this._activityList.add_child(row);
-        }
+            return row;
+        });
     }
 
     // ----- Agents -----
@@ -773,8 +813,14 @@ class Island extends St.BoxLayout {
     }
 
     _renderAgents(list) {
-        this._agentList.destroy_all_children();
-        for (const a of list) {
+        const sig = JSON.stringify(list.map(a => [a.id, a.state, a.detail, a.title, a.project, a.costUsd, a.contextPct]));
+        if (sig === this._agentSig && this._agentWhen) {
+            list.forEach((a, k) => this._agentWhen[k] && setText(this._agentWhen[k], ago(a.updatedAt)));
+            return;
+        }
+        this._agentSig = sig;
+        this._agentWhen = [];
+        this._fillList(this._agentList, list, (a, k) => {
             const [stateName, color] = AGENT_STATES[a.state] ?? AGENT_STATES.ready;
             const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-agent-row'});
             box.add_child(new St.Widget({style_class: `goisland-dot ${color}`, y_align: Clutter.ActorAlign.CENTER}));
@@ -789,15 +835,17 @@ class Island extends St.BoxLayout {
             const usage = [a.costUsd ? `$${a.costUsd.toFixed(2)}` : '', a.contextPct ? `${Math.round(a.contextPct)}% ctx` : '']
                 .filter(Boolean).join('  ·  ');
             meta.add_child(label('goisland-agent-usage', {text: usage || ' ', x_align: Clutter.ActorAlign.END}));
-            meta.add_child(label('goisland-agent-when', {text: ago(a.updatedAt), x_align: Clutter.ActorAlign.END}));
+            const when = label('goisland-agent-when', {text: ago(a.updatedAt), x_align: Clutter.ActorAlign.END});
+            this._agentWhen[k] = when;
+            meta.add_child(when);
             box.add_child(meta);
             const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
             row.connect('clicked', () => {
                 if (focusPids(a.focus))
                     this._closeDash();
             });
-            this._agentList.add_child(row);
-        }
+            return row;
+        });
     }
 
     // ----- Docker -----
@@ -885,13 +933,39 @@ class Island extends St.BoxLayout {
     }
 
     _renderDocker(list) {
-        this._dockerList.destroy_all_children();
+        const sig = list.map(c => [c.id, c.state, c.status, c.ports, c.project].join('/')).join('|');
+        if (sig === this._dockerSig && this._dockerStats) {
+            for (const c of list) {
+                const refs = this._dockerStats.get(c.id);
+                if (refs)
+                    this._setDockerStats(refs, c.stats);
+            }
+            return;
+        }
+        this._dockerSig = sig;
+        this._dockerStats = new Map();
+        const entries = [];
         let project = null;
         for (const c of list) {
             if (c.project !== project) {
                 project = c.project;
-                this._dockerList.add_child(label('goisland-group', {text: (project || 'standalone').toUpperCase()}));
+                entries.push({header: (project || 'standalone').toUpperCase()});
             }
+            entries.push({c});
+        }
+        this._fillList(this._dockerList, entries, e =>
+            e.header ? label('goisland-group', {text: e.header}) : this._dockerRow(e.c));
+    }
+
+    _setDockerStats(refs, st) {
+        setText(refs.cpu, st ? `${st.cpu.toFixed(st.cpu < 10 ? 1 : 0)}% CPU` : '–');
+        setText(refs.mem, st ? st.mem.replace(/iB$/, 'B') : ' ');
+        refs.cpu.style_class = `goisland-usage-cpu${st && st.cpu >= 80 ? ' hot' : ''}`;
+        refs.mem.style_class = `goisland-usage-mem${st && st.memPct >= 80 ? ' hot' : ''}`;
+    }
+
+    _dockerRow(c) {
+        {
             const row = new St.BoxLayout({style_class: 'goisland-row'});
             const healthy = c.state === 'running' && !/unhealthy/.test(c.status);
             row.add_child(new St.Widget({
@@ -905,16 +979,15 @@ class Island extends St.BoxLayout {
             for (const p of (c.ports || '').split(', ').filter(Boolean).slice(0, 3))
                 chips.add_child(this._portButton(p, 'goisland-port-chip'));
             row.add_child(chips);
-            const st = c.stats;
             const usage = new St.BoxLayout({...VERTICAL, style_class: 'goisland-usage', y_align: Clutter.ActorAlign.CENTER});
-            const cpu = label(`goisland-usage-cpu${st && st.cpu >= 80 ? ' hot' : ''}`, {
-                text: st ? `${st.cpu.toFixed(st.cpu < 10 ? 1 : 0)}% CPU` : '–', x_align: Clutter.ActorAlign.END,
-            });
-            const mem = label(`goisland-usage-mem${st && st.memPct >= 80 ? ' hot' : ''}`, {
-                text: st ? st.mem.replace(/iB$/, 'B') : ' ', x_align: Clutter.ActorAlign.END,
-            });
-            usage.add_child(cpu);
-            usage.add_child(mem);
+            const refs = {
+                cpu: label('goisland-usage-cpu', {x_align: Clutter.ActorAlign.END}),
+                mem: label('goisland-usage-mem', {x_align: Clutter.ActorAlign.END}),
+            };
+            this._setDockerStats(refs, c.stats);
+            this._dockerStats.set(c.id, refs);
+            usage.add_child(refs.cpu);
+            usage.add_child(refs.mem);
             row.add_child(usage);
             row.add_child(iconButton('format-justify-left-symbolic', 'goisland-row-btn',
                 () => this._showLogs(c), `Logs of ${c.name}`));
@@ -924,7 +997,7 @@ class Island extends St.BoxLayout {
                     this._ext.call('DockerAction', [c.id, op], () => this._loadDocker());
                 }, `${op} ${c.name}`));
             }
-            this._dockerList.add_child(row);
+            return row;
         }
     }
 
@@ -968,13 +1041,12 @@ class Island extends St.BoxLayout {
     }
 
     _renderPorts(error = null) {
-        this._portList.destroy_all_children();
         const q = this._portEntry.text.trim().replace(/^:/, '').toLowerCase();
         const items = q
             ? this._ports.filter(l => `${l.port} ${l.process ?? ''} ${l.container ?? ''} ${l.cmd ?? ''}`.toLowerCase().includes(q))
             : this._ports;
         this._message(this._portMsg, error ?? (items.length ? '' : q ? 'No matches. Press Enter to free that port.' : 'Nothing listening'));
-        for (const l of items) {
+        this._fillList(this._portList, items, l => {
             const mine = !!(l.container || l.pid);
             const row = new St.BoxLayout({style_class: `goisland-row${mine ? '' : ' muted'}`});
             row.add_child(this._portButton(l.port, 'goisland-port'));
@@ -1008,8 +1080,8 @@ class Island extends St.BoxLayout {
                 });
                 row.add_child(btn);
             }
-            this._portList.add_child(row);
-        }
+            return row;
+        });
     }
 
     // A port number that opens http://localhost:PORT when clicked.
@@ -1252,10 +1324,10 @@ class Island extends St.BoxLayout {
     }
 
     _renderClipboard(error = null) {
-        this._clipList.destroy_all_children();
         const items = this._filteredClips();
         let msg = '';
         if (this._ext.presenting) {
+            this._clipList.destroy_all_children();
             this._message(this._clipMsg, 'Hidden while presenting');
             return;
         }
@@ -1266,7 +1338,8 @@ class Island extends St.BoxLayout {
         else if (!items.length)
             msg = 'No matches';
         this._message(this._clipMsg, msg);
-        for (const it of items.slice(0, 100)) {
+        // 50 visible rows keeps the list light; the filter searches everything.
+        this._fillList(this._clipList, items.slice(0, 50), it => {
             const box = new St.BoxLayout({x_expand: true});
             const preview = it.text.slice(0, 300).replace(/\s*\n\s*/g, ' ⏎ ');
             box.add_child(label('goisland-clip-text', {text: preview, x_expand: true}));
@@ -1279,8 +1352,8 @@ class Island extends St.BoxLayout {
                 () => this._ext.call('ClipboardDelete', [it.id], () => this._loadClipboard()), 'Delete'));
             const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
             row.connect('clicked', () => this._copy(it.text));
-            this._clipList.add_child(row);
-        }
+            return row;
+        });
     }
 
     _copy(text) {
@@ -1965,6 +2038,48 @@ class Island extends St.BoxLayout {
         tl.start();
     }
 
+    // Replace a list's rows, building a few per frame so opening a long
+    // list never drops a frame. A newer fill cancels an older one.
+    _fillList(box, items, make) {
+        box.destroy_all_children();
+        const gen = (box._fillGen ?? 0) + 1;
+        box._fillGen = gen;
+        let i = 0;
+        const step = () => {
+            if (box._fillGen !== gen || !box.get_stage())
+                return false;
+            const end = Math.min(items.length, i + ROWS_PER_FRAME);
+            for (; i < end; i++) {
+                const actor = make(items[i], i);
+                if (actor)
+                    box.add_child(actor);
+            }
+            return i < items.length;
+        };
+        if (step())
+            eachFrame(step);
+    }
+
+    // Lay out every page once while the shell is idle (one page per idle
+    // slot), so styles, fonts and text layouts are ready before the first
+    // time you open a tab; that first switch would otherwise stall a frame.
+    prewarm() {
+        if (this._prewarmed)
+            return;
+        this._prewarmed = true;
+        const pages = Object.values(this._pages);
+        const width = (DASH_WIDTH - 40) * scale();
+        let k = 0;
+        GLib.idle_add(GLib.PRIORITY_LOW, () => {
+            const page = pages[k++];
+            if (!page || !this._wallClock)
+                return GLib.SOURCE_REMOVE;
+            page.get_preferred_width(-1);
+            page.get_preferred_height(width);
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
     _stopDocker() {
         if (this._dockerId) {
             GLib.source_remove(this._dockerId);
@@ -2467,6 +2582,10 @@ export default class GoIslandExtension extends Extension {
             }
             this._proxy = proxy;
             this._blockBanners(true);
+            GLib.timeout_add_seconds(GLib.PRIORITY_LOW, 3, () => {
+                this._island?.prewarm();
+                return GLib.SOURCE_REMOVE;
+            });
             this._signalIds = [
                 proxy.connectSignal('StateChanged', (_p, _sender, [json]) => this._applyState(json)),
                 proxy.connectSignal('OpenDashboard', (_p, _sender, [tab]) => this._island?.toggleDash(tab)),

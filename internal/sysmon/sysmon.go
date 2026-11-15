@@ -40,6 +40,13 @@ type Snapshot struct {
 }
 
 type Monitor struct {
+	// Background sampling while someone is watching: Sample() returns the
+	// latest snapshot instantly instead of measuring on the request path.
+	snapMu    sync.Mutex
+	snap      *Snapshot
+	lastAsked time.Time
+	running   bool
+
 	mu       sync.Mutex
 	prevT    time.Time
 	prevIdle uint64
@@ -60,16 +67,60 @@ const (
 	stale    = 5 * time.Second // older baseline: take a fresh 250 ms one first
 )
 
-// Sample returns current metrics; rates are measured since the previous call.
+const (
+	sampleEvery = time.Second
+	idleStop    = 5 * time.Second // stop sampling this long after the last request
+)
+
+// Sample returns the latest metrics. The first request after a quiet period
+// measures synchronously (with a short baseline); after that a background
+// sampler keeps a fresh snapshot ready, so requests return immediately.
 func (m *Monitor) Sample() Snapshot {
+	m.snapMu.Lock()
+	m.lastAsked = time.Now()
+	snap, running := m.snap, m.running
+	if !running {
+		m.running = true
+	}
+	m.snapMu.Unlock()
+	if !running {
+		first := m.sampleNow(true)
+		go m.loop()
+		return first
+	}
+	if snap == nil {
+		return m.sampleNow(false)
+	}
+	return *snap
+}
+
+func (m *Monitor) loop() {
+	t := time.NewTicker(sampleEvery)
+	defer t.Stop()
+	for range t.C {
+		m.snapMu.Lock()
+		if time.Since(m.lastAsked) > idleStop {
+			m.running, m.snap = false, nil
+			m.snapMu.Unlock()
+			return
+		}
+		m.snapMu.Unlock()
+		m.sampleNow(false)
+	}
+}
+
+func (m *Monitor) sampleNow(baseline bool) Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.prevT.IsZero() || time.Since(m.prevT) > stale {
-		m.measure(nil) // establish a baseline
-		time.Sleep(250 * time.Millisecond)
+	if baseline || m.prevT.IsZero() || time.Since(m.prevT) > stale {
+		m.measure(nil)
+		time.Sleep(120 * time.Millisecond)
 	}
 	var s Snapshot
 	m.measure(&s)
+	m.snapMu.Lock()
+	m.snap = &s
+	m.snapMu.Unlock()
 	return s
 }
 
@@ -205,31 +256,59 @@ func readNet() (rx, tx uint64) {
 	return
 }
 
-// readProcTicks returns utime+stime for every process.
+// readProcTicks returns utime+stime for every process. It reuses one
+// buffer and parses fields in place (no per-process allocations).
 func readProcTicks() map[int]uint64 {
-	out := map[int]uint64{}
-	ents, _ := os.ReadDir("/proc")
-	for _, e := range ents {
-		pid, err := strconv.Atoi(e.Name())
+	f, err := os.Open("/proc")
+	if err != nil {
+		return nil
+	}
+	names, _ := f.Readdirnames(-1)
+	f.Close()
+	out := make(map[int]uint64, len(names))
+	buf := make([]byte, 1024)
+	path := make([]byte, 0, 32)
+	for _, name := range names {
+		pid, err := strconv.Atoi(name)
 		if err != nil {
 			continue
 		}
-		b, err := os.ReadFile("/proc/" + e.Name() + "/stat")
+		path = append(append(append(path[:0], "/proc/"...), name...), "/stat"...)
+		fd, err := syscall.Open(string(path), syscall.O_RDONLY, 0)
 		if err != nil {
 			continue
 		}
-		s := string(b)
-		r := strings.LastIndexByte(s, ')')
+		n, _ := syscall.Read(fd, buf)
+		syscall.Close(fd)
+		if n <= 0 {
+			continue
+		}
+		b := buf[:n]
+		r := bytes.LastIndexByte(b, ')')
 		if r < 0 {
 			continue
 		}
-		f := strings.Fields(s[r+1:])
-		if len(f) < 13 {
-			continue
+		// Fields after ')': state(0) … utime(11) stime(12).
+		field, start, ut := 0, -1, uint64(0)
+		for i := r + 1; i <= len(b); i++ {
+			if i == len(b) || b[i] == ' ' {
+				if start >= 0 {
+					if field == 11 || field == 12 {
+						v, _ := strconv.ParseUint(string(b[start:i]), 10, 64)
+						if field == 11 {
+							ut = v
+						} else {
+							out[pid] = ut + v
+							break
+						}
+					}
+					field++
+					start = -1
+				}
+			} else if start < 0 {
+				start = i
+			}
 		}
-		ut, _ := strconv.ParseUint(f[11], 10, 64)
-		st, _ := strconv.ParseUint(f[12], 10, 64)
-		out[pid] = ut + st
 	}
 	return out
 }
