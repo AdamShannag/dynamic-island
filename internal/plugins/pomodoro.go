@@ -4,14 +4,9 @@ import (
 	"context"
 	"time"
 
-	"go-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/island"
 )
 
-// Pomodoro is a focus timer controlled with actions:
-//
-//	island pomodoro start|stop|toggle   (= island action pomodoro.<cmd>)
-//
-// A focus block is followed automatically by a break, then it stops.
 type Pomodoro struct {
 	focus, brk time.Duration
 }
@@ -42,7 +37,7 @@ func (p *Pomodoro) Run(ctx context.Context, h island.Host) error {
 		})
 	}
 
-	phase := "" // "" | focus | break
+	phase := ""
 	timer := time.NewTimer(time.Hour)
 	timer.Stop()
 	defer h.Clear(pomodoroID)

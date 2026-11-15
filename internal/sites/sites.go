@@ -1,5 +1,3 @@
-// Package sites stores the user's saved sites (quick-launch bookmarks) and
-// caches each site's own icon, fetched directly from the site.
 package sites
 
 import (
@@ -17,13 +15,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AdamShannag/dynamic-island/internal/paths"
 )
 
 type Site struct {
 	ID   uint32 `json:"id"`
 	Name string `json:"name"`
 	URL  string `json:"url"`
-	Icon string `json:"icon,omitempty"` // local file, once fetched
+	Icon string `json:"icon,omitempty"`
 }
 
 type Store struct {
@@ -34,13 +34,7 @@ type Store struct {
 	next    uint32
 }
 
-func dataDir() string {
-	dir := os.Getenv("XDG_DATA_HOME")
-	if dir == "" {
-		dir = filepath.Join(os.Getenv("HOME"), ".local", "share")
-	}
-	return filepath.Join(dir, "go-island")
-}
+func dataDir() string { return paths.Data() }
 
 func Open() (*Store, error) {
 	s := &Store{path: filepath.Join(dataDir(), "sites.json"), iconDir: filepath.Join(dataDir(), "site-icons"), next: 1}
@@ -57,7 +51,6 @@ func Open() (*Store, error) {
 	for _, x := range s.sites {
 		s.next = max(s.next, x.ID+1)
 	}
-	// Retry icons that failed earlier (e.g. offline at the time).
 	for _, x := range s.sites {
 		if x.Icon == "" {
 			go s.fetchIcon(x.ID, x.URL)
@@ -72,7 +65,6 @@ func (s *Store) List() []Site {
 	return append([]Site{}, s.sites...)
 }
 
-// Add saves a site. raw may omit the scheme ("github.com").
 func (s *Store) Add(raw, name string) (Site, error) {
 	raw = strings.TrimSpace(raw)
 	if !strings.Contains(raw, "://") {
@@ -107,7 +99,6 @@ func (s *Store) Remove(id uint32) error {
 	return fmt.Errorf("no site %d", id)
 }
 
-// fetchIcon tries the site's apple-touch-icon (high-res) then favicon.ico.
 func (s *Store) fetchIcon(id uint32, rawURL string) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -151,7 +142,7 @@ func download(src, dst string) error {
 	defer resp.Body.Close()
 	ct := resp.Header.Get("Content-Type")
 	if resp.StatusCode != http.StatusOK || strings.HasPrefix(ct, "text/") {
-		return fmt.Errorf("no icon at %s", src) // many sites serve an HTML 404 page
+		return fmt.Errorf("no icon at %s", src)
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -178,8 +169,6 @@ func (s *Store) save() error {
 	return os.Rename(tmp, s.path)
 }
 
-// defaultName turns "news.ycombinator.com" into "Ycombinator" and
-// "localhost" into "Localhost": short enough for a tile label.
 func defaultName(host string) string {
 	labels := strings.Split(strings.TrimPrefix(host, "www."), ".")
 	n := labels[0]

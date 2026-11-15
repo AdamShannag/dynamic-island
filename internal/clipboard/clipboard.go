@@ -1,6 +1,3 @@
-// Package clipboard is a small persistent clipboard history. The GNOME
-// extension feeds it (only the compositor can read the clipboard on
-// Wayland) and reads it back for the Clipboard tab.
 package clipboard
 
 import (
@@ -11,35 +8,30 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AdamShannag/dynamic-island/internal/paths"
 )
 
 const (
-	maxItems   = 200     // unpinned items kept
-	maxTextLen = 100_000 // bytes; bigger copies are ignored
+	maxItems   = 200
+	maxTextLen = 100_000
 )
 
 type Item struct {
 	ID     uint32 `json:"id"`
 	Text   string `json:"text"`
 	Pinned bool   `json:"pinned"`
-	At     int64  `json:"at"` // unix ms of the last copy
+	At     int64  `json:"at"`
 }
 
 type Store struct {
 	mu    sync.Mutex
 	path  string
-	items []Item // newest first
+	items []Item
 	next  uint32
 }
 
-// DefaultPath is $XDG_DATA_HOME/go-island/clipboard.json.
-func DefaultPath() string {
-	dir := os.Getenv("XDG_DATA_HOME")
-	if dir == "" {
-		dir = filepath.Join(os.Getenv("HOME"), ".local", "share")
-	}
-	return filepath.Join(dir, "go-island", "clipboard.json")
-}
+func DefaultPath() string { return paths.DataFile("clipboard.json") }
 
 func Open(path string) (*Store, error) {
 	s := &Store{path: path, next: 1}
@@ -59,7 +51,6 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// Add records a copy; copying an existing entry moves it to the top.
 func (s *Store) Add(text string) error {
 	if strings.TrimSpace(text) == "" || len(text) > maxTextLen {
 		return nil
@@ -70,7 +61,7 @@ func (s *Store) Add(text string) error {
 	for i, old := range s.items {
 		if old.Text == text {
 			if i == 0 {
-				return nil // already on top; nothing to persist
+				return nil
 			}
 			it.ID, it.Pinned = old.ID, old.Pinned
 			s.items = append(s.items[:i], s.items[i+1:]...)
@@ -82,7 +73,6 @@ func (s *Store) Add(text string) error {
 	}
 	s.items = append([]Item{it}, s.items...)
 
-	// Drop the oldest unpinned items past the limit.
 	kept, unpinned := s.items[:0], 0
 	for _, x := range s.items {
 		if !x.Pinned {
@@ -96,7 +86,6 @@ func (s *Store) Add(text string) error {
 	return s.save()
 }
 
-// List returns pinned items first, then the rest, newest first.
 func (s *Store) List() []Item {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,7 +121,6 @@ func (s *Store) SetPinned(id uint32, pinned bool) error {
 	})
 }
 
-// Clear removes everything except pinned items.
 func (s *Store) Clear() error {
 	return s.mutate(func() {
 		kept := s.items[:0]
@@ -152,7 +140,6 @@ func (s *Store) mutate(fn func()) error {
 	return s.save()
 }
 
-// save writes atomically with 0600: clipboard history is private.
 func (s *Store) save() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err

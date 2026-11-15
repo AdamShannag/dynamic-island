@@ -16,9 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AdamShannag/dynamic-island/internal/paths"
+
 	"github.com/godbus/dbus/v5"
 
-	"go-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/island"
 )
 
 const (
@@ -26,14 +28,13 @@ const (
 	mprisPath   = dbus.ObjectPath("/org/mpris/MediaPlayer2")
 	mprisPlayer = "org.mpris.MediaPlayer2.Player"
 	mediaID     = "media"
-	pausedTTL   = 60 * time.Second // hide a paused player after a minute
+	pausedTTL   = 60 * time.Second
 )
 
-// MPRIS shows the active media player (Spotify, browsers, mpv, ...).
 type MPRIS struct {
 	mu       sync.Mutex
 	conn     *dbus.Conn
-	selected string // bus name of the player the island is showing
+	selected string
 	last     *island.View
 
 	artMu    sync.Mutex
@@ -92,7 +93,6 @@ func (p *MPRIS) Run(ctx context.Context, h island.Host) error {
 	defer h.Clear(mediaID)
 	p.update(h)
 
-	// Debounce: players often fire several PropertiesChanged in a burst.
 	var debounce <-chan time.Time
 	for {
 		select {
@@ -100,7 +100,7 @@ func (p *MPRIS) Run(ctx context.Context, h island.Host) error {
 			return nil
 		case _, ok := <-signals:
 			if !ok {
-				return io.ErrUnexpectedEOF // connection dropped; daemon restarts us
+				return io.ErrUnexpectedEOF
 			}
 			if debounce == nil {
 				debounce = time.After(80 * time.Millisecond)
@@ -128,9 +128,9 @@ func (p *MPRIS) call(method string) {
 
 type player struct {
 	name     string
-	status   string // Playing | Paused | Stopped
+	status   string
 	meta     map[string]dbus.Variant
-	position int64 // microseconds
+	position int64
 	rate     float64
 }
 
@@ -161,8 +161,6 @@ func (p *MPRIS) players() []player {
 	return out
 }
 
-// pick prefers: the selected player if playing, any playing player, the
-// selected player if paused, any paused player.
 func pick(players []player, selected string) *player {
 	rank := func(pl player) int {
 		r := 0
@@ -227,7 +225,7 @@ func (p *MPRIS) update(h island.Host) {
 	}
 	p.mu.Unlock()
 	if unchanged {
-		return // don't re-arm the paused TTL or spam the UI on unrelated signals
+		return
 	}
 	var ttl time.Duration
 	if !v.Playing {
@@ -236,9 +234,6 @@ func (p *MPRIS) update(h island.Host) {
 	h.Set(island.Activity{ID: mediaID, Priority: island.PriorityAmbient, View: v, TTL: ttl})
 }
 
-// resolveArt maps an MPRIS artUrl to a local file. Remote art (Spotify,
-// browsers) is downloaded into the cache in the background; a rescan is
-// triggered once it lands.
 func (p *MPRIS) resolveArt(raw string) string {
 	if raw == "" {
 		return ""
@@ -304,13 +299,7 @@ func (p *MPRIS) download(raw, path string) {
 	}
 }
 
-func artCacheDir() string {
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		dir = os.TempDir()
-	}
-	return filepath.Join(dir, "go-island", "art")
-}
+func artCacheDir() string { return paths.CacheFile("art") }
 
 func timing(pl *player) *island.Timing {
 	var length int64
@@ -335,8 +324,6 @@ func timing(pl *player) *island.Timing {
 	}
 }
 
-// sameMedia reports whether b only differs from a by normal playback
-// progress (so the UI's local extrapolation is still correct).
 func sameMedia(a, b island.View) bool {
 	ta, tb := a.Timing, b.Timing
 	a.Timing, b.Timing = nil, nil

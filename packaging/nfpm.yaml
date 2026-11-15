@@ -1,0 +1,48 @@
+name: dynamic-island
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+section: gnome
+priority: optional
+maintainer: Adam Shannag <noreply@github.com>
+homepage: https://github.com/AdamShannag/dynamic-island
+license: MIT
+description: |-
+  A Dynamic Island for the GNOME desktop
+  Live activities (music, timers, notifications, builds, coding agents),
+  a dashboard with system monitor, Docker, ports, clipboard history,
+  developer tools, notes and quick web search, driven by a small Go
+  daemon over D-Bus. Run `island setup` after installing.
+depends:
+  - gnome-shell (>= 46)
+  - dbus-user-session
+suggests:
+  - docker.io
+
+contents:
+  - src: build/pkg/dynamic-islandd
+    dst: /usr/bin/dynamic-islandd
+    file_info: {mode: 0755}
+  - src: build/pkg/island
+    dst: /usr/bin/island
+    file_info: {mode: 0755}
+  - src: systemd/dynamic-island.package.service
+    dst: /usr/lib/systemd/user/dynamic-island.service
+    file_info: {mode: 0644}
+  - src: extension/dynamic-island@adamshannag.github.io/
+    dst: /usr/share/gnome-shell/extensions/dynamic-island@adamshannag.github.io/
+    type: tree
+  - src: contrib/island-hook.bash
+    dst: /usr/share/dynamic-island/island-hook.bash
+    file_info: {mode: 0644}
+  - src: config.example.json
+    dst: /usr/share/dynamic-island/config.example.json
+    file_info: {mode: 0644}
+  - src: LICENSE
+    dst: /usr/share/doc/dynamic-island/copyright
+    file_info: {mode: 0644}
+
+scripts:
+  postinstall: packaging/scripts/postinst
+  preremove: packaging/scripts/prerm

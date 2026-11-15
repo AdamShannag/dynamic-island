@@ -1,0 +1,13 @@
+{
+  "uuid": "dynamic-island@adamshannag.github.io",
+  "name": "Dynamic Island",
+  "description": "A Dynamic Island for GNOME: live activities, a dashboard and developer tools, driven by the dynamic-islandd daemon over D-Bus.",
+  "shell-version": [
+    "46",
+    "47",
+    "48",
+    "49"
+  ],
+  "url": "https://github.com/AdamShannag/dynamic-island",
+  "version": 3
+}

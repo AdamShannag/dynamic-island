@@ -1,465 +1,129 @@
-// Package dbusapi exposes the island Manager on the session bus as
-// org.goisland.Island. The GNOME extension and the CLI are its clients.
 package dbusapi
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
+	"log"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
-	"go-island/internal/agents"
-	"go-island/internal/clipboard"
-	"go-island/internal/docker"
-	"go-island/internal/inbox"
-	"go-island/internal/island"
-	"go-island/internal/notes"
-	"go-island/internal/plugins"
-	"go-island/internal/ports"
-	"go-island/internal/settings"
-	"go-island/internal/sites"
-	"go-island/internal/sysmon"
-	"go-island/internal/tools"
+	"github.com/AdamShannag/dynamic-island/internal/agents"
+	"github.com/AdamShannag/dynamic-island/internal/clipboard"
+	"github.com/AdamShannag/dynamic-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/notes"
+	"github.com/AdamShannag/dynamic-island/internal/plugins"
+	"github.com/AdamShannag/dynamic-island/internal/sites"
+	"github.com/AdamShannag/dynamic-island/internal/sysmon"
 )
 
 const (
-	BusName = "org.goisland.Island"
-	Path    = dbus.ObjectPath("/org/goisland/Island")
-	Iface   = "org.goisland.Island"
+	BusName = "io.github.AdamShannag.DynamicIsland"
+	Path    = dbus.ObjectPath("/io/github/AdamShannag/DynamicIsland")
+	Iface   = "io.github.AdamShannag.DynamicIsland"
 )
 
-const introXML = `
-<node>
-  <interface name="` + Iface + `">
-    <method name="GetState">
-      <arg name="state" type="s" direction="out"/>
-    </method>
-    <method name="Action">
-      <arg name="name" type="s" direction="in"/>
-    </method>
-    <method name="Notify">
-      <arg name="title" type="s" direction="in"/>
-      <arg name="body" type="s" direction="in"/>
-      <arg name="icon" type="s" direction="in"/>
-      <arg name="accent" type="s" direction="in"/>
-      <arg name="timeout_ms" type="i" direction="in"/>
-      <arg name="id" type="u" direction="out"/>
-    </method>
-    <method name="TaskStart">
-      <arg name="title" type="s" direction="in"/>
-      <arg name="id" type="u" direction="out"/>
-    </method>
-    <method name="TaskEnd">
-      <arg name="id" type="u" direction="in"/>
-      <arg name="exit_code" type="i" direction="in"/>
-    </method>
-    <method name="DockerList">
-      <arg name="containers" type="s" direction="out"/>
-    </method>
-    <method name="DockerLogs">
-      <arg name="id" type="s" direction="in"/>
-      <arg name="lines" type="i" direction="in"/>
-      <arg name="text" type="s" direction="out"/>
-    </method>
-    <method name="DockerAction">
-      <arg name="id" type="s" direction="in"/>
-      <arg name="op" type="s" direction="in"/>
-    </method>
-    <method name="PortsList">
-      <arg name="listeners" type="s" direction="out"/>
-    </method>
-    <method name="PortFree">
-      <arg name="port" type="u" direction="in"/>
-      <arg name="summary" type="s" direction="out"/>
-    </method>
-    <method name="SitesList">
-      <arg name="sites" type="s" direction="out"/>
-    </method>
-    <method name="SiteAdd">
-      <arg name="url" type="s" direction="in"/>
-      <arg name="name" type="s" direction="in"/>
-    </method>
-    <method name="SiteRemove">
-      <arg name="id" type="u" direction="in"/>
-    </method>
-    <method name="ClipboardAdd">
-      <arg name="text" type="s" direction="in"/>
-    </method>
-    <method name="ClipboardList">
-      <arg name="items" type="s" direction="out"/>
-    </method>
-    <method name="ClipboardDelete">
-      <arg name="id" type="u" direction="in"/>
-    </method>
-    <method name="ClipboardPin">
-      <arg name="id" type="u" direction="in"/>
-      <arg name="pinned" type="b" direction="in"/>
-    </method>
-    <method name="ClipboardClear"/>
-    <method name="AgentEvent">
-      <arg name="event" type="s" direction="in"/>
-      <arg name="focus" type="ai" direction="in"/>
-    </method>
-    <method name="AgentStatus">
-      <arg name="status" type="s" direction="in"/>
-    </method>
-    <method name="AgentsList">
-      <arg name="sessions" type="s" direction="out"/>
-    </method>
-    <method name="NotesList">
-      <arg name="notes" type="s" direction="out"/>
-    </method>
-    <method name="NoteCreate">
-      <arg name="note" type="s" direction="out"/>
-    </method>
-    <method name="NoteSave">
-      <arg name="id" type="u" direction="in"/>
-      <arg name="text" type="s" direction="in"/>
-    </method>
-    <method name="NotePin">
-      <arg name="id" type="u" direction="in"/>
-      <arg name="pinned" type="b" direction="in"/>
-    </method>
-    <method name="NoteDelete">
-      <arg name="id" type="u" direction="in"/>
-    </method>
-    <method name="InboxList">
-      <arg name="items" type="s" direction="out"/>
-    </method>
-    <method name="InboxRemove">
-      <arg name="id" type="u" direction="in"/>
-    </method>
-    <method name="InboxClear"/>
-    <method name="QR">
-      <arg name="text" type="s" direction="in"/>
-      <arg name="png" type="s" direction="out"/>
-    </method>
-    <method name="PickColor"/>
-    <signal name="ColorPicked">
-      <arg name="hex" type="s"/>
-    </signal>
-    <method name="SetPresenting">
-      <arg name="on" type="b" direction="in"/>
-    </method>
-    <method name="GetSettings">
-      <arg name="settings" type="s" direction="out"/>
-    </method>
-    <method name="SetSettings">
-      <arg name="patch" type="s" direction="in"/>
-      <arg name="settings" type="s" direction="out"/>
-    </method>
-    <signal name="SettingsChanged">
-      <arg name="settings" type="s"/>
-    </signal>
-    <method name="SystemStats">
-      <arg name="stats" type="s" direction="out"/>
-    </method>
-    <method name="ActivityList">
-      <arg name="items" type="s" direction="out"/>
-    </method>
-    <method name="Open">
-      <arg name="tab" type="s" direction="in"/>
-    </method>
-    <signal name="OpenDashboard">
-      <arg name="tab" type="s"/>
-    </signal>
-    <signal name="StateChanged">
-      <arg name="state" type="s"/>
-    </signal>
-  </interface>` + introspect.IntrospectDeclarationString + `</node>`
+const (
+	signalStateChanged    = "StateChanged"
+	signalSettingsChanged = "SettingsChanged"
+	signalOpenDashboard   = "OpenDashboard"
+	signalColorPicked     = "ColorPicked"
+)
 
-type task struct {
-	title string
-	start time.Time
+type Deps struct {
+	Conn      *dbus.Conn
+	Manager   *island.Manager
+	Clipboard *clipboard.Store
+	Sites     *sites.Store
+	Activity  *plugins.Context
+	Notes     *notes.Store
+	Agents    *agents.Tracker
+	System    *sysmon.Monitor
 }
 
-// api's exported methods are exactly the D-Bus methods (godbus exports all of them).
 type api struct {
-	m      *island.Manager
-	nextID atomic.Uint32
-
-	mu    sync.Mutex
-	tasks map[uint32]task
-
 	conn   *dbus.Conn
-	ctxw   *plugins.Context
-	sys    *sysmon.Monitor
-	notes  *notes.Store
-	agents *agents.Tracker
+	m      *island.Manager
 	clip   *clipboard.Store
 	sites  *sites.Store
+	ctxw   *plugins.Context
+	notes  *notes.Store
+	agents *agents.Tracker
+	sys    *sysmon.Monitor
+
+	nextID atomic.Uint32
+	mu     sync.Mutex
+	tasks  map[uint32]task
 }
 
-func (a *api) AgentEvent(event string, focus []int32) *dbus.Error {
-	pids := make([]int, len(focus))
-	for i, p := range focus {
-		pids[i] = int(p)
+func newAPI(d Deps) *api {
+	a := &api{
+		conn:   d.Conn,
+		m:      d.Manager,
+		clip:   d.Clipboard,
+		sites:  d.Sites,
+		ctxw:   d.Activity,
+		notes:  d.Notes,
+		agents: d.Agents,
+		sys:    d.System,
+		tasks:  map[uint32]task{},
 	}
-	return dbusErr(a.agents.HookEvent([]byte(event), pids))
-}
-func (a *api) AgentStatus(status string) *dbus.Error { return dbusErr(a.agents.Status([]byte(status))) }
-func (a *api) AgentsList() (string, *dbus.Error)     { return toJSON(a.agents.List()) }
-
-func (a *api) GetSettings() (string, *dbus.Error) { return toJSON(settings.Get()) }
-
-// SetSettings merges a partial patch, saves it, and tells the UI.
-func (a *api) SetSettings(patch string) (string, *dbus.Error) {
-	s, err := settings.Update([]byte(patch))
-	if err != nil {
-		return "", dbusErr(err)
-	}
-	out, derr := toJSON(s)
-	if derr == nil {
-		_ = a.conn.Emit(Path, Iface+".SettingsChanged", out)
-	}
-	return out, derr
-}
-
-func (a *api) SystemStats() (string, *dbus.Error) { return toJSON(a.sys.Sample()) }
-
-func (a *api) ActivityList() (string, *dbus.Error) {
-	if a.ctxw == nil {
-		return "[]", nil
-	}
-	return toJSON(a.ctxw.List())
-}
-
-// Open asks the UI to toggle the dashboard (optionally on a given tab).
-func (a *api) Open(tab string) *dbus.Error {
-	return dbusErr(a.conn.Emit(Path, Iface+".OpenDashboard", tab))
-}
-
-func (a *api) SitesList() (string, *dbus.Error) { return toJSON(a.sites.List()) }
-func (a *api) SiteRemove(id uint32) *dbus.Error { return dbusErr(a.sites.Remove(id)) }
-func (a *api) SiteAdd(url, name string) *dbus.Error {
-	_, err := a.sites.Add(url, name)
-	return dbusErr(err)
-}
-
-func dbusErr(err error) *dbus.Error {
-	if err == nil {
-		return nil
-	}
-	return dbus.MakeFailedError(err)
-}
-
-func toJSON(v any) (string, *dbus.Error) {
-	b, err := json.Marshal(v)
-	return string(b), dbusErr(err)
-}
-
-func (a *api) DockerList() (string, *dbus.Error) {
-	list, err := docker.List(context.Background())
-	if err != nil {
-		return "", dbusErr(err)
-	}
-	if list == nil {
-		list = []docker.Container{}
-	}
-	return toJSON(list)
-}
-
-func (a *api) DockerLogs(id string, lines int32) (string, *dbus.Error) {
-	out, err := docker.Logs(context.Background(), id, int(lines))
-	return out, dbusErr(err)
-}
-
-func (a *api) DockerAction(id, op string) *dbus.Error {
-	return dbusErr(docker.Act(context.Background(), id, op))
-}
-
-func (a *api) PortsList() (string, *dbus.Error) {
-	list, err := ports.List(context.Background())
-	if err != nil {
-		return "", dbusErr(err)
-	}
-	if list == nil {
-		list = []ports.Listener{}
-	}
-	return toJSON(list)
-}
-
-// PortFree kills whatever listens on port and pops the island with the result.
-func (a *api) PortFree(port uint32) (string, *dbus.Error) {
-	summary, err := ports.Free(context.Background(), int(port))
-	v := island.View{Kind: "notify", Title: fmt.Sprintf("Port %d freed", port), Subtitle: summary,
-		Icon: "emblem-ok-symbolic", Accent: "ok", Click: "notify.dismiss"}
-	if err != nil {
-		v.Title, v.Icon, v.Accent = fmt.Sprintf("Port %d", port), "dialog-error-symbolic", "error"
-		v.Subtitle = strings.TrimPrefix(summary+"; "+err.Error(), "; ")
-	}
-	a.m.Set(island.Activity{ID: fmt.Sprintf("notify.port.%d", port), Priority: island.PriorityNotify,
-		TTL: 6 * time.Second, View: v})
-	return summary, dbusErr(err)
-}
-
-func (a *api) ClipboardAdd(text string) *dbus.Error {
-	if a.m.Presenting() || !settings.Enabled("clipboardHistory") {
-		return nil // don't record copies made on a shared screen (or when turned off)
-	}
-	return dbusErr(a.clip.Add(text))
-}
-
-func (a *api) NotesList() (string, *dbus.Error) { return toJSON(a.notes.List()) }
-func (a *api) NoteCreate() (string, *dbus.Error) {
-	n, err := a.notes.Create()
-	if err != nil {
-		return "", dbusErr(err)
-	}
-	return toJSON(n)
-}
-func (a *api) NoteSave(id uint32, text string) *dbus.Error { return dbusErr(a.notes.Save(id, text)) }
-func (a *api) NotePin(id uint32, pinned bool) *dbus.Error  { return dbusErr(a.notes.Pin(id, pinned)) }
-func (a *api) NoteDelete(id uint32) *dbus.Error            { return dbusErr(a.notes.Delete(id)) }
-
-func (a *api) InboxList() (string, *dbus.Error)  { return toJSON(inbox.List()) }
-func (a *api) InboxRemove(id uint32) *dbus.Error { inbox.Remove(id); return nil }
-func (a *api) InboxClear() *dbus.Error           { inbox.Clear(); return nil }
-func (a *api) QR(text string) (string, *dbus.Error) {
-	p, err := tools.QR(text)
-	return p, dbusErr(err)
-}
-func (a *api) SetPresenting(on bool) *dbus.Error { a.m.SetPresenting(on); return nil }
-
-// PickColor starts the portal's interactive picker; the result arrives as a
-// ColorPicked signal (the UI copies it) and an island popup with a swatch.
-func (a *api) PickColor() *dbus.Error {
-	go func() {
-		c, err := tools.PickColor(context.Background())
+	if a.notes == nil {
+		n, err := notes.Open()
 		if err != nil {
-			if err.Error() != "cancelled" {
-				a.m.Set(island.Activity{ID: "notify.color", Priority: island.PriorityNotify, TTL: 4 * time.Second,
-					View: island.View{Kind: "notify", Title: "Colour picker unavailable", Subtitle: err.Error(),
-						Icon: "dialog-error-symbolic", Accent: "error", Click: "notify.dismiss"}})
-			}
-			return
+			log.Printf("notes: %v", err)
 		}
-		_ = a.conn.Emit(Path, Iface+".ColorPicked", c.Hex)
-		a.m.Set(island.Activity{ID: "notify.color", Priority: island.PriorityNotify, TTL: 8 * time.Second,
-			View: island.View{Kind: "notify", Title: c.Hex + " copied", Subtitle: c.RGB + "  ·  " + c.HSL,
-				Swatch: c.Hex, Trailing: "colour", Click: "notify.dismiss"}})
-	}()
-	return nil
-}
-func (a *api) ClipboardList() (string, *dbus.Error)  { return toJSON(a.clip.List()) }
-func (a *api) ClipboardDelete(id uint32) *dbus.Error { return dbusErr(a.clip.Delete(id)) }
-func (a *api) ClipboardClear() *dbus.Error           { return dbusErr(a.clip.Clear()) }
-func (a *api) ClipboardPin(id uint32, pinned bool) *dbus.Error {
-	return dbusErr(a.clip.SetPinned(id, pinned))
+		a.notes = n
+	}
+	if a.agents == nil {
+		a.agents = agents.NewTracker(a.m)
+	}
+	if a.sys == nil {
+		a.sys = sysmon.New()
+	}
+	return a
 }
 
-func (a *api) GetState() (string, *dbus.Error) { return a.m.State(), nil }
-
-func (a *api) Action(name string) *dbus.Error {
-	if err := a.m.Action(name); err != nil {
-		return dbus.MakeFailedError(err)
+func Serve(d Deps) error {
+	if d.Conn == nil || d.Manager == nil {
+		return fmt.Errorf("dbusapi: Conn and Manager are required")
 	}
-	return nil
-}
+	a := newAPI(d)
+	a.m.HandleAction("notify.dismiss", func() { a.m.ClearPrefix("notify.") })
 
-func (a *api) Notify(title, body, icon, accent string, timeoutMs int32) (uint32, *dbus.Error) {
-	if title == "" {
-		return 0, dbus.MakeFailedError(fmt.Errorf("title is required"))
-	}
-	if icon == "" {
-		icon = "dialog-information-symbolic"
-	}
-	ttl := time.Duration(timeoutMs) * time.Millisecond
-	if timeoutMs <= 0 {
-		ttl = 5 * time.Second
-	}
-	id := a.nextID.Add(1)
-	a.m.Set(island.Activity{
-		ID:       fmt.Sprintf("notify.%d", id),
-		Priority: island.PriorityNotify,
-		TTL:      ttl,
-		View: island.View{
-			Kind: "notify", Title: title, Subtitle: body, Icon: icon, Accent: accent,
-			Click: "notify.dismiss",
-		},
-	})
-	return id, nil
-}
-
-// TaskStart shows a running command (used by `island run`).
-func (a *api) TaskStart(title string) (uint32, *dbus.Error) {
-	id := a.nextID.Add(1)
-	now := time.Now()
-	a.mu.Lock()
-	a.tasks[id] = task{title, now}
-	a.mu.Unlock()
-	a.m.Set(island.Activity{
-		ID:       fmt.Sprintf("task.%d", id),
-		Priority: island.PriorityTask,
-		TTL:      12 * time.Hour, // safety net if the client dies without TaskEnd
-		View: island.View{
-			Kind: "task", Title: title, Icon: "system-run-symbolic",
-			StartedAt: island.UnixMs(now),
-		},
-	})
-	return id, nil
-}
-
-// TaskEnd replaces the running task with a short success/failure result.
-func (a *api) TaskEnd(id uint32, exitCode int32) *dbus.Error {
-	a.mu.Lock()
-	t, ok := a.tasks[id]
-	delete(a.tasks, id)
-	a.mu.Unlock()
-	if !ok {
-		return dbus.MakeFailedError(fmt.Errorf("unknown task %d", id))
-	}
-	a.m.Clear(fmt.Sprintf("task.%d", id))
-
-	took := island.FormatDuration(time.Since(t.start))
-	v := island.View{Kind: "notify", Title: t.title, Click: "notify.dismiss"}
-	ttl := 6 * time.Second
-	if exitCode == 0 {
-		v.Icon, v.Accent, v.Subtitle = "emblem-ok-symbolic", "ok", "Succeeded in "+took
-	} else {
-		v.Icon, v.Accent = "dialog-error-symbolic", "error"
-		v.Subtitle = fmt.Sprintf("Failed (exit %d) after %s", exitCode, took)
-		ttl = 12 * time.Second
-	}
-	a.m.Set(island.Activity{
-		ID: fmt.Sprintf("notify.task.%d", id), Priority: island.PriorityNotify, TTL: ttl, View: v,
-	})
-	return nil
-}
-
-// Serve claims the bus name, exports the API and wires StateChanged signals.
-func Serve(conn *dbus.Conn, m *island.Manager, clip *clipboard.Store, st *sites.Store, ctxw *plugins.Context) error {
-	noteStore, err := notes.Open()
-	if err != nil {
-		fmt.Println("notes:", err)
-	}
-	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn, agents: agents.NewTracker(m), ctxw: ctxw, sys: sysmon.New(), notes: noteStore}
-	m.HandleAction("notify.dismiss", func() { m.ClearPrefix("notify.") })
-
-	if err := conn.Export(a, Path, Iface); err != nil {
+	if err := a.export(); err != nil {
 		return err
 	}
-	if err := conn.Export(introspect.Introspectable(introXML), Path,
-		"org.freedesktop.DBus.Introspectable"); err != nil {
+	if err := a.claimName(); err != nil {
 		return err
 	}
-	reply, err := conn.RequestName(BusName, dbus.NameFlagDoNotQueue)
+	a.m.OnChange(func(state string) {
+		if err := a.emit(signalStateChanged, state); err != nil {
+			log.Printf("emit %s: %v", signalStateChanged, err)
+		}
+	})
+	return nil
+}
+
+func (a *api) export() error {
+	if err := a.conn.Export(a, Path, Iface); err != nil {
+		return err
+	}
+	return a.conn.Export(introspect.Introspectable(introXML), Path, "org.freedesktop.DBus.Introspectable")
+}
+
+func (a *api) claimName() error {
+	reply, err := a.conn.RequestName(BusName, dbus.NameFlagDoNotQueue)
 	if err != nil {
 		return err
 	}
 	if reply != dbus.RequestNameReplyPrimaryOwner {
-		return fmt.Errorf("%s is already owned (is another islandd running?)", BusName)
+		return fmt.Errorf("%s is already owned (is another dynamic-islandd running?)", BusName)
 	}
-	m.OnChange(func(state string) {
-		if err := conn.Emit(Path, Iface+".StateChanged", state); err != nil {
-			fmt.Println("emit:", err)
-		}
-	})
 	return nil
+}
+
+func (a *api) emit(signal string, args ...any) error {
+	return a.conn.Emit(Path, Iface+"."+signal, args...)
 }

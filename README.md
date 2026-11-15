@@ -1,6 +1,9 @@
-# Go Island
+# Dynamic Island
 
-A Dynamic Island for Ubuntu (GNOME Shell 46). It replaces the top-bar clock with a pill. When nothing is happening the pill shows the time. When something happens, the pill grows down out of the top bar.
+[![CI](https://github.com/AdamShannag/dynamic-island/actions/workflows/ci.yml/badge.svg)](https://github.com/AdamShannag/dynamic-island/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A Dynamic Island for Ubuntu (GNOME Shell 46–49). It replaces the top-bar clock with a pill. When nothing is happening the pill shows the time. When something happens, the pill grows down out of the top bar.
 
 - **Left-click** opens the dashboard, with tabs for Home, Docker, Ports, Clipboard and Web.
 - **Right-click** opens the regular calendar and notifications menu.
@@ -25,7 +28,7 @@ Click the **gear** in the dashboard header.
   - USB popups
   - battery popups
 
-Changes apply instantly. They're saved by the daemon in `~/.config/go-island/settings.json`, so features the daemon runs (notification mirroring, clipboard history, USB and battery) really stop when you turn them off.
+Changes apply instantly. They're saved by the daemon in `~/.config/dynamic-island/settings.json`, so features the daemon runs (notification mirroring, clipboard history, USB and battery) really stop when you turn them off.
 
 ## Tools in the header
 
@@ -100,27 +103,47 @@ Cost and context usage come from Claude Code's documented status-line feed. Your
 | Docker | Running containers grouped by compose project, with health, **live CPU and memory**, and **clickable port chips** that open `localhost:PORT`. Each one has a **logs view** (last 50 lines, following live), restart and stop. |
 | Ports | Every listening TCP port and which process or container owns it. Click a port to open it in your browser. **Kill** frees the port (two clicks to confirm). You can also type a port number and press Enter to free it. Ports published by Docker stop their container. |
 | Notifications | An inbox of every app notification, for when you were away. Newest first, grouped by app, with how long ago each arrived. Clicking one opens the app (Discord jumps to the message); you can dismiss one or clear all. A red dot on the tab means there are unread ones. History is kept **in memory only**, never on disk, and notifications that arrive while you're presenting are kept but hidden. |
-| Notes | A notes app in the style of Apple Notes: a list (search, new note, pinned section, date and preview) and an editor with autosave, pin and delete. A note you leave empty is removed. Stored in `~/.local/share/go-island/notes.json` (mode 0600); the old single scratchpad is imported as the first note. Open it with `island open notes`. |
+| Notes | A notes app in the style of Apple Notes: a list (search, new note, pinned section, date and preview) and an editor with autosave, pin and delete. A note you leave empty is removed. Stored in `~/.local/share/dynamic-island/notes.json` (mode 0600); the old single scratchpad is imported as the first note. Open it with `island open notes`. |
 | Clipboard | A history of everything you copy, saved across reboots. Click an entry to copy it again; you can also pin, delete or filter. Copies flagged by password managers are skipped. |
 | QR | Click the grid icon on any clipboard item, or next to the Web search box, to get a scannable QR code. |
 | Web | A calculator (type `150*1.16` and press Enter to copy `174`) and a Google search box (a typed URL or `localhost:3000` opens directly), plus a grid of saved sites. **＋** adds a site and right-click removes one. Icons are fetched from each site itself. |
 
 ```
 MPRIS / UPower / notifications / docker / ss / CLI
-        ──► islandd (plugins → priority Manager) ══ D-Bus ══► GNOME extension (pill)
+        ──► dynamic-islandd (plugins → priority Manager) ══ D-Bus ══► GNOME extension (pill)
 ```
 
-- **`islandd`** is a Go daemon. It runs plugins and serves the island state on the session bus as `org.goisland.Island`.
-- **`extension/go-island@local`** is a GNOME Shell extension that draws the pill. It just renders whatever state the daemon sends.
+- **`dynamic-islandd`** is a Go daemon. It runs plugins and serves the island state on the session bus as `io.github.AdamShannag.DynamicIsland`.
+- **`extension/dynamic-island@adamshannag.github.io`** is a GNOME Shell extension that draws the pill. It just renders whatever state the daemon sends.
+- **`island`** is the command-line client (notifications, `island run`, Claude Code hooks, setup).
 
 ## Install
 
 **Requirements:** Ubuntu or any other distro with GNOME Shell **46–49** (Ubuntu 24.04 through 25.10), on X11 or Wayland, on x86-64 or ARM64. Docker is optional.
 
-**From a release tarball (no Go needed):**
+**With apt (recommended):**
 
 ```sh
-tar xzf go-island-<version>.tar.gz && cd go-island
+curl -fsSL https://adamshannag.github.io/dynamic-island/setup.sh | sudo sh
+sudo apt install dynamic-island
+island setup
+```
+
+The first line adds the project's signed APT repository (once). After that, updates arrive with your normal `sudo apt upgrade`. `island setup` runs as your own user: it starts the daemon and enables the GNOME extension. To add the repository by hand instead:
+
+```sh
+curl -fsSL https://adamshannag.github.io/dynamic-island/dynamic-island.gpg | sudo tee /usr/share/keyrings/dynamic-island.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/dynamic-island.gpg] https://adamshannag.github.io/dynamic-island stable main" \
+  | sudo tee /etc/apt/sources.list.d/dynamic-island.list
+sudo apt update && sudo apt install dynamic-island
+```
+
+Or download the `.deb` from the [releases page](https://github.com/AdamShannag/dynamic-island/releases) and run `sudo apt install ./dynamic-island_<version>_amd64.deb`.
+
+**From a release tarball (no Go needed, installs into your home directory):**
+
+```sh
+tar xzf dynamic-island-<version>.tar.gz && cd dynamic-island
 ./install.sh
 ```
 
@@ -131,13 +154,14 @@ tar xzf go-island-<version>.tar.gz && cd go-island
 ```
 
 The installer:
-1. puts `islandd` and `island` in `~/.local/bin`,
-2. enables the `islandd` systemd user service,
-3. installs and enables the extension.
+1. puts `dynamic-islandd` and `island` in `~/.local/bin`,
+2. enables the `dynamic-island` systemd user service,
+3. installs and enables the extension,
+4. removes an older Go Island install if it finds one. Your data moves over automatically from `~/.local/share/go-island` (and the matching config and cache directories) the first time the daemon starts.
 
 A brand-new extension loads only after GNOME Shell restarts. On **X11**, press Alt+F2, type `r` and press Enter. On **Wayland** (the Ubuntu default), log out and back in.
 
-`make dist` builds the release tarball, with static binaries for amd64 and arm64. `./uninstall.sh` removes everything. Your data in `~/.local/share/go-island` is kept unless you pass `--purge`.
+`make dist` builds the release tarball and `make deb` the `.deb` packages, with static binaries for amd64 and arm64. `./uninstall.sh` removes a home-directory install (`sudo apt remove dynamic-island` removes the package). Your data in `~/.local/share/dynamic-island` is kept unless you pass `--purge`.
 
 **Portability notes:**
 - Sizes follow your display scale, so 2× HiDPI and fractional scaling stay in proportion.
@@ -167,19 +191,22 @@ island kill-port 8080                             # kill the process, or stop th
 island pomodoro start|stop|toggle
 island action media.play-pause                    # any registered action
 island state                                      # current View JSON
+island setup [--remove]                           # per-user setup after an apt install
+island version
 ```
 
 ### Long-command alerts in bash
 
 ```sh
-echo 'source ~/personal/go-island/contrib/island-hook.bash' >> ~/.bashrc
+echo 'source /usr/share/dynamic-island/island-hook.bash' >> ~/.bashrc   # apt install
+echo 'source /path/to/dynamic-island/contrib/island-hook.bash' >> ~/.bashrc   # source checkout
 ```
 
 Any command that runs for 15 seconds or more pops the island with ✓ or ✗ and how long it took. Set `ISLAND_MIN_SECS` to change the threshold and `ISLAND_IGNORE` to skip commands. The hook installs a `DEBUG` trap, so it can conflict with other preexec hooks such as bash-preexec.
 
 ## Config
 
-Optional. Copy `config.example.json` to `~/.config/go-island/config.json`, then run `systemctl --user restart islandd`.
+Optional. Copy `config.example.json` (also in `/usr/share/dynamic-island/`) to `~/.config/dynamic-island/config.json`, then run `systemctl --user restart dynamic-island`.
 
 ```json
 {
@@ -189,14 +216,14 @@ Optional. Copy `config.example.json` to `~/.config/go-island/config.json`, then 
 }
 ```
 
-Data lives in `~/.local/share/go-island/`: `clipboard.json` and `sites.json` (both mode 0600), plus `site-icons/`.
+Data lives in `~/.local/share/dynamic-island/`: `clipboard.json` and `sites.json` (both mode 0600), plus `site-icons/`.
 
 ## Resource use and stability
 
 - **Daemon:** about 14 MB of RAM and roughly 0.15% of one CPU core. It caches process scans, and its heap is capped softly at 32 MB.
 - **Extension:**
   - The eyes animate on the display's own frame clock (60, 144 Hz and so on) with a critically damped spring, which glides with no overshoot. That loop runs only while the eyes move and stops once they settle. A light 7–16 Hz check wakes it when the cursor moves.
-  - The equalizer steps at about 5 fps, and only while it's on screen.
+  - The equalizer animates on the frame clock, and only while it's on screen and the music is playing.
   - Live timers tick once a second.
   - Docker stats run only while the Docker tab is open.
 - **Frame budget:** everything is tuned for 60 fps, because GNOME Shell's interface shares one thread with the compositor.
@@ -206,7 +233,7 @@ Data lives in `~/.local/share/go-island/`: `clipboard.json` and `sites.json` (bo
   - Measured on 12 s of live Activity updates: 1 frame over 16.7 ms out of about 5,900.
 - **Clipboard:** a GNOME Shell crash was traced to clipboard reads completing into a JavaScript callback. The extension now reads the clipboard only to record history: once per burst of changes (debounced 400 ms), never two reads at a time, and never for text it copied itself. Everything else uses the daemon's history.
 
-## D-Bus API (`org.goisland.Island` at `/org/goisland/Island`)
+## D-Bus API (`io.github.AdamShannag.DynamicIsland` at `/io/github/AdamShannag/DynamicIsland`)
 
 | Member | Signature | Notes |
 |---|---|---|
@@ -227,6 +254,26 @@ Live values are sent as timestamps (`endsAt`, `startedAt`, `timing`), and the ex
 1. Implement `island.Plugin` (`Name()` and `Run(ctx, host)`) in `internal/plugins/`.
 2. Call `host.Set(island.Activity{ID, Priority, View, TTL})` to take over the island, and `host.Clear(id)` to give it back. The activity with the highest priority wins; ties go to the most recent one. The standard priorities are in `internal/island`.
 3. Register any UI actions with `host.HandleAction("myplugin.thing", fn)`. Set `View.Click` to choose what clicking the pill does.
-4. Add the plugin to the list in `cmd/islandd/main.go`.
+4. Add the plugin to the list in `cmd/dynamic-islandd/main.go`.
 
 If a plugin's `Run` returns an error, the daemon restarts it with exponential backoff.
+
+## Contributing
+
+`CLAUDE.md` describes the architecture, the conventions and the gotchas in detail. It's written for AI coding agents but works just as well for people. The short version:
+
+```sh
+make check   # gofmt, go vet, and the extension's static checks
+make test    # Go tests (with -race) and the extension's unit tests
+make install # build and install into your home directory
+make logs    # follow the daemon's and GNOME Shell's logs
+```
+
+The extension's checks need Node.js 22: run `npm ci` in `extension/` once.
+
+- **A new dashboard tab:** add a class extending `Page` in `extension/.../pages/` (see `pages/page.js` for the contract) and list it in `pages/index.js` and `TABS` in `lib/constants.js`.
+- **A new daemon feature:** a plugin (above), plus D-Bus methods in `internal/dbusapi/` if the extension needs to call it. Every method must also be declared in `extension/.../lib/dbus.js`; `npm run check` catches calls to undeclared methods, and a Go test checks the daemon's introspection data.
+
+## License
+
+[MIT](LICENSE)

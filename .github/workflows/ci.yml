@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal)" || { gofmt -d cmd internal; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -race -count=1 ./...
+      - name: build (amd64, arm64)
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOARCH=$arch go build -trimpath -o build/$arch/ ./cmd/...
+          done
+
+  extension:
+    name: Extension
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm ci
+      - name: static checks (imports, undefined names, D-Bus methods)
+        run: npm run check
+      - name: unit tests
+        run: npm test
+
+  package:
+    name: Package
+    runs-on: ubuntu-24.04
+    needs: [go, extension]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: shellcheck
+        run: |
+          shellcheck -S warning install.sh uninstall.sh packaging/apt-repo.sh packaging/scripts/*
+          shellcheck -S warning -s bash contrib/island-hook.bash
+      - name: install nfpm
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3
+      - name: build .deb packages
+        run: make deb NFPM="$(go env GOPATH)/bin/nfpm"
+      - name: inspect packages
+        run: |
+          for deb in dist/*.deb; do
+            dpkg-deb --info "$deb"
+            dpkg-deb --contents "$deb" | grep -q 'usr/share/gnome-shell/extensions/dynamic-island@adamshannag.github.io/extension.js'
+          done
+      - name: install and smoke test
+        run: |
+          sudo apt-get install -y --no-install-recommends ./dist/*_amd64.deb
+          dynamic-islandd -version
+          island version
+          test -f /usr/lib/systemd/user/dynamic-island.service
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-packages
+          path: dist/*.deb
+          retention-days: 7

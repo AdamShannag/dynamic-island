@@ -1,6 +1,3 @@
-// Package ports lists listening TCP ports and frees them, either by
-// killing the owning process or, for Docker-published ports (owned by a
-// root docker-proxy), by stopping the container.
 package ports
 
 import (
@@ -16,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"go-island/internal/docker"
+	"github.com/AdamShannag/dynamic-island/internal/docker"
 )
 
 type Listener struct {
 	Port        int    `json:"port"`
-	Addr        string `json:"addr"` // 127.0.0.1, 0.0.0.0, ::, ...
+	Addr        string `json:"addr"`
 	PID         int    `json:"pid,omitempty"`
 	Process     string `json:"process,omitempty"`
 	Cmd         string `json:"cmd,omitempty"`
@@ -31,14 +28,12 @@ type Listener struct {
 
 var procRe = regexp.MustCompile(`\("([^"]+)",pid=(\d+)`)
 
-// List returns listening TCP sockets, one entry per (port, process),
-// annotated with the Docker container that publishes each port.
 func List(ctx context.Context) ([]Listener, error) {
 	socks, err := Sockets(ctx)
 	if err != nil {
 		return nil, err
 	}
-	containers := map[int]docker.Container{} // published port -> container
+	containers := map[int]docker.Container{}
 	if list, err := docker.List(ctx); err == nil {
 		for _, c := range list {
 			for _, p := range strings.Split(c.Ports, ", ") {
@@ -57,7 +52,6 @@ func List(ctx context.Context) ([]Listener, error) {
 	return socks, nil
 }
 
-// Sockets lists listening TCP sockets without Docker lookups (cheap).
 func Sockets(ctx context.Context) ([]Listener, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -92,7 +86,7 @@ func Sockets(ctx context.Context) ([]Listener, error) {
 			l.Cmd = cmdline(l.PID)
 		}
 		key := fmt.Sprintf("%d/%d", port, l.PID)
-		if seen[key] { // same socket on IPv4 + IPv6
+		if seen[key] {
 			continue
 		}
 		seen[key] = true
@@ -114,9 +108,6 @@ func cmdline(pid int) string {
 	return s
 }
 
-// Free frees a port: SIGTERM to every owning process (SIGKILL after 3s if
-// it's still alive), or `docker stop` for container-published ports. It
-// returns a human-readable summary.
 func Free(ctx context.Context, port int) (string, error) {
 	list, err := List(ctx)
 	if err != nil {
@@ -162,7 +153,7 @@ func terminate(pid int) error {
 		for i := 0; i < 30; i++ {
 			time.Sleep(100 * time.Millisecond)
 			if syscall.Kill(pid, 0) != nil {
-				return // gone
+				return
 			}
 		}
 		_ = syscall.Kill(pid, syscall.SIGKILL)

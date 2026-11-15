@@ -11,14 +11,11 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"go-island/internal/inbox"
-	"go-island/internal/island"
-	"go-island/internal/settings"
+	"github.com/AdamShannag/dynamic-island/internal/inbox"
+	"github.com/AdamShannag/dynamic-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/settings"
 )
 
-// Notifications mirrors desktop notifications (Slack, Telegram, calendar,
-// ...) into the island by monitoring org.freedesktop.Notifications.Notify
-// calls on the session bus. It only observes; GNOME still handles them.
 type Notifications struct {
 	ignore map[string]bool
 	seq    int
@@ -37,16 +34,12 @@ func (n *Notifications) Name() string { return "notifications" }
 var markup = regexp.MustCompile(`<[^>]*>`)
 
 func (n *Notifications) Run(ctx context.Context, h island.Host) error {
-	// A monitor connection can't be used for anything else, so it gets its own.
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	// Once Eavesdrop is set, godbus routes every incoming message (including
-	// the BecomeMonitor reply) to this channel, so the call is fire-and-forget
-	// and its reply is checked in the loop.
 	msgs := make(chan *dbus.Message, 64)
 	conn.Eavesdrop(msgs)
 	call := conn.BusObject().Go("org.freedesktop.DBus.Monitoring.BecomeMonitor", 0, nil,
@@ -77,7 +70,7 @@ func (n *Notifications) Run(ctx context.Context, h island.Host) error {
 						Title: v.Title, Body: v.Subtitle})
 				}
 				if h.Presenting() || !settings.Enabled("mirrorNotifications") {
-					continue // history yes, popup no: on a shared screen, or when turned off
+					continue
 				}
 				{
 					n.seq++
@@ -91,7 +84,6 @@ func (n *Notifications) Run(ctx context.Context, h island.Host) error {
 	}
 }
 
-// view converts a Notify(app, replaces_id, icon, summary, body, actions, hints, timeout) call.
 func (n *Notifications) view(msg *dbus.Message) (island.View, time.Duration, bool) {
 	if len(msg.Body) < 7 {
 		return island.View{}, 0, false
@@ -104,9 +96,6 @@ func (n *Notifications) view(msg *dbus.Message) (island.View, time.Duration, boo
 	if summary == "" || n.ignore[strings.ToLower(app)] {
 		return island.View{}, 0, false
 	}
-	// GNOME's notification relay (org.gnome.Shell.Notifications) forwards
-	// every Notify call into the shell again, tagging the copy with
-	// x-shell-sender hints. Count only the original.
 	if _, fwd := hints["x-shell-sender"]; fwd {
 		return island.View{}, 0, false
 	}
@@ -129,7 +118,7 @@ func (n *Notifications) view(msg *dbus.Message) (island.View, time.Duration, boo
 	} else if icon != "" {
 		v.Icon = icon
 	} else if de, _ := hints["desktop-entry"].Value().(string); de != "" {
-		v.Icon = de // desktop-entry ids usually double as icon names
+		v.Icon = de
 	} else {
 		v.Icon = "dialog-information-symbolic"
 	}

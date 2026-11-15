@@ -12,10 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AdamShannag/dynamic-island/internal/dbusapi"
+	"github.com/AdamShannag/dynamic-island/internal/paths"
+
 	"github.com/godbus/dbus/v5"
 )
 
-// island claude hook | statusline [-- CMD...] | install | uninstall
 func claudeCmd(args []string) int {
 	if len(args) == 0 {
 		usage()
@@ -23,7 +25,7 @@ func claudeCmd(args []string) int {
 	switch args[0] {
 	case "hook":
 		claudeHook()
-		return 0 // never disturb Claude Code, whatever happens
+		return 0
 	case "statusline":
 		return claudeStatusline(args[1:])
 	case "install":
@@ -43,15 +45,14 @@ func report(err error) int {
 	return 0
 }
 
-// send fires a method call without waiting for a reply (hooks must be fast).
 func send(method string, args ...any) {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-	obj := conn.Object("org.goisland.Island", "/org/goisland/Island")
-	obj.Go("org.goisland.Island."+method, dbus.FlagNoReplyExpected, nil, args...)
+	obj := conn.Object(dbusapi.BusName, dbusapi.Path)
+	obj.Go(dbusapi.Iface+"."+method, dbus.FlagNoReplyExpected, nil, args...)
 }
 
 func claudeHook() {
@@ -62,8 +63,6 @@ func claudeHook() {
 	send("AgentEvent", string(data), ancestors())
 }
 
-// claudeStatusline forwards the status-line JSON to the island, then runs
-// the user's own status-line command (if any) with the same input.
 func claudeStatusline(args []string) int {
 	data, _ := io.ReadAll(io.LimitReader(os.Stdin, 4<<20))
 	if len(data) > 0 {
@@ -88,8 +87,6 @@ func claudeStatusline(args []string) int {
 	return 0
 }
 
-// ancestors returns this process's ancestor pids (Claude → shell → terminal…),
-// so the UI can focus the window the session lives in.
 func ancestors() []int32 {
 	var out []int32
 	pid := os.Getppid()
@@ -109,8 +106,6 @@ func ancestors() []int32 {
 	return out
 }
 
-// ---------- install / uninstall ----------
-
 var hookEvents = []string{
 	"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
 	"PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd",
@@ -126,7 +121,7 @@ func settingsPath() string {
 }
 
 func origStatusPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".local", "share", "go-island", "claude-statusline.orig.json")
+	return paths.DataFile("claude-statusline.orig.json")
 }
 
 func loadSettings() (map[string]any, []byte, error) {
@@ -146,7 +141,7 @@ func loadSettings() (map[string]any, []byte, error) {
 
 func saveSettings(s map[string]any, previous []byte) error {
 	if previous != nil {
-		backup := settingsPath() + ".bak-goisland-" + time.Now().Format("20060102-150405")
+		backup := settingsPath() + ".bak-dynamic-island-" + time.Now().Format("20060102-150405")
 		if err := os.WriteFile(backup, previous, 0o600); err != nil {
 			return err
 		}
@@ -168,10 +163,26 @@ func saveSettings(s map[string]any, previous []byte) error {
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+func selfPath() (string, error) {
+	return os.Executable()
+}
+
+func isOurCommand(cmd, marker string) bool {
+	i := strings.Index(cmd, marker)
+	if i <= 0 {
+		return false
+	}
+	bin := strings.Trim(strings.TrimSpace(cmd[:i]), "'\"")
+	return strings.Contains(filepath.Base(bin), "island")
+}
+
 func claudeInstall() error {
-	self, err := os.Executable()
+	self, err := selfPath()
 	if err != nil {
 		return err
+	}
+	if err := paths.Migrate(); err != nil {
+		fmt.Fprintln(os.Stderr, "island: migrating data:", err)
 	}
 	s, prev, err := loadSettings()
 	if err != nil {
@@ -193,8 +204,10 @@ func claudeInstall() error {
 	}
 	s["hooks"] = hooks
 
-	// Wrap the existing status line so it keeps working unchanged.
-	if sl, _ := s["statusLine"].(map[string]any); sl == nil || !strings.Contains(fmt.Sprint(sl["command"]), statusMarker) {
+	sl, _ := s["statusLine"].(map[string]any)
+	if c, _ := sl["command"].(string); sl != nil && isOurCommand(c, statusMarker) {
+		sl["command"] = self + c[strings.Index(c, statusMarker):]
+	} else {
 		cmd := self + statusMarker
 		if sl != nil {
 			orig, _ := json.Marshal(sl)
@@ -221,6 +234,9 @@ func claudeInstall() error {
 }
 
 func claudeUninstall() error {
+	if err := paths.Migrate(); err != nil {
+		fmt.Fprintln(os.Stderr, "island: migrating data:", err)
+	}
 	s, prev, err := loadSettings()
 	if err != nil || prev == nil {
 		return err
@@ -231,7 +247,7 @@ func claudeUninstall() error {
 			delete(s, "hooks")
 		}
 	}
-	if sl, _ := s["statusLine"].(map[string]any); sl != nil && strings.Contains(fmt.Sprint(sl["command"]), statusMarker) {
+	if sl, _ := s["statusLine"].(map[string]any); sl != nil && isOurCommand(fmt.Sprint(sl["command"]), statusMarker) {
 		var orig map[string]any
 		if b, err := os.ReadFile(origStatusPath()); err == nil && json.Unmarshal(b, &orig) == nil {
 			s["statusLine"] = orig
@@ -247,7 +263,6 @@ func claudeUninstall() error {
 	return nil
 }
 
-// removeOurHooks drops island hook handlers, leaving everything else intact.
 func removeOurHooks(hooks map[string]any) {
 	for ev, v := range hooks {
 		groups, _ := v.([]any)
@@ -258,7 +273,7 @@ func removeOurHooks(hooks map[string]any) {
 			var keptH []any
 			for _, h := range hs {
 				hm, _ := h.(map[string]any)
-				if c, _ := hm["command"].(string); strings.Contains(c, hookMarker) && strings.Contains(c, "island") {
+				if c, _ := hm["command"].(string); isOurCommand(c, hookMarker) {
 					continue
 				}
 				keptH = append(keptH, h)

@@ -1,15 +1,3 @@
-// Package agents tracks coding-agent sessions (Claude Code) from their hook
-// events and status-line feed, and mirrors them into the island:
-//
-//	working   ambient chip: "Claude · project", current tool, elapsed
-//	approval  pops up (warn) until the next event
-//	finished  short popup with cost/context when known
-//	error     popup with the API error (StopFailure)
-//
-// Sources are documented interfaces only: hooks
-// (https://code.claude.com/docs/en/hooks) and the status-line JSON
-// (https://code.claude.com/docs/en/statusline). Transcripts are not parsed:
-// their format is internal and changes between versions.
 package agents
 
 import (
@@ -22,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"go-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/island"
 )
 
 const agentName = "Claude"
@@ -33,9 +21,9 @@ type Session struct {
 	Project    string  `json:"project"`
 	Cwd        string  `json:"cwd"`
 	Title      string  `json:"title,omitempty"`
-	State      string  `json:"state"` // ready | working | approval | done | error
+	State      string  `json:"state"`
 	Detail     string  `json:"detail,omitempty"`
-	TurnStart  int64   `json:"turnStart,omitempty"` // unix ms
+	TurnStart  int64   `json:"turnStart,omitempty"`
 	UpdatedAt  int64   `json:"updatedAt"`
 	CostUSD    float64 `json:"costUsd,omitempty"`
 	ContextPct float64 `json:"contextPct,omitempty"`
@@ -65,16 +53,14 @@ type hookEvent struct {
 	ErrorDetails     string         `json:"error_details"`
 	LastAssistant    string         `json:"last_assistant_message"`
 	SessionTitle     string         `json:"session_title"`
-	AgentID          string         `json:"agent_id"` // set inside subagents
+	AgentID          string         `json:"agent_id"`
 }
 
 const (
-	reportAfter = 5 * time.Second  // only announce turns that took a while
-	staleAfter  = 15 * time.Minute // a "working" session with no events is presumed dead
+	reportAfter = 5 * time.Second
+	staleAfter  = 15 * time.Minute
 )
 
-// HookEvent ingests one Claude Code hook payload. focus is the hook
-// process's ancestor pids (agent → shell → terminal/IDE).
 func (t *Tracker) HookEvent(raw []byte, focus []int) error {
 	var ev hookEvent
 	if err := json.Unmarshal(raw, &ev); err != nil {
@@ -103,7 +89,7 @@ func (t *Tracker) HookEvent(raw []byte, focus []int) error {
 		s.State, s.Detail, s.TurnStart = "working", "Thinking…", now.UnixMilli()
 	case "PreToolUse", "PostToolUse", "PostToolUseFailure":
 		if ev.AgentID != "" && ev.Event != "PreToolUse" {
-			break // subagent chatter: keep the parent's detail
+			break
 		}
 		if s.State != "working" {
 			s.State = "working"
@@ -124,7 +110,7 @@ func (t *Tracker) HookEvent(raw []byte, focus []int) error {
 				s.Detail = ev.Message
 			}
 		default:
-			return nil // idle prompts etc.: the Stop popup already said it's done
+			return nil
 		}
 	case "Stop":
 		if ev.AgentID != "" {
@@ -174,7 +160,6 @@ type statusLine struct {
 	} `json:"context_window"`
 }
 
-// Status ingests the status-line JSON (cost, context usage, model).
 func (t *Tracker) Status(raw []byte) error {
 	var st statusLine
 	if err := json.Unmarshal(raw, &st); err != nil {
@@ -223,8 +208,6 @@ func (t *Tracker) session(id, cwd string) *Session {
 	return s
 }
 
-// publish mirrors a session into the island. Only an approval request
-// takes the pill; "working" is shown in the Agents tab only.
 func (t *Tracker) publish(s *Session) {
 	v := island.View{
 		Kind:      "agent",
@@ -293,7 +276,7 @@ func toolSummary(tool string, in map[string]any) string {
 		}
 		return "Running a subagent"
 	}
-	if i := strings.LastIndex(tool, "__"); i >= 0 { // mcp__server__tool
+	if i := strings.LastIndex(tool, "__"); i >= 0 {
 		tool = tool[i+2:]
 	}
 	return strings.ReplaceAll(tool, "_", " ")

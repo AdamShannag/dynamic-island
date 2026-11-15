@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+
+UNIT=dynamic-island.service
+
+if [ "$1" = "configure" ]; then
+    systemctl --global enable "$UNIT" >/dev/null 2>&1 || true
+
+    for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+        user=$(id -nu "$uid" 2>/dev/null) || continue
+        systemctl --user --machine="$user@" daemon-reload >/dev/null 2>&1 || true
+        systemctl --user --machine="$user@" try-restart "$UNIT" >/dev/null 2>&1 || true
+    done
+
+    if [ -z "$2" ]; then
+        cat <<'MSG'
+
+  Dynamic Island is installed.
+  Finish the setup as your normal user (not root):
+
+      island setup
+
+  Then log out and back in if the island doesn't appear right away.
+
+MSG
+    fi
+fi
+
+exit 0

@@ -1,6 +1,3 @@
-// Package notes stores multiple notes (Apple Notes style) in
-// ~/.local/share/go-island/notes.json (0600). On first use it imports the
-// old single scratchpad (notes.md) as the first note.
 package notes
 
 import (
@@ -12,12 +9,14 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/AdamShannag/dynamic-island/internal/paths"
 )
 
 type Note struct {
 	ID      uint32 `json:"id"`
 	Text    string `json:"text"`
-	Created int64  `json:"created"` // unix ms
+	Created int64  `json:"created"`
 	Updated int64  `json:"updated"`
 	Pinned  bool   `json:"pinned"`
 }
@@ -32,11 +31,7 @@ type Store struct {
 }
 
 func Open() (*Store, error) {
-	dir := os.Getenv("XDG_DATA_HOME")
-	if dir == "" {
-		dir = filepath.Join(os.Getenv("HOME"), ".local", "share")
-	}
-	s := &Store{dir: filepath.Join(dir, "go-island"), next: 1}
+	s := &Store{dir: paths.Data(), next: 1}
 	b, err := os.ReadFile(s.path())
 	switch {
 	case err == nil:
@@ -56,7 +51,6 @@ func Open() (*Store, error) {
 
 func (s *Store) path() string { return filepath.Join(s.dir, "notes.json") }
 
-// importLegacy turns the old single scratchpad into the first note.
 func (s *Store) importLegacy() {
 	old := filepath.Join(s.dir, "notes.md")
 	b, err := os.ReadFile(old)
@@ -73,7 +67,6 @@ func (s *Store) importLegacy() {
 	}
 }
 
-// List returns pinned notes first, then the most recently edited.
 func (s *Store) List() []Note {
 	s.mu.Lock()
 	defer s.mu.Unlock()

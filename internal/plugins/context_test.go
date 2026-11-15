@@ -15,7 +15,7 @@ func TestClassify(t *testing.T) {
 		{"go mod tidy", "go mod tidy", kindTask, true},
 		{"/usr/local/go/bin/go test -race ./...", "go test ./...", kindTask, true},
 		{"go run ./cmd/api", "go run ./cmd/api", kindRun, true},
-		{"go list -json ./...", "", 0, false}, // gopls noise
+		{"go list -json ./...", "", 0, false},
 		{"go version", "", 0, false},
 		{"java -Dmaven.home=/opt/mvn -classpath x org.codehaus.plexus.classworlds.launcher.Launcher clean install -DskipTests", "mvn clean install", kindTask, true},
 		{"java -cp x org.codehaus.classworlds.Launcher -Didea.version=2026 spring-boot:run", "mvn spring-boot:run", kindRun, true},

@@ -1,0 +1,980 @@
+.island {
+  background-color: #000;
+  color: #f5f5f7;
+  border-radius: 0 0 14px 14px;
+  padding: 0 14px 0 6px;
+}
+.island.idle { padding: 0 22px; }
+.island.notify {
+  border-radius: 0 0 26px 26px;
+  padding: 10px 20px 12px 14px;
+}
+.island.dashboard {
+  border-radius: 0 0 34px 34px;
+  padding: 8px 14px 14px;
+}
+
+.island-content { spacing: 10px; }
+.island.notify .island-content { spacing: 12px; }
+
+.island-art { width: 22px; height: 22px; border-radius: 6px; background-size: cover; }
+.island.notify .island-art { width: 44px; height: 44px; border-radius: 12px; }
+
+.island-icon { icon-size: 16px; padding-left: 6px; }
+.island.notify .island-icon { icon-size: 26px; padding: 0 2px 0 6px; }
+
+.island-title { font-weight: 600; font-size: 9.5pt; }
+.island.notify .island-title { font-size: 10.5pt; }
+.island-subtitle { font-size: 9pt; color: rgba(245, 245, 247, 0.55); }
+
+.island-trailing {
+  font-size: 9pt;
+  font-weight: 500;
+  font-feature-settings: "tnum";
+  color: rgba(245, 245, 247, 0.55);
+}
+.island.idle .island-trailing { font-size: 9.5pt; font-weight: 600; color: #f5f5f7; }
+
+.island.accent-ok    .island-icon { color: #30d158; }
+.island.accent-warn  .island-icon { color: #ffd60a; }
+.island.accent-error .island-icon { color: #ff453a; }
+
+.island-eq { spacing: 2px; padding: 0 2px; }
+.island-eq.pill { height: 12px; }
+.island-eq.card { height: 18px; spacing: 3px; }
+.island-eq-bar { width: 3px; border-radius: 2px; background-color: #30d158; }
+.island-eq.card .island-eq-bar { width: 4px; background-color: #ff6482; }
+
+.island-dash { spacing: 10px; }
+.island-header { padding: 0 4px; }
+
+.island-tabs { padding: 0; }
+.island-tab-indicator {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+.island-tabs-row { spacing: 6px; }
+.island-tab {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: rgba(245, 245, 247, 0.55);
+  transition-duration: 150ms;
+}
+.island-tab:hover   { color: rgba(245, 245, 247, 0.9); }
+.island-tab:checked { color: #fff; }
+.island-tab:focus   { box-shadow: none; }
+.island-tab-icon    { icon-size: 17px; }
+.island-tab-name {
+  padding-left: 12px;
+  font-size: 9.5pt;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.55);
+}
+.island-dash-clock {
+  font-size: 9.5pt;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  color: rgba(245, 245, 247, 0.55);
+}
+
+.island-page { spacing: 10px; }
+.island-home { spacing: 10px; }
+
+.island-card {
+  background-color: #0d0d0f;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 22px;
+  padding: 16px 18px;
+}
+.island-list-card { padding: 6px; }
+.island-sites-card { padding: 12px 14px; spacing: 8px; }
+
+.island-media-top { spacing: 14px; }
+.island-media-art {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+.island-media-art-img { border-radius: 14px; background-size: cover; }
+.island-media-art-icon { icon-size: 26px; color: rgba(245, 245, 247, 0.35); }
+.island-media-title { font-size: 12.5pt; font-weight: 700; }
+.island-media-sub { font-size: 10pt; color: rgba(245, 245, 247, 0.55); padding-top: 2px; }
+
+.island-progress { spacing: 12px; padding-top: 16px; }
+.island-time {
+  min-width: 40px;
+  font-size: 8.5pt;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  color: rgba(245, 245, 247, 0.5);
+}
+.island-time-right { text-align: right; }
+.island-track { height: 4px; border-radius: 2px; background-color: rgba(255, 255, 255, 0.12); }
+.island-fill  { border-radius: 2px; background-color: #e5e5ea; }
+
+.island-controls { spacing: 34px; padding-top: 10px; }
+.island-btn {
+  padding: 6px;
+  border-radius: 999px;
+  color: #f5f5f7;
+  transition-duration: 120ms;
+}
+.island-btn StIcon { icon-size: 22px; }
+.island-btn-big StIcon { icon-size: 28px; }
+.island-btn:hover  { background-color: rgba(255, 255, 255, 0.10); }
+.island-btn:active { background-color: rgba(255, 255, 255, 0.18); }
+.island-btn:focus  { box-shadow: none; }
+
+.island-today-card { width: 250px; spacing: 6px; }
+.island-today-date {
+  font-size: 8.5pt;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #ff6961;
+}
+.island-today-title { font-size: 12.5pt; font-weight: 700; padding-bottom: 6px; }
+
+.island-action {
+  background-color: rgba(255, 255, 255, 0.035);
+  border-radius: 14px;
+  padding: 9px 10px;
+  spacing: 10px;
+}
+.island-action-bar { width: 4px; border-radius: 2px; }
+.island-action-bar.green { background-color: #30d158; }
+.island-action-bar.blue  { background-color: #0a84ff; }
+.island-action-title { font-size: 9.5pt; font-weight: 600; }
+.island-action-sub {
+  font-size: 8.5pt;
+  font-feature-settings: "tnum";
+  color: rgba(245, 245, 247, 0.5);
+}
+.island-action-btn {
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 9pt;
+  font-weight: 700;
+  color: #fff;
+  transition-duration: 120ms;
+}
+.island-action-btn.green { background-color: #30d158; color: #00230b; }
+.island-action-btn.green:hover { background-color: #4ade72; }
+.island-action-btn.blue  { background-color: rgba(10, 132, 255, 0.22); color: #6cb6ff; }
+.island-action-btn.blue:hover { background-color: rgba(10, 132, 255, 0.32); }
+.island-action-btn:focus { box-shadow: none; }
+
+.island-entry {
+  background-color: #0d0d0f;
+  color: #f5f5f7;
+  caret-color: #0a84ff;
+  selection-background-color: rgba(10, 132, 255, 0.5);
+  selected-color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+  padding: 9px 14px;
+  font-size: 10pt;
+  box-shadow: none;
+}
+.island-entry:hover { background-color: #121215; }
+.island-entry:focus {
+  border-color: rgba(255, 255, 255, 0.14);
+  background-color: #121215;
+  box-shadow: none;
+}
+.island-entry:error { border-color: rgba(255, 69, 58, 0.8); }
+.island-entry StLabel.hint-text { color: rgba(245, 245, 247, 0.36); }
+.island-entry-icon { icon-size: 15px; padding-right: 8px; color: rgba(245, 245, 247, 0.36); }
+.island-search-entry { padding: 12px 16px; font-size: 11pt; border-radius: 16px; }
+.island-toolbar { spacing: 8px; }
+
+.island-pill-btn {
+  background-color: #141417;
+  color: #f5f5f7;
+  border-radius: 12px;
+  padding: 7px 14px;
+  font-size: 9pt;
+  font-weight: 600;
+  transition-duration: 120ms;
+}
+.island-pill-btn:hover  { background-color: #1e1e22; }
+.island-pill-btn:active { background-color: #28282d; }
+.island-pill-btn:focus  { box-shadow: none; }
+.island-pill-btn.primary       { background-color: #0a84ff; }
+.island-pill-btn.primary:hover { background-color: #2a95ff; }
+.island-pill-btn.danger        { color: #ff6961; background-color: rgba(255, 69, 58, 0.14); padding: 5px 12px; border-radius: 999px; }
+.island-pill-btn.danger:hover  { background-color: rgba(255, 69, 58, 0.24); }
+.island-pill-btn.danger:armed  { color: #fff; background-color: #ff453a; }
+
+.island-row-btn {
+  border-radius: 8px;
+  padding: 6px;
+  color: rgba(245, 245, 247, 0.36);
+  transition-duration: 120ms;
+}
+.island-row-btn StIcon { icon-size: 14px; }
+.island-row-btn:hover  { color: #f5f5f7; background-color: rgba(255, 255, 255, 0.10); }
+.island-row-btn:focus  { box-shadow: none; }
+.island-row-btn.pinned { color: #ffd60a; }
+
+.island-list { spacing: 1px; padding-right: 4px; }
+.island-row {
+  border-radius: 14px;
+  padding: 8px 12px;
+  spacing: 12px;
+  transition-duration: 120ms;
+}
+.island-row:hover { background-color: rgba(255, 255, 255, 0.04); }
+.island-clip-row:focus  { background-color: rgba(255, 255, 255, 0.07); }
+.island-clip-row:active { background-color: rgba(255, 255, 255, 0.11); }
+
+.island-row-title { font-size: 10pt; font-weight: 600; }
+.island-row-sub {
+  font-size: 8.5pt;
+  font-family: monospace;
+  color: rgba(245, 245, 247, 0.36);
+  padding-top: 2px;
+}
+.island-row.muted .island-row-title { color: rgba(245, 245, 247, 0.36); font-weight: 500; }
+.island-row.muted .island-port { color: rgba(100, 210, 255, 0.4); }
+
+.island-group {
+  font-size: 7.5pt;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: rgba(245, 245, 247, 0.36);
+  padding: 10px 12px 4px;
+}
+.island-section-head .island-group { padding: 0; }
+
+.island-dot { width: 8px; height: 8px; border-radius: 4px; }
+.island-dot.ok  { background-color: #30d158; }
+.island-dot.bad { background-color: #ff453a; }
+.island-dot.green  { background-color: #30d158; }
+.island-dot.red    { background-color: #ff453a; }
+.island-dot.yellow { background-color: #ffd60a; }
+.island-dot.blue   { background-color: #0a84ff; }
+.island-dot.grey   { background-color: rgba(245, 245, 247, 0.25); }
+
+.island-agent-row { spacing: 12px; }
+.island-agent-head { spacing: 8px; }
+.island-agent-state {
+  font-size: 7.5pt;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.island-agent-state.blue   { color: #6cb6ff; background-color: rgba(10, 132, 255, 0.16); }
+.island-agent-state.yellow { color: #ffd60a; background-color: rgba(255, 214, 10, 0.14); }
+.island-agent-state.green  { color: #30d158; background-color: rgba(48, 209, 88, 0.14); }
+.island-agent-state.red    { color: #ff6961; background-color: rgba(255, 69, 58, 0.16); }
+.island-agent-state.grey   { color: rgba(245, 245, 247, 0.5); background-color: rgba(255, 255, 255, 0.06); }
+.island-agent-usage { font-size: 9pt; font-weight: 600; font-feature-settings: "tnum"; color: rgba(245, 245, 247, 0.75); }
+.island-agent-when  { font-size: 8pt; color: rgba(245, 245, 247, 0.36); padding-top: 2px; }
+
+.island-port {
+  min-width: 62px;
+  font-family: monospace;
+  font-size: 10.5pt;
+  font-weight: 700;
+  color: #64d2ff;
+}
+
+.island-clip-text { font-size: 9.5pt; }
+
+.island-empty {
+  font-size: 9.5pt;
+  color: rgba(245, 245, 247, 0.36);
+  padding: 32px 0;
+}
+.island-hint { font-size: 8pt; color: rgba(245, 245, 247, 0.32); }
+
+.island-scroll StScrollBar { padding: 0 0 0 6px; width: 6px; }
+.island-scroll StScrollBar StBin#trough { background-color: transparent; }
+.island-scroll StScrollBar StButton#vhandle {
+  background-color: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  min-width: 4px;
+}
+
+.island-add-row { spacing: 8px; }
+.island-add-name { width: 170px; }
+
+.island-site-grid { spacing: 4px; }
+.island-site-row { spacing: 2px; }
+.island-site {
+  border-radius: 16px;
+  padding: 8px 2px 6px;
+  transition-duration: 120ms;
+}
+.island-site:hover  { background-color: rgba(255, 255, 255, 0.06); }
+.island-site:active { background-color: rgba(255, 255, 255, 0.12); }
+.island-site:focus  { box-shadow: none; }
+.island-site-box { width: 78px; spacing: 7px; }
+.island-site-icon {
+  width: 50px;
+  height: 50px;
+  border-radius: 14px;
+  background-color: #f5f5f7;
+}
+.island-site-icon.add {
+  background-color: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+}
+.island-site-img { width: 34px; height: 34px; background-size: contain; }
+.island-site-letter { font-size: 18pt; font-weight: 700; color: #fff; }
+.island-site-add-icon { icon-size: 20px; color: rgba(245, 245, 247, 0.55); }
+.island-site-name { font-size: 8pt; font-weight: 500; color: rgba(245, 245, 247, 0.7); }
+
+.island-face { spacing: 3px; }
+.island-eyes { spacing: 5px; }
+.island-eye { width: 12px; height: 14px; }
+.island-eye-dot {
+  width: 6px;
+  height: 10px;
+  border-radius: 3px;
+  background-color: #f5f5f7;
+}
+.island-eye-glyph { font-size: 8.5pt; font-weight: 800; color: #f5f5f7; }
+.island-eye-glyph.love { color: #ff375f; font-size: 9pt; }
+.island-zzz { font-size: 7pt; font-weight: 700; color: rgba(245, 245, 247, 0.7); width: 8px; }
+.island-spy { icon-size: 30px; }
+
+.island-head-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 16px;
+  color: rgba(245, 245, 247, 0.55);
+  transition-duration: 120ms;
+}
+.island-head-btn StIcon { icon-size: 17px; }
+.island-head-btn:hover   { color: #f5f5f7; background-color: rgba(255, 255, 255, 0.06); }
+.island-head-btn:checked { background-color: rgba(255, 255, 255, 0.12); }
+.island-head-btn:focus   { box-shadow: none; }
+.island-head-spy { icon-size: 20px; }
+.island-present-badge {
+  font-size: 8pt;
+  font-weight: 700;
+  color: #ffd60a;
+  background-color: rgba(255, 214, 10, 0.12);
+  border-radius: 999px;
+  padding: 3px 10px;
+  margin-right: 6px;
+}
+.island-header { spacing: 4px; }
+.island-dash-clock { padding-left: 6px; }
+
+.island-chips { spacing: 4px; }
+.island-chips-label { font-size: 8pt; font-weight: 700; color: rgba(245, 245, 247, 0.36); padding-right: 4px; }
+.island-chip {
+  font-size: 8pt;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.75);
+  background-color: #141417;
+  border-radius: 999px;
+  padding: 4px 11px;
+  transition-duration: 120ms;
+}
+.island-chip:hover { background-color: #1e1e22; color: #f5f5f7; }
+.island-chip:focus { box-shadow: none; }
+.island-chip.good { color: #00230b; background-color: #30d158; }
+.island-chip.bad  { color: #fff; background-color: #ff453a; }
+
+.island-icon-btn { padding: 0; width: 48px; border-radius: 16px; }
+.island-icon-btn StIcon { icon-size: 16px; }
+
+.island-calc {
+  background-color: rgba(10, 132, 255, 0.10);
+  border: 1px solid rgba(10, 132, 255, 0.25);
+  border-radius: 14px;
+  padding: 8px 16px;
+}
+.island-calc-result { font-size: 13pt; font-weight: 700; font-feature-settings: "tnum"; color: #6cb6ff; }
+
+.island-notes-card { padding: 6px; }
+.island-notes {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: #f5f5f7;
+  caret-color: #ffd60a;
+  selection-background-color: rgba(255, 214, 10, 0.35);
+  font-size: 10.5pt;
+  padding: 10px 12px;
+}
+.island-notes:focus { box-shadow: none; border: none; }
+.island-notes StLabel.hint-text { color: rgba(245, 245, 247, 0.32); }
+.island-notes-status { padding: 0 6px; }
+
+.island-qr-card { spacing: 24px; padding: 22px; }
+.island-qr-img {
+  width: 240px;
+  height: 240px;
+  border-radius: 18px;
+  background-color: #fff;
+  background-size: contain;
+}
+.island-qr-info { spacing: 12px; }
+.island-qr-text { font-size: 10pt; font-family: monospace; color: rgba(245, 245, 247, 0.75); }
+
+.island.osd { padding: 0 16px 0 10px; }
+.island.osd .island-content { spacing: 12px; }
+.island.osd .island-icon { icon-size: 16px; padding-left: 2px; }
+.island-osd-track { height: 6px; border-radius: 3px; background-color: rgba(255, 255, 255, 0.16); }
+.island-osd-fill  { border-radius: 3px; background-color: #f5f5f7; }
+.island.osd .island-trailing { min-width: 34px; text-align: right; color: #f5f5f7; font-weight: 600; }
+
+.island-port-btn {
+  border-radius: 8px;
+  transition-duration: 120ms;
+}
+.island-port-btn:focus { box-shadow: none; }
+
+.island-port-btn.island-port { padding: 2px 6px; }
+.island-port-btn.island-port:hover { background-color: rgba(100, 210, 255, 0.12); }
+.island-port-chips { spacing: 4px; }
+.island-port-chip {
+  font-family: monospace;
+  font-size: 8.5pt;
+  font-weight: 700;
+  color: #64d2ff;
+  background-color: rgba(100, 210, 255, 0.10);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.island-port-chip:hover { background-color: rgba(100, 210, 255, 0.22); }
+
+.island-usage { min-width: 74px; }
+.island-usage-cpu { font-size: 8.5pt; font-weight: 700; font-feature-settings: "tnum"; color: rgba(245, 245, 247, 0.8); }
+.island-usage-mem { font-size: 8pt; font-feature-settings: "tnum"; color: rgba(245, 245, 247, 0.4); padding-top: 1px; }
+.island-usage-cpu.hot, .island-usage-mem.hot { color: #ff9f0a; }
+
+.island-logs-title { font-size: 10pt; font-weight: 700; padding-left: 4px; }
+.island-logs-card { padding: 6px; }
+.island-logs {
+  font-family: monospace;
+  font-size: 8.5pt;
+  color: rgba(245, 245, 247, 0.82);
+  padding: 8px 10px;
+}
+
+.island-xf-page { spacing: 10px; }
+.island-xf-side { width: 196px; padding: 8px 6px; spacing: 1px; }
+.island-xf-group { padding: 8px 10px 4px; }
+.island-xf-tool {
+  border-radius: 9px;
+  padding: 4px 8px;
+  transition-duration: 120ms;
+}
+.island-xf-tool:hover   { background-color: rgba(255, 255, 255, 0.05); }
+.island-xf-tool:checked { background-color: rgba(255, 255, 255, 0.11); }
+.island-xf-tool:focus   { box-shadow: none; }
+.island-xf-tool-box { spacing: 10px; }
+.island-xf-glyph {
+  width: 30px;
+  height: 22px;
+  border-radius: 6px;
+}
+.island-xf-glyph-text { font-size: 7.5pt; font-weight: 800; color: #ffffff; }
+.island-xf-glyph.g-format { background-color: #0a84ff; }
+.island-xf-glyph.g-encode { background-color: #bf5af2; }
+.island-xf-glyph.g-case   { background-color: #ff9f0a; }
+.island-xf-tool-name { font-size: 9.5pt; font-weight: 600; }
+
+.island-xf-main { spacing: 6px; }
+.island-xf-head { padding: 2px 4px 4px; spacing: 12px; }
+.island-xf-title { font-size: 13pt; font-weight: 700; }
+.island-xf-desc  { font-size: 9pt; color: rgba(245, 245, 247, 0.5); padding-top: 1px; }
+
+.island-xf-pane { padding: 8px 6px 6px; spacing: 2px; }
+.island-xf-pane-bar { padding: 0 8px 2px; spacing: 6px; }
+.island-xf-pane-title { padding: 0; letter-spacing: 0.5px; }
+.island-xf-count { font-size: 8pt; font-feature-settings: "tnum"; color: rgba(245, 245, 247, 0.35); padding-left: 6px; }
+.island-xf-mini {
+  font-size: 8.5pt;
+  font-weight: 600;
+  padding: 3px 11px;
+  border-radius: 999px;
+  color: rgba(245, 245, 247, 0.75);
+  background-color: rgba(255, 255, 255, 0.07);
+  transition-duration: 120ms;
+}
+.island-xf-mini:hover  { background-color: rgba(255, 255, 255, 0.13); color: #fff; }
+.island-xf-mini:focus  { box-shadow: none; }
+.island-xf-mini.accent { background-color: #0a84ff; color: #fff; }
+
+.island-xf-text {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: #f5f5f7;
+  caret-color: #0a84ff;
+  font-family: monospace;
+  font-size: 9.5pt;
+  padding: 4px 10px 6px;
+}
+.island-xf-text:focus { border: none; box-shadow: none; }
+.island-xf-text StLabel.hint-text { color: rgba(245, 245, 247, 0.3); }
+.island.surface-graphite .island-xf-text { background-color: transparent; }
+.island-xf-out.placeholder { color: rgba(245, 245, 247, 0.3); }
+.island-xf-out.error { color: #ff6961; }
+
+.island-xf-swap-row { padding: 0; }
+.island-xf-swap {
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  color: rgba(245, 245, 247, 0.7);
+  background-color: #141417;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition-duration: 120ms;
+}
+.island-xf-swap StIcon { icon-size: 14px; }
+.island-xf-swap:hover { color: #fff; background-color: #1e1e22; }
+.island-xf-swap:focus { box-shadow: none; }
+
+.island-activity-row { spacing: 12px; }
+.island-activity-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+.island-activity-badge.task    { background-color: rgba(10, 132, 255, 0.16); color: #6cb6ff; }
+.island-activity-badge.service { background-color: rgba(48, 209, 88, 0.14); color: #30d158; }
+.island-activity-icon { icon-size: 15px; }
+.island-mono { font-family: monospace; }
+.island-activity-time {
+  font-size: 8.5pt;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  color: rgba(245, 245, 247, 0.4);
+}
+.island-activity-time.live { color: #6cb6ff; }
+
+.island-tiles { spacing: 10px; }
+.island-tile { padding: 12px 14px 10px; spacing: 2px; }
+.island-tile-title { padding: 0 0 2px; }
+.island-tile-value {
+  font-size: 15pt;
+  font-weight: 700;
+  font-feature-settings: "tnum";
+}
+.island-tile-sub {
+  font-size: 8pt;
+  font-feature-settings: "tnum";
+  color: rgba(245, 245, 247, 0.45);
+}
+.island-spark { height: 34px; margin-top: 6px; }
+.island-tile-track {
+  height: 6px;
+  margin-top: 20px;
+  margin-bottom: 14px;
+  border-radius: 3px;
+  background-color: rgba(255, 255, 255, 0.10);
+}
+.island-tile-fill { border-radius: 3px; }
+
+.island-activity-lower { spacing: 10px; }
+.island-activity-lower .island-list-card { padding: 10px 6px 6px; }
+.island-activity-lower .island-group { padding: 0 10px 6px; }
+.island-proc-row { padding: 5px 10px; spacing: 12px; }
+.island-proc-name { font-size: 9.5pt; font-weight: 600; }
+.island-proc-cpu {
+  min-width: 46px;
+  text-align: right;
+  font-size: 9pt;
+  font-weight: 700;
+  font-feature-settings: "tnum";
+  color: #6cb6ff;
+}
+.island-proc-cpu.hot { color: #ff9f0a; }
+.island-proc-mem {
+  min-width: 56px;
+  text-align: right;
+  font-size: 8.5pt;
+  font-feature-settings: "tnum";
+  color: rgba(245, 245, 247, 0.4);
+}
+.island-empty-small { padding: 18px 0; font-size: 9pt; }
+
+.island-empty-state { spacing: 8px; padding: 24px; }
+.island-empty-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: 26px;
+  background-color: rgba(255, 255, 255, 0.06);
+  margin-bottom: 6px;
+}
+.island-empty-icon  { icon-size: 22px; color: rgba(245, 245, 247, 0.55); }
+.island-empty-title { font-size: 11pt; font-weight: 700; }
+.island-empty-hint  {
+  font-size: 9pt;
+  font-family: monospace;
+  color: rgba(245, 245, 247, 0.45);
+  text-align: center;
+}
+
+.island.theme-blue .island-eq-bar,
+.island.theme-blue .island-eq.card .island-eq-bar { background-color: #0a84ff; }
+.island.theme-blue .island-fill,
+.island.theme-blue .island-osd-fill { background-color: #2e96ff; }
+.island.theme-blue .island-tab-indicator { background-color: rgba(10, 132, 255, 0.22); }
+.island.theme-blue .island-pill-btn.primary { background-color: #0a84ff; }
+.island.theme-blue .island-entry { caret-color: #0a84ff; selection-background-color: rgba(10, 132, 255, 0.45); }
+.island.theme-blue .island-calc { background-color: rgba(10, 132, 255, 0.1); border-color: rgba(10, 132, 255, 0.28); }
+.island.theme-blue .island-calc-result,
+.island.theme-blue .island-port,
+.island.theme-blue .island-activity-time.live,
+.island.theme-blue .island-proc-cpu { color: #53a8ff; }
+.island.theme-blue .island-port-chip { color: #53a8ff; background-color: rgba(10, 132, 255, 0.13); }
+.island.theme-blue .island-port-chip:hover { background-color: rgba(10, 132, 255, 0.24); }
+.island.theme-blue .island-seg-btn:checked { background-color: rgba(10, 132, 255, 0.28); }
+.island.theme-purple .island-eq-bar,
+.island.theme-purple .island-eq.card .island-eq-bar { background-color: #bf5af2; }
+.island.theme-purple .island-fill,
+.island.theme-purple .island-osd-fill { background-color: #c872f3; }
+.island.theme-purple .island-tab-indicator { background-color: rgba(191, 90, 242, 0.22); }
+.island.theme-purple .island-pill-btn.primary { background-color: #bf5af2; }
+.island.theme-purple .island-entry { caret-color: #bf5af2; selection-background-color: rgba(191, 90, 242, 0.45); }
+.island.theme-purple .island-calc { background-color: rgba(191, 90, 242, 0.1); border-color: rgba(191, 90, 242, 0.28); }
+.island.theme-purple .island-calc-result,
+.island.theme-purple .island-port,
+.island.theme-purple .island-activity-time.live,
+.island.theme-purple .island-proc-cpu { color: #d28bf5; }
+.island.theme-purple .island-port-chip { color: #d28bf5; background-color: rgba(191, 90, 242, 0.13); }
+.island.theme-purple .island-port-chip:hover { background-color: rgba(191, 90, 242, 0.24); }
+.island.theme-purple .island-seg-btn:checked { background-color: rgba(191, 90, 242, 0.28); }
+.island.theme-pink .island-eq-bar,
+.island.theme-pink .island-eq.card .island-eq-bar { background-color: #ff375f; }
+.island.theme-pink .island-fill,
+.island.theme-pink .island-osd-fill { background-color: #ff5577; }
+.island.theme-pink .island-tab-indicator { background-color: rgba(255, 55, 95, 0.22); }
+.island.theme-pink .island-pill-btn.primary { background-color: #ff375f; }
+.island.theme-pink .island-entry { caret-color: #ff375f; selection-background-color: rgba(255, 55, 95, 0.45); }
+.island.theme-pink .island-calc { background-color: rgba(255, 55, 95, 0.1); border-color: rgba(255, 55, 95, 0.28); }
+.island.theme-pink .island-calc-result,
+.island.theme-pink .island-port,
+.island.theme-pink .island-activity-time.live,
+.island.theme-pink .island-proc-cpu { color: #ff738f; }
+.island.theme-pink .island-port-chip { color: #ff738f; background-color: rgba(255, 55, 95, 0.13); }
+.island.theme-pink .island-port-chip:hover { background-color: rgba(255, 55, 95, 0.24); }
+.island.theme-pink .island-seg-btn:checked { background-color: rgba(255, 55, 95, 0.28); }
+.island.theme-orange .island-eq-bar,
+.island.theme-orange .island-eq.card .island-eq-bar { background-color: #ff9f0a; }
+.island.theme-orange .island-fill,
+.island.theme-orange .island-osd-fill { background-color: #ffad2e; }
+.island.theme-orange .island-tab-indicator { background-color: rgba(255, 159, 10, 0.22); }
+.island.theme-orange .island-pill-btn.primary { background-color: #ff9f0a; }
+.island.theme-orange .island-entry { caret-color: #ff9f0a; selection-background-color: rgba(255, 159, 10, 0.45); }
+.island.theme-orange .island-calc { background-color: rgba(255, 159, 10, 0.1); border-color: rgba(255, 159, 10, 0.28); }
+.island.theme-orange .island-calc-result,
+.island.theme-orange .island-port,
+.island.theme-orange .island-activity-time.live,
+.island.theme-orange .island-proc-cpu { color: #ffbb53; }
+.island.theme-orange .island-port-chip { color: #ffbb53; background-color: rgba(255, 159, 10, 0.13); }
+.island.theme-orange .island-port-chip:hover { background-color: rgba(255, 159, 10, 0.24); }
+.island.theme-orange .island-seg-btn:checked { background-color: rgba(255, 159, 10, 0.28); }
+.island.theme-green .island-eq-bar,
+.island.theme-green .island-eq.card .island-eq-bar { background-color: #30d158; }
+.island.theme-green .island-fill,
+.island.theme-green .island-osd-fill { background-color: #4fd771; }
+.island.theme-green .island-tab-indicator { background-color: rgba(48, 209, 88, 0.22); }
+.island.theme-green .island-pill-btn.primary { background-color: #30d158; }
+.island.theme-green .island-entry { caret-color: #30d158; selection-background-color: rgba(48, 209, 88, 0.45); }
+.island.theme-green .island-calc { background-color: rgba(48, 209, 88, 0.1); border-color: rgba(48, 209, 88, 0.28); }
+.island.theme-green .island-calc-result,
+.island.theme-green .island-port,
+.island.theme-green .island-activity-time.live,
+.island.theme-green .island-proc-cpu { color: #6ede8a; }
+.island.theme-green .island-port-chip { color: #6ede8a; background-color: rgba(48, 209, 88, 0.13); }
+.island.theme-green .island-port-chip:hover { background-color: rgba(48, 209, 88, 0.24); }
+.island.theme-green .island-seg-btn:checked { background-color: rgba(48, 209, 88, 0.28); }
+.island.theme-teal .island-eq-bar,
+.island.theme-teal .island-eq.card .island-eq-bar { background-color: #40c8e0; }
+.island.theme-teal .island-fill,
+.island.theme-teal .island-osd-fill { background-color: #5cd0e4; }
+.island.theme-teal .island-tab-indicator { background-color: rgba(64, 200, 224, 0.22); }
+.island.theme-teal .island-pill-btn.primary { background-color: #40c8e0; }
+.island.theme-teal .island-entry { caret-color: #40c8e0; selection-background-color: rgba(64, 200, 224, 0.45); }
+.island.theme-teal .island-calc { background-color: rgba(64, 200, 224, 0.1); border-color: rgba(64, 200, 224, 0.28); }
+.island.theme-teal .island-calc-result,
+.island.theme-teal .island-port,
+.island.theme-teal .island-activity-time.live,
+.island.theme-teal .island-proc-cpu { color: #79d8e9; }
+.island.theme-teal .island-port-chip { color: #79d8e9; background-color: rgba(64, 200, 224, 0.13); }
+.island.theme-teal .island-port-chip:hover { background-color: rgba(64, 200, 224, 0.24); }
+.island.theme-teal .island-seg-btn:checked { background-color: rgba(64, 200, 224, 0.28); }
+.island.theme-graphite .island-eq-bar,
+.island.theme-graphite .island-eq.card .island-eq-bar { background-color: #8e8e93; }
+.island.theme-graphite .island-fill,
+.island.theme-graphite .island-osd-fill { background-color: #9e9ea3; }
+.island.theme-graphite .island-tab-indicator { background-color: rgba(142, 142, 147, 0.22); }
+.island.theme-graphite .island-pill-btn.primary { background-color: #8e8e93; }
+.island.theme-graphite .island-entry { caret-color: #8e8e93; selection-background-color: rgba(142, 142, 147, 0.45); }
+.island.theme-graphite .island-calc { background-color: rgba(142, 142, 147, 0.1); border-color: rgba(142, 142, 147, 0.28); }
+.island.theme-graphite .island-calc-result,
+.island.theme-graphite .island-port,
+.island.theme-graphite .island-activity-time.live,
+.island.theme-graphite .island-proc-cpu { color: #afafb3; }
+.island.theme-graphite .island-port-chip { color: #afafb3; background-color: rgba(142, 142, 147, 0.13); }
+.island.theme-graphite .island-port-chip:hover { background-color: rgba(142, 142, 147, 0.24); }
+.island.theme-graphite .island-seg-btn:checked { background-color: rgba(142, 142, 147, 0.28); }
+
+.island.surface-graphite { background-color: #161618; }
+.island.surface-graphite .island-card {
+  background-color: #222225;
+  border-color: rgba(255, 255, 255, 0.06);
+}
+.island.surface-graphite .island-entry,
+.island.surface-graphite .island-pill-btn,
+.island.surface-graphite .island-chip { background-color: #2a2a2e; }
+.island.surface-graphite .island-action { background-color: rgba(255, 255, 255, 0.05); }
+
+.island-settings { spacing: 10px; padding-right: 4px; }
+.island-settings-card { padding: 12px 8px 8px; spacing: 2px; }
+.island-settings-card .island-group { padding: 0 10px 6px; }
+.island-setting-row { spacing: 12px; padding: 6px 10px; min-height: 30px; }
+.island-setting-toggle { padding: 0; }
+.island-setting-icon { icon-size: 16px; color: rgba(245, 245, 247, 0.6); }
+.island-setting-title { font-size: 10pt; font-weight: 600; }
+.island-setting-desc  { font-size: 8.5pt; color: rgba(245, 245, 247, 0.45); padding-top: 1px; }
+.island-setting-locked { font-size: 8.5pt; font-weight: 600; color: rgba(245, 245, 247, 0.4); }
+
+.island-swatches { spacing: 6px; }
+.island-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  border: 2px solid transparent;
+  transition-duration: 120ms;
+}
+.island-swatch:hover   { border-color: rgba(255, 255, 255, 0.25); }
+.island-swatch:checked { border-color: #ffffff; }
+.island-swatch:focus   { box-shadow: none; }
+.island-swatch-dot { width: 18px; height: 18px; border-radius: 9px; }
+
+.island-seg {
+  background-color: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  padding: 3px;
+  spacing: 2px;
+}
+.island-seg-btn {
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 9pt;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.6);
+  transition-duration: 120ms;
+}
+.island-seg-btn:hover   { color: #f5f5f7; }
+.island-seg-btn:checked { color: #fff; background-color: rgba(255, 255, 255, 0.16); }
+.island-seg-btn:focus   { box-shadow: none; }
+
+.island-toggle {
+  width: 42px;
+  height: 24px;
+  border-radius: 12px;
+  background-color: rgba(255, 255, 255, 0.16);
+  transition-duration: 170ms;
+}
+.island-toggle:checked { background-color: #0a84ff; }
+.island-toggle-knob {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background-color: #ffffff;
+}
+.island.theme-blue .island-toggle:checked { background-color: #0a84ff; }
+.island.theme-purple .island-toggle:checked { background-color: #bf5af2; }
+.island.theme-pink .island-toggle:checked { background-color: #ff375f; }
+.island.theme-orange .island-toggle:checked { background-color: #ff9f0a; }
+.island.theme-green .island-toggle:checked { background-color: #30d158; }
+.island.theme-teal .island-toggle:checked { background-color: #40c8e0; }
+.island.theme-graphite .island-toggle:checked { background-color: #8e8e93; }
+
+.island-notes-page { spacing: 10px; }
+.island-notes-side { width: 250px; padding: 10px 8px 8px; spacing: 8px; }
+.island-notes-top { spacing: 6px; padding: 0 2px; }
+.island-notes-search { padding: 6px 10px; font-size: 9pt; border-radius: 10px; }
+.island-note-new {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: #ffd60a;
+  transition-duration: 120ms;
+}
+.island-note-new StIcon { icon-size: 17px; }
+.island-note-new:hover { background-color: rgba(255, 214, 10, 0.14); }
+.island-note-new:focus { box-shadow: none; }
+.island-note-list { spacing: 2px; padding-right: 4px; }
+.island-note-group { padding: 8px 10px 4px; }
+.island-note-row {
+  border-radius: 10px;
+  padding: 8px 10px;
+  transition-duration: 120ms;
+}
+.island-note-row:hover   { background-color: rgba(255, 255, 255, 0.05); }
+.island-note-row:checked { background-color: rgba(255, 214, 10, 0.22); }
+.island-note-row:focus   { box-shadow: none; }
+.island-note-title { font-size: 10pt; font-weight: 700; }
+.island-note-meta  { spacing: 8px; padding-top: 2px; }
+.island-note-when  { font-size: 8.5pt; font-weight: 600; color: rgba(245, 245, 247, 0.75); }
+.island-note-preview { font-size: 8.5pt; color: rgba(245, 245, 247, 0.45); }
+
+.island-notes-main { padding: 8px 6px 6px; spacing: 2px; }
+.island-notes-bar { padding: 0 6px; spacing: 2px; }
+.island-note-date { font-size: 8.5pt; font-weight: 600; color: rgba(245, 245, 247, 0.4); }
+.island-note-editor {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  color: #f5f5f7;
+  caret-color: #ffd60a;
+  selection-background-color: rgba(255, 214, 10, 0.35);
+  font-size: 11pt;
+  padding: 6px 16px 10px;
+}
+.island-note-editor:focus { border: none; box-shadow: none; }
+.island-note-editor StLabel.hint-text { color: rgba(245, 245, 247, 0.3); }
+.island.surface-graphite .island-note-editor { background-color: transparent; }
+
+.island-inbox-bar { padding: 0 4px; }
+.island-inbox-count { font-size: 9.5pt; font-weight: 600; color: rgba(245, 245, 247, 0.55); padding-left: 6px; }
+.island-inbox-app { spacing: 8px; padding: 10px 12px 4px; }
+.island-inbox-app-icon { icon-size: 16px; }
+.island-inbox-app-name { padding: 0; }
+.island-inbox-row { spacing: 12px; }
+.island-inbox-body { font-size: 9pt; color: rgba(245, 245, 247, 0.6); padding-top: 2px; }
+.island-inbox-when { font-size: 8pt; color: rgba(245, 245, 247, 0.4); padding-top: 2px; }
+
+.island-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 4px;
+  background-color: #ff453a;
+}
+
+.island.theme-blue .island-xf-mini.accent { background-color: #0a84ff; }
+.island.theme-blue .island-xf-text { caret-color: #0a84ff; }
+.island.theme-purple .island-xf-mini.accent { background-color: #bf5af2; }
+.island.theme-purple .island-xf-text { caret-color: #bf5af2; }
+.island.theme-pink .island-xf-mini.accent { background-color: #ff375f; }
+.island.theme-pink .island-xf-text { caret-color: #ff375f; }
+.island.theme-orange .island-xf-mini.accent { background-color: #ff9f0a; }
+.island.theme-orange .island-xf-text { caret-color: #ff9f0a; }
+.island.theme-green .island-xf-mini.accent { background-color: #30d158; }
+.island.theme-green .island-xf-text { caret-color: #30d158; }
+.island.theme-teal .island-xf-mini.accent { background-color: #40c8e0; }
+.island.theme-teal .island-xf-text { caret-color: #40c8e0; }
+.island.theme-graphite .island-xf-mini.accent { background-color: #8e8e93; }
+.island.theme-graphite .island-xf-text { caret-color: #8e8e93; }
+.island-tab-dot { width: 7px; height: 7px; border-radius: 4px; background-color: #ff453a; }
+
+.island-groups { spacing: 16px; }
+.island-igroup { spacing: 6px; }
+.island-igroup-head { padding: 0 14px; }
+.island-igroup-title {
+  font-size: 7.5pt;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: rgba(245, 245, 247, 0.42);
+}
+.island-igroup-count { font-size: 8pt; color: rgba(245, 245, 247, 0.35); }
+.island-inset {
+  background-color: #0d0d0f;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+}
+.island.surface-graphite .island-inset { background-color: #222225; border-color: rgba(255, 255, 255, 0.06); }
+
+.island-irow {
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  transition-duration: 120ms;
+}
+.island-irow:last-child { border-bottom-width: 0; }
+.island-irow:first-child { border-radius: 13px 13px 0 0; }
+.island-irow:last-child  { border-radius: 0 0 13px 13px; }
+.island-irow:first-child:last-child { border-radius: 13px; }
+.island-irow:hover  { background-color: rgba(255, 255, 255, 0.035); }
+.island-irow:active { background-color: rgba(255, 255, 255, 0.07); }
+.island-irow:focus  { box-shadow: none; }
+.island-irow.muted .island-irow-title { color: rgba(245, 245, 247, 0.5); font-weight: 500; }
+.island-irow-box { spacing: 12px; }
+.island-irow-title { font-size: 10pt; font-weight: 600; }
+.island-irow-sub   { font-size: 8.5pt; color: rgba(245, 245, 247, 0.48); padding-top: 1px; }
+.island-irow-sub.island-mono { font-size: 8.5pt; }
+.island-irow-meta { spacing: 2px; }
+.island-row-actions { spacing: 2px; }
+.island-row-btn.small StIcon { icon-size: 12px; }
+
+.island-badge { width: 30px; height: 30px; border-radius: 8px; }
+.island-badge-icon { icon-size: 16px; color: #ffffff; }
+.island-badge-glyph { font-size: 8pt; font-weight: 800; color: #ffffff; }
+.island-app-icon { icon-size: 30px; }
+
+.island-pill-badge {
+  font-size: 7.5pt;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.island-pill-badge.blue   { color: #6cb6ff; background-color: rgba(10, 132, 255, 0.16); }
+.island-pill-badge.yellow { color: #ffd60a; background-color: rgba(255, 214, 10, 0.14); }
+.island-pill-badge.green  { color: #30d158; background-color: rgba(48, 209, 88, 0.14); }
+.island-pill-badge.red    { color: #ff6961; background-color: rgba(255, 69, 58, 0.16); }
+.island-pill-badge.grey   { color: rgba(245, 245, 247, 0.5); background-color: rgba(255, 255, 255, 0.06); }
+
+.island-port-pill {
+  min-width: 58px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 9.5pt;
+  font-weight: 700;
+  color: #6cb6ff;
+  background-color: rgba(10, 132, 255, 0.12);
+}
+.island-port-pill:hover { background-color: rgba(10, 132, 255, 0.22); }
+.island-irow.muted .island-port-pill { color: rgba(245, 245, 247, 0.45); background-color: rgba(255, 255, 255, 0.05); }
+
+.island-ncards { spacing: 8px; }
+.island-ncard {
+  background-color: #141416;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 10px 12px;
+  transition-duration: 120ms;
+}
+.island-ncard:hover  { background-color: #19191c; }
+.island-ncard:active { background-color: #1e1e22; }
+.island-ncard:focus  { box-shadow: none; }
+.island.surface-graphite .island-ncard { background-color: #26262a; }
+.island-ncard-box { spacing: 12px; }
+.island-ncard-head { spacing: 6px; }
+.island-ncard-app {
+  font-size: 7.5pt;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: rgba(245, 245, 247, 0.45);
+}
+.island-ncard-when { font-size: 8pt; color: rgba(245, 245, 247, 0.4); }
+.island-ncard-title { font-size: 10pt; font-weight: 700; padding-top: 2px; }
+.island-ncard-body { font-size: 9pt; color: rgba(245, 245, 247, 0.7); padding-top: 1px; }
+
+.island-proc-row { border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding: 6px 10px; }
+.island-proc-row:last-child { border-bottom-width: 0; }
+.island-proc-icon { icon-size: 18px; color: rgba(245, 245, 247, 0.5); }
+.island.theme-blue .island-port-pill { color: #53a8ff; background-color: rgba(10, 132, 255, 0.13); }
+.island.theme-purple .island-port-pill { color: #d28bf5; background-color: rgba(191, 90, 242, 0.13); }
+.island.theme-pink .island-port-pill { color: #ff738f; background-color: rgba(255, 55, 95, 0.13); }
+.island.theme-orange .island-port-pill { color: #ffbb53; background-color: rgba(255, 159, 10, 0.13); }
+.island.theme-green .island-port-pill { color: #6ede8a; background-color: rgba(48, 209, 88, 0.13); }
+.island.theme-teal .island-port-pill { color: #79d8e9; background-color: rgba(64, 200, 224, 0.13); }
+.island.theme-graphite .island-port-pill { color: #afafb3; background-color: rgba(142, 142, 147, 0.13); }
+.island-proc-iconbin { width: 20px; height: 20px; }
+.island-proc-iconbin.initial { border-radius: 6px; background-color: rgba(255, 255, 255, 0.08); }
+.island-proc-icon { icon-size: 20px; }
+.island-proc-initial { font-size: 8pt; font-weight: 800; color: rgba(245, 245, 247, 0.6); }

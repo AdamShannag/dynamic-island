@@ -10,11 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"go-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/island"
 )
 
-// Docker alerts when a container crashes (non-zero exit that wasn't a
-// `docker stop`/`kill`), turns unhealthy, or gets OOM-killed.
 type Docker struct{ seq int }
 
 func NewDocker() *Docker { return &Docker{} }
@@ -46,7 +44,7 @@ func (d *Docker) Run(ctx context.Context, h island.Host) error {
 		return err
 	}
 
-	killed := map[string]time.Time{} // container -> when it was deliberately killed/stopped
+	killed := map[string]time.Time{}
 	sc := bufio.NewScanner(out)
 	for sc.Scan() {
 		var ev dockerEvent

@@ -8,12 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"go-island/internal/island"
-	"go-island/internal/settings"
+	"github.com/AdamShannag/dynamic-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/settings"
 )
 
-// USB pops the island when a device is plugged in: drives, keyboards,
-// mice, game controllers, phones, audio and cameras. Hubs are ignored.
 type USB struct{}
 
 func NewUSB() *USB { return &USB{} }
@@ -57,14 +55,13 @@ func (u *USB) Run(ctx context.Context, h island.Host) error {
 	}
 }
 
-// usbDevices maps device ids (e.g. "1-2.3") to their product names.
 func usbDevices() map[string]string {
 	out := map[string]string{}
 	ents, _ := os.ReadDir(usbRoot)
 	for _, e := range ents {
 		id := e.Name()
 		if strings.Contains(id, ":") || strings.HasPrefix(id, "usb") {
-			continue // interfaces and root hubs
+			continue
 		}
 		out[id] = readSys(filepath.Join(usbRoot, id, "product"))
 	}
@@ -80,7 +77,7 @@ func describeUSB(id, product string) (island.View, bool) {
 	dir := filepath.Join(usbRoot, id)
 	maker := readSys(filepath.Join(dir, "manufacturer"))
 	if readSys(filepath.Join(dir, "bDeviceClass")) == "09" {
-		return island.View{}, false // hub
+		return island.View{}, false
 	}
 	classes := map[string]bool{}
 	protocols := map[string]bool{}

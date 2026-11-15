@@ -1,4 +1,3 @@
-// Package docker wraps the docker CLI for the dashboard's Docker tab.
 package docker
 
 import (
@@ -21,16 +20,15 @@ type Container struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Image   string `json:"image"`
-	State   string `json:"state"`  // running, restarting, ...
-	Status  string `json:"status"` // "Up 3 hours (healthy)"
-	Ports   string `json:"ports"`  // published host ports, "4222, 8222"
+	State   string `json:"state"`
+	Status  string `json:"status"`
+	Ports   string `json:"ports"`
 	Project string `json:"project"`
 	Stats   *Stats `json:"stats,omitempty"`
 }
 
 var hostPort = regexp.MustCompile(`:(\d+)->`)
 
-// List returns running containers sorted by compose project, then name.
 func List(ctx context.Context) ([]Container, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -78,8 +76,6 @@ func List(ctx context.Context) ([]Container, error) {
 	return list, nil
 }
 
-// Errors the UI can explain. The message is a stable code prefix the
-// extension maps to friendly text, followed by the raw detail.
 const (
 	ErrNotInstalled = "docker-not-installed"
 	ErrNotRunning   = "docker-not-running"
@@ -105,7 +101,6 @@ func classify(err error) error {
 	return err
 }
 
-// Act runs start, stop or restart on a container.
 func Act(ctx context.Context, id, op string) error {
 	switch op {
 	case "start", "stop", "restart":
@@ -120,17 +115,12 @@ func Act(ctx context.Context, id, op string) error {
 	return nil
 }
 
-// ---------- live stats ----------
-
-// Stats is a container's latest resource usage.
 type Stats struct {
-	CPU    float64 `json:"cpu"`    // percent of one core × cores (docker's CPUPerc)
-	Mem    string  `json:"mem"`    // "128MiB"
-	MemPct float64 `json:"memPct"` // percent of the limit
+	CPU    float64 `json:"cpu"`
+	Mem    string  `json:"mem"`
+	MemPct float64 `json:"memPct"`
 }
 
-// statsStream keeps one `docker stats` process running while someone is
-// looking (the Docker tab polls List), and stops it after a quiet period.
 type statsStream struct {
 	mu       sync.Mutex
 	byID     map[string]Stats
@@ -173,7 +163,7 @@ func (s *statsStream) run() {
 	if err != nil || cmd.Start() != nil {
 		return
 	}
-	go func() { // stop once nobody has asked for a while
+	go func() {
 		for range time.Tick(5 * time.Second) {
 			s.mu.Lock()
 			idle := time.Since(s.lastUsed) > statsIdleStop
@@ -212,9 +202,6 @@ func pct(s string) float64 {
 	return v
 }
 
-// ---------- logs ----------
-
-// Logs returns the last n lines of a container's output (stdout+stderr).
 func Logs(ctx context.Context, id string, n int) (string, error) {
 	if n <= 0 || n > 1000 {
 		n = 50

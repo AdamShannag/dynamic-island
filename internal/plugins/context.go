@@ -12,28 +12,16 @@ import (
 	"syscall"
 	"time"
 
-	"go-island/internal/island"
-	"go-island/internal/ports"
+	"github.com/AdamShannag/dynamic-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/ports"
 )
 
-// Context makes the island aware of what you're doing: it watches your
-// processes for dev tools (go, maven, gradle, npm, cargo, make, docker,
-// pytest, IDE run configurations) and shows them with the app that launched
-// them (GoLand, IntelliJ, VS Code, a terminal, a coding agent). Clicking
-// focuses that app's window.
-//
-// Linux gives no way to read an unrelated process's exit status, so finished
-// tasks are reported as "Finished", not passed/failed. (`island run` and the
-// shell hook do know exit codes.)
 type Context struct {
-	mu      sync.Mutex // guards tracked and tracked items' ports
+	mu      sync.Mutex
 	tracked map[int]*tracked
 	bootT   time.Time
 	tick    int
 
-	// Process cache: a scan only lists /proc and reads processes that are
-	// new or young (a fork becomes `go test` via exec under the same pid);
-	// everything is re-validated every fullScanEvery scans.
 	procs   map[int]*procInfo
 	notMine map[int]bool
 }
@@ -43,8 +31,8 @@ func NewContext() *Context {
 }
 
 const (
-	fullScanEvery = 15              // scans
-	youngFor      = 5 * time.Second // keep re-reading processes this young
+	fullScanEvery = 15
+	youngFor      = 5 * time.Second
 )
 
 func (c *Context) Name() string { return "context" }
@@ -52,8 +40,8 @@ func (c *Context) Name() string { return "context" }
 type kind int
 
 const (
-	kindTask kind = iota // builds, tests, installs: show elapsed, report when done
-	kindRun              // dev servers / run configs: show as a service while alive
+	kindTask kind = iota
+	kindRun
 )
 
 type tracked struct {
@@ -61,7 +49,7 @@ type tracked struct {
 	title   string
 	kind    kind
 	app     string
-	ide     bool // launched from an IDE (completion is reported)
+	ide     bool
 	project string
 	start   time.Time
 	focus   []int
@@ -75,7 +63,7 @@ type procInfo struct {
 	args      []string
 	startTick uint64
 
-	classified bool // classification is cached; reset when args change
+	classified bool
 	title      string
 	kind       kind
 	match      bool
@@ -83,9 +71,9 @@ type procInfo struct {
 
 const (
 	scanEvery     = time.Second
-	showAfter     = 1200 * time.Millisecond // ignore blips like `go version`
-	reportAfter   = 3 * time.Second         // only report tasks that took a while
-	portScanEvery = 3                       // scans
+	showAfter     = 1200 * time.Millisecond
+	reportAfter   = 3 * time.Second
+	portScanEvery = 3
 )
 
 func (c *Context) Run(ctx context.Context, h island.Host) error {
@@ -102,8 +90,6 @@ func (c *Context) Run(ctx context.Context, h island.Host) error {
 	}
 }
 
-// Detected commands never touch the pill: they're listed in the
-// dashboard's Activity tab via List.
 func (c *Context) scan() {
 	c.tick++
 	procs := c.refreshProcs()
@@ -113,7 +99,7 @@ func (c *Context) scan() {
 			p.title, p.kind, p.match = classify(p, procs)
 			p.classified = true
 		}
-		if !p.match || hasAncestor(p, procs, "island") { // `island run` shows its own
+		if !p.match || hasAncestor(p, procs, "island") {
 			continue
 		}
 		seen[p.pid] = true
@@ -126,7 +112,6 @@ func (c *Context) scan() {
 		}
 	}
 
-	// Ports for long-running processes (and their children, e.g. `go run`).
 	if c.tick%portScanEvery == 1 {
 		c.updatePorts(procs)
 	}
@@ -144,12 +129,11 @@ func (c *Context) scan() {
 	}
 }
 
-// Item is one row in the Activity tab.
 type Item struct {
 	PID       int    `json:"pid"`
 	Title     string `json:"title"`
-	Kind      string `json:"kind"`  // task | service
-	State     string `json:"state"` // running
+	Kind      string `json:"kind"`
+	State     string `json:"state"`
 	App       string `json:"app,omitempty"`
 	Project   string `json:"project,omitempty"`
 	StartedAt int64  `json:"startedAt"`
@@ -157,7 +141,6 @@ type Item struct {
 	Focus     []int  `json:"focus,omitempty"`
 }
 
-// List returns running items, newest first.
 func (c *Context) List() []Item {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -211,13 +194,10 @@ func (c *Context) updatePorts(procs map[int]*procInfo) {
 	}
 }
 
-// ---------- classification ----------
-
 var goTaskCmds = map[string]bool{"build": true, "test": true, "mod": true, "generate": true, "install": true, "vet": true, "get": true, "work": true}
 var mavenRunGoals = []string{"spring-boot:run", "quarkus:dev", "jetty:run", "tomcat7:run", "exec:java"}
 var gradleRunTasks = []string{"bootRun", "run", "quarkusDev", "appRun"}
 
-// classify decides whether a process is a dev command worth showing.
 func classify(p *procInfo, procs map[int]*procInfo) (string, kind, bool) {
 	if len(p.args) == 0 {
 		return "", 0, false
@@ -236,8 +216,6 @@ func classify(p *procInfo, procs map[int]*procInfo) (string, kind, bool) {
 		}
 		return out
 	}
-	// A wrapper's child repeats the work (e.g. `go run` → compiled binary,
-	// `npm run dev` → node vite); only the outermost tool counts.
 	if parent := procs[p.ppid]; parent != nil {
 		if _, _, ok := classifyShallow(parent); ok {
 			return "", 0, false
@@ -295,7 +273,7 @@ func classifyArgs(p *procInfo, base string, words func(int, int) []string) (stri
 		for i := 1; i < len(args) && len(targets) < 2; i++ {
 			switch a := args[i]; {
 			case a == "-C" || a == "-f" || a == "--directory" || a == "--file":
-				i++ // skip the flag's value
+				i++
 			case !strings.HasPrefix(a, "-") && !strings.Contains(a, "="):
 				targets = append(targets, a)
 			}
@@ -305,7 +283,7 @@ func classifyArgs(p *procInfo, base string, words func(int, int) []string) (stri
 		w := words(1, 2)
 		switch {
 		case len(w) > 0 && (w[0] == "build" || w[0] == "push" || w[0] == "pull"):
-			return "docker " + w[0], kindTask, true // later words may be flag values
+			return "docker " + w[0], kindTask, true
 		case len(w) > 1 && w[0] == "compose" && (w[1] == "build" || w[1] == "pull"):
 			return "docker compose " + w[1], kindTask, true
 		}
@@ -334,7 +312,6 @@ func classifyArgs(p *procInfo, base string, words func(int, int) []string) (stri
 	case "java":
 		return javaTool(args)
 	}
-	// Binaries started by a JetBrains Go run configuration.
 	if strings.HasPrefix(base, "___") && strings.Contains(base, "go_build") {
 		name := base[strings.LastIndex(base, "_")+1:]
 		return "run " + name, kindRun, true
@@ -391,7 +368,6 @@ func javaTool(args []string) (string, kind, bool) {
 			return title, kindTask, true
 		}
 	}
-	// A JetBrains run configuration: the IDE injects idea_rt.jar.
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "idea_rt.jar") {
 		main := ""
@@ -433,8 +409,6 @@ func nonFlags(args []string, n int) []string {
 	return out
 }
 
-// ---------- launcher / ancestry ----------
-
 var apps = []struct{ comm, name string }{
 	{"claude", "Claude Code"},
 	{"goland", "GoLand"}, {"idea", "IntelliJ IDEA"}, {"webstorm", "WebStorm"}, {"pycharm", "PyCharm"},
@@ -450,8 +424,6 @@ var ideComms = map[string]bool{
 	"rustrover": true, "phpstorm": true, "code": true, "cursor": true, "zed": true, "zed-editor": true,
 }
 
-// launcher finds the nearest app ancestor and returns its name, whether it
-// is an IDE, and every ancestor pid (the UI focuses the first with a window).
 func launcher(p *procInfo, procs map[int]*procInfo) (string, bool, []int) {
 	name, ide := "", false
 	var chain []int
@@ -506,9 +478,6 @@ func joinNonEmpty(sep string, parts ...string) string {
 	return strings.Join(out, sep)
 }
 
-// ---------- /proc ----------
-
-// refreshProcs updates the process cache and returns it.
 func (c *Context) refreshProcs() map[int]*procInfo {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
@@ -528,7 +497,7 @@ func (c *Context) refreshProcs() map[int]*procInfo {
 				continue
 			}
 			if p := c.procs[pid]; p != nil && time.Since(c.startTime(p)) > youngFor {
-				continue // settled: nothing to re-read
+				continue
 			}
 		}
 		info, mine := readProc(pid, uid)
@@ -538,13 +507,12 @@ func (c *Context) refreshProcs() map[int]*procInfo {
 			continue
 		}
 		if info == nil {
-			continue // exited mid-read
+			continue
 		}
 		if old := c.procs[pid]; old != nil && old.startTick == info.startTick && equalArgs(old.args, info.args) {
-			continue // unchanged: keep the cached classification
+			continue
 		}
 		c.procs[pid] = info
-		// A changed process can change how its children classify.
 		for _, q := range c.procs {
 			if q.ppid == pid {
 				q.classified = false
@@ -564,7 +532,6 @@ func (c *Context) refreshProcs() map[int]*procInfo {
 	return c.procs
 }
 
-// readProc reads one process; mine is false for other users' processes.
 func readProc(pid int, uid uint32) (*procInfo, bool) {
 	dir := "/proc/" + strconv.Itoa(pid)
 	st, err := os.Stat(dir)
@@ -578,7 +545,6 @@ func readProc(pid int, uid uint32) (*procInfo, bool) {
 	if err != nil {
 		return nil, true
 	}
-	// comm is in parens and may contain spaces; fields follow the last ')'.
 	s := string(stat)
 	l, r := strings.IndexByte(s, '('), strings.LastIndexByte(s, ')')
 	if l < 0 || r < l {
@@ -610,7 +576,7 @@ func equalArgs(a, b []string) bool {
 	return true
 }
 
-const clkTck = 100 // USER_HZ; 100 on all mainstream Linux builds
+const clkTck = 100
 
 func (c *Context) startTime(p *procInfo) time.Time {
 	if c.bootT.IsZero() {

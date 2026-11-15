@@ -1,7 +1,3 @@
-# Go Island bash hook: pops the island when a long command finishes.
-# Add to ~/.bashrc:   source /path/to/go-island/contrib/island-hook.bash
-# Tune with ISLAND_MIN_SECS (default 15). Ignored commands: ISLAND_IGNORE regex.
-
 ISLAND_MIN_SECS=${ISLAND_MIN_SECS:-15}
 ISLAND_IGNORE=${ISLAND_IGNORE:-'^(vim?|nvim|nano|less|more|man|ssh|top|htop|btop|tmux|screen|watch|fg|claude|git (log|diff)) ?'}
 __island_ready=1

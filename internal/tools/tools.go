@@ -1,79 +1,30 @@
-// Package tools holds small utilities behind the dashboard: the notes
-// scratchpad, QR codes and the screen colour picker.
 package tools
 
 import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/AdamShannag/dynamic-island/internal/paths"
 
 	"github.com/godbus/dbus/v5"
 	"rsc.io/qr"
 )
 
-func dataDir() string {
-	dir := os.Getenv("XDG_DATA_HOME")
-	if dir == "" {
-		dir = filepath.Join(os.Getenv("HOME"), ".local", "share")
-	}
-	return filepath.Join(dir, "go-island")
-}
-
-// ---------- notes ----------
-
-var notesMu sync.Mutex
-
-func notesPath() string { return filepath.Join(dataDir(), "notes.md") }
-
-func NotesGet() (string, error) {
-	notesMu.Lock()
-	defer notesMu.Unlock()
-	b, err := os.ReadFile(notesPath())
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	return string(b), err
-}
-
-func NotesSave(text string) error {
-	if len(text) > 1<<20 {
-		return fmt.Errorf("note too large")
-	}
-	notesMu.Lock()
-	defer notesMu.Unlock()
-	if err := os.MkdirAll(dataDir(), 0o700); err != nil {
-		return err
-	}
-	tmp := notesPath() + ".tmp"
-	if err := os.WriteFile(tmp, []byte(text), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, notesPath())
-}
-
-// ---------- QR ----------
-
-// QR renders text as a PNG QR code (cached by content) and returns its path.
 func QR(text string) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" || len(text) > 2000 {
 		return "", fmt.Errorf("text must be 1–2000 characters")
 	}
 	sum := sha1.Sum([]byte(text))
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		dir = os.TempDir()
-	}
-	path := filepath.Join(dir, "go-island", "qr", hex.EncodeToString(sum[:10])+".png")
+	path := paths.CacheFile("qr", hex.EncodeToString(sum[:10])+".png")
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	}
@@ -88,22 +39,18 @@ func QR(text string) (string, error) {
 	return path, os.WriteFile(path, code.PNG(), 0o600)
 }
 
-// ---------- colour picker ----------
-
 type Color struct {
 	Hex, RGB, HSL string
 }
 
-// PickColor asks the desktop portal to let the user pick a pixel anywhere
-// on screen (interactive). It blocks until picked, cancelled or ctx ends.
 func PickColor(ctx context.Context) (Color, error) {
-	conn, err := dbus.ConnectSessionBus() // private conn: its own signal stream
+	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return Color{}, err
 	}
 	defer conn.Close()
 
-	token := fmt.Sprintf("goisland%d", rand.Int63())
+	token := fmt.Sprintf("dynamicisland%d", rand.Int63())
 	sender := strings.ReplaceAll(strings.TrimPrefix(conn.Names()[0], ":"), ".", "_")
 	reqPath := dbus.ObjectPath("/org/freedesktop/portal/desktop/request/" + sender + "/" + token)
 	if err := conn.AddMatchSignal(

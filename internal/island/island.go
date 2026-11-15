@@ -1,6 +1,3 @@
-// Package island holds the daemon's state machine: plugins post Activities,
-// the Manager picks the most important one and publishes it as the View the
-// UI should render.
 package island
 
 import (
@@ -12,46 +9,37 @@ import (
 	"time"
 )
 
-// View is exactly what the UI renders. It is serialized to JSON and sent
-// over D-Bus, so keep it flat and UI-agnostic. Live values (timers, media
-// position) are sent as timestamps so the UI ticks locally without the
-// daemon emitting a signal every second.
 type View struct {
-	Kind      string  `json:"kind"` // idle | media | battery | notify | task | timer | ci
-	Title     string  `json:"title,omitempty"`
-	Subtitle  string  `json:"subtitle,omitempty"`
-	Icon      string  `json:"icon,omitempty"`      // freedesktop icon name
-	Art       string  `json:"art,omitempty"`       // local image path
-	Accent    string  `json:"accent,omitempty"`    // "" | ok | warn | error
-	Trailing  string  `json:"trailing,omitempty"`  // short text on the right
-	Click     string  `json:"click,omitempty"`     // action fired when the pill is clicked
-	EndsAt    int64   `json:"endsAt,omitempty"`    // unix ms; UI shows a countdown
-	StartedAt int64   `json:"startedAt,omitempty"` // unix ms; UI shows elapsed time
-	Playing   bool    `json:"playing,omitempty"`
-	Timing    *Timing `json:"timing,omitempty"`
-	Focus     []int   `json:"focus,omitempty"`  // pids; clicking focuses the first with a window
-	Swatch    string  `json:"swatch,omitempty"` // a colour to show in place of the icon
-	URL       string  `json:"url,omitempty"`    // clicking opens this in the browser
-	// Mirrored desktop notifications: clicking activates the original
-	// (like clicking GNOME's banner); App/DesktopEntry identify the sender.
+	Kind         string   `json:"kind"`
+	Title        string   `json:"title,omitempty"`
+	Subtitle     string   `json:"subtitle,omitempty"`
+	Icon         string   `json:"icon,omitempty"`
+	Art          string   `json:"art,omitempty"`
+	Accent       string   `json:"accent,omitempty"`
+	Trailing     string   `json:"trailing,omitempty"`
+	Click        string   `json:"click,omitempty"`
+	EndsAt       int64    `json:"endsAt,omitempty"`
+	StartedAt    int64    `json:"startedAt,omitempty"`
+	Playing      bool     `json:"playing,omitempty"`
+	Timing       *Timing  `json:"timing,omitempty"`
+	Focus        []int    `json:"focus,omitempty"`
+	Swatch       string   `json:"swatch,omitempty"`
+	URL          string   `json:"url,omitempty"`
 	Mirror       bool     `json:"mirror,omitempty"`
 	App          string   `json:"app,omitempty"`
 	DesktopEntry string   `json:"desktopEntry,omitempty"`
-	Actions      []string `json:"actions,omitempty"` // action names the UI may offer
+	Actions      []string `json:"actions,omitempty"`
 }
 
-// Timing describes media playback so the UI can draw a live progress bar.
 type Timing struct {
-	Length   float64 `json:"length"`   // seconds
-	Position float64 `json:"position"` // seconds, as of At
-	At       int64   `json:"at"`       // unix ms
+	Length   float64 `json:"length"`
+	Position float64 `json:"position"`
+	At       int64   `json:"at"`
 	Rate     float64 `json:"rate"`
 }
 
-// UnixMs is a helper for View timestamps.
 func UnixMs(t time.Time) int64 { return t.UnixMilli() }
 
-// FormatDuration renders 1h02m, 3m05s or 42s.
 func FormatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 	h, m, s := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60
@@ -64,40 +52,32 @@ func FormatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
-// Activity is a plugin's request to occupy the island.
 type Activity struct {
-	ID       string        // unique per activity; re-Set with the same ID replaces it
-	Priority int           // higher wins; ties go to the most recent
-	View     View          //
-	TTL      time.Duration // 0 = until cleared
+	ID       string
+	Priority int
+	View     View
+	TTL      time.Duration
 }
 
-// Common priorities so plugins agree on ordering.
 const (
-	PriorityService = 9  // running dev servers (below media)
-	PriorityAmbient = 10 // long-lived background state (media)
-	PriorityAgent   = 12 // a coding agent working
-	PriorityTimer   = 15 // pomodoro
-	PriorityTask    = 20 // a running `island run` command
-	PriorityStatus  = 30 // short status blips (charging)
-	PriorityAlert   = 40 // warnings (low battery)
-	PriorityNotify  = 50 // explicit user notifications
+	PriorityService = 9
+	PriorityAmbient = 10
+	PriorityAgent   = 12
+	PriorityTimer   = 15
+	PriorityTask    = 20
+	PriorityStatus  = 30
+	PriorityAlert   = 40
+	PriorityNotify  = 50
 )
 
-// Host is what plugins get to talk to the island.
 type Host interface {
 	Set(a Activity)
 	Clear(id string)
 	ClearPrefix(prefix string)
-	// HandleAction registers fn for an action name sent by the UI (e.g. "media.next").
 	HandleAction(name string, fn func())
-	// Presenting reports whether screen-sharing privacy mode is on; plugins
-	// should not surface personal content while it is.
 	Presenting() bool
 }
 
-// Plugin is one island feature. Run blocks until ctx is done; returning an
-// error makes the daemon restart it after a backoff.
 type Plugin interface {
 	Name() string
 	Run(ctx context.Context, h Host) error
@@ -109,7 +89,6 @@ type entry struct {
 	timer *time.Timer
 }
 
-// Manager implements Host and tracks the current View.
 type Manager struct {
 	mu         sync.Mutex
 	presenting bool
@@ -126,14 +105,12 @@ func NewManager() *Manager {
 	return m
 }
 
-// OnChange sets the callback fired (under lock, in order) whenever the View changes.
 func (m *Manager) OnChange(fn func(stateJSON string)) {
 	m.mu.Lock()
 	m.onChange = fn
 	m.mu.Unlock()
 }
 
-// State returns the current View as JSON.
 func (m *Manager) State() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -186,7 +163,6 @@ func (m *Manager) Presenting() bool {
 	return m.presenting
 }
 
-// SetPresenting toggles privacy mode; turning it on drops personal popups.
 func (m *Manager) SetPresenting(on bool) {
 	m.mu.Lock()
 	m.presenting = on
@@ -196,7 +172,6 @@ func (m *Manager) SetPresenting(on bool) {
 	}
 }
 
-// Action runs a registered action handler asynchronously.
 func (m *Manager) Action(name string) error {
 	m.mu.Lock()
 	fn, ok := m.actions[name]
@@ -226,7 +201,6 @@ func (m *Manager) remove(id string) {
 	}
 }
 
-// recompute must be called with mu held.
 func (m *Manager) recompute() {
 	var best *entry
 	for _, e := range m.acts {

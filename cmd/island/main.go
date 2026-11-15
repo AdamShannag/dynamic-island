@@ -1,4 +1,3 @@
-// island is the CLI for the Go Island daemon.
 package main
 
 import (
@@ -14,7 +13,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"go-island/internal/dbusapi"
+	"github.com/AdamShannag/dynamic-island/internal/dbusapi"
 )
 
 func usage() {
@@ -22,13 +21,17 @@ func usage() {
   island notify [-t ms] [-i icon] [-a ok|warn|error] TITLE [BODY]
   island run [-n name] -- COMMAND [ARGS...]   show a command in the island while it runs
   island open [home|agents|docker|ports|clipboard|web]   toggle the dashboard
+  island setup [--remove]                     enable the daemon and GNOME extension for this user
   island claude install|uninstall             report Claude Code sessions to the island
   island kill-port PORT                       free a port (kills the process / stops the container)
   island pomodoro start|stop|toggle
   island action NAME                          e.g. media.play-pause, notify.dismiss
-  island state`)
+  island state
+  island version`)
 	os.Exit(2)
 }
+
+var version = "dev"
 
 var obj dbus.BusObject
 
@@ -41,8 +44,14 @@ func main() {
 		usage()
 	}
 	args := os.Args[2:]
-	if os.Args[1] == "claude" {
-		os.Exit(claudeCmd(args)) // handles its own (optional) bus connection
+	switch os.Args[1] {
+	case "claude":
+		os.Exit(claudeCmd(args))
+	case "setup":
+		os.Exit(setupCmd(args))
+	case "version", "--version", "-v":
+		fmt.Println(version)
+		return
 	}
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
@@ -64,8 +73,6 @@ func main() {
 		err = call("Notify", fs.Arg(0), body, *icon, *accent, int32(*timeout)).Err
 	case "run":
 		os.Exit(run(args))
-	case "claude":
-		os.Exit(claudeCmd(args))
 	case "open":
 		tab := ""
 		if len(args) > 0 {
@@ -108,8 +115,6 @@ func main() {
 	}
 }
 
-// run executes a command, mirroring it in the island, and exits with its code.
-// If the daemon is unreachable the command still runs.
 func run(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	name := fs.String("n", "", "name to show (default: the command line)")
@@ -128,14 +133,14 @@ func run(args []string) int {
 
 	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT) // let the child handle Ctrl-C, then report
+	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT)
 	code := 0
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
 		switch {
 		case errors.As(err, &ee):
 			code = ee.ExitCode()
-			if code < 0 { // killed by a signal
+			if code < 0 {
 				code = 128 + int(ee.Sys().(syscall.WaitStatus).Signal())
 			}
 		default:

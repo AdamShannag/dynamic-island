@@ -1,7 +1,3 @@
-// Package inbox keeps a history of desktop notifications for the
-// dashboard's Notifications tab. It is in memory only: notification
-// contents (messages, codes) are never written to disk, and the history
-// ends with the session.
 package inbox
 
 import (
@@ -17,14 +13,14 @@ type Item struct {
 	Art          string `json:"art,omitempty"`
 	Title        string `json:"title"`
 	Body         string `json:"body,omitempty"`
-	At           int64  `json:"at"` // unix ms
+	At           int64  `json:"at"`
 }
 
 const keep = 200
 
 var (
 	mu    sync.Mutex
-	items []Item // newest first
+	items []Item
 	next  uint32 = 1
 )
 

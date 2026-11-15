@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# Go Island installer for Ubuntu (GNOME Shell 46–49, X11 or Wayland).
-# Uses prebuilt binaries when present (release tarball), otherwise builds with Go.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-UUID=go-island@local
+APP=dynamic-island
+UUID=dynamic-island@adamshannag.github.io
+DAEMON=dynamic-islandd
 BIN="$HOME/.local/bin"
 EXT="$HOME/.local/share/gnome-shell/extensions/$UUID"
 UNIT_DIR="$HOME/.config/systemd/user"
+
+LEGACY_UUID=go-island@local
+LEGACY_UNIT=islandd.service
 
 say()  { printf '\033[1m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*"; }
 die()  { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 
-command -v gnome-shell >/dev/null || die "GNOME Shell not found. Go Island needs Ubuntu's GNOME desktop."
+[ "$(id -u)" -ne 0 ] || die "Run this as your normal user, not root."
+command -v gnome-shell >/dev/null || die "GNOME Shell not found. Dynamic Island needs Ubuntu's GNOME desktop."
 command -v systemctl   >/dev/null || die "systemd not found."
+if dpkg -s "$APP" >/dev/null 2>&1; then
+  die "The $APP package is installed from apt. Use 'sudo apt upgrade' instead, or 'sudo apt remove $APP' first."
+fi
+
 ver=$(gnome-shell --version | grep -oE '[0-9]+' | head -1)
 case "$ver" in
   46|47|48|49) ;;
@@ -27,7 +35,7 @@ case "$(uname -m)" in
   *)             arch="" ;;
 esac
 
-if [ -n "$arch" ] && [ -x "bin/linux-$arch/islandd" ]; then
+if [ -n "$arch" ] && [ -x "bin/linux-$arch/$DAEMON" ]; then
   src="bin/linux-$arch"
   say "Using prebuilt binaries ($arch)"
 elif command -v go >/dev/null; then
@@ -39,13 +47,21 @@ else
 Install Go (sudo apt install golang-go) or use a release tarball."
 fi
 
+if [ -e "$UNIT_DIR/$LEGACY_UNIT" ] || [ -d "$HOME/.local/share/gnome-shell/extensions/$LEGACY_UUID" ]; then
+  say "Removing the old Go Island install (your data is migrated automatically)"
+  gnome-extensions disable "$LEGACY_UUID" 2>/dev/null || true
+  systemctl --user disable --now "$LEGACY_UNIT" 2>/dev/null || true
+  rm -f "$UNIT_DIR/$LEGACY_UNIT" "$BIN/islandd"
+  rm -rf "$HOME/.local/share/gnome-shell/extensions/$LEGACY_UUID"
+fi
+
 say "Installing the daemon and CLI to $BIN"
-install -Dm755 "$src/islandd" "$BIN/islandd"
+install -Dm755 "$src/$DAEMON" "$BIN/$DAEMON"
 install -Dm755 "$src/island"  "$BIN/island"
-install -Dm644 systemd/islandd.service "$UNIT_DIR/islandd.service"
+install -Dm644 "systemd/$APP.service" "$UNIT_DIR/$APP.service"
 systemctl --user daemon-reload
-systemctl --user enable --now islandd.service >/dev/null
-systemctl --user restart islandd.service
+systemctl --user enable --now "$APP.service" >/dev/null
+systemctl --user restart "$APP.service"
 
 say "Installing the GNOME Shell extension"
 rm -rf "$EXT"
@@ -57,8 +73,6 @@ if [ "$(gsettings get org.gnome.shell disable-user-extensions)" = "true" ]; then
   warn "User extensions were disabled system-wide; turned them on."
 fi
 
-# Enable now if the shell already knows the extension; otherwise make sure
-# it's enabled at the next login.
 needs_restart=0
 if ! gnome-extensions enable "$UUID" 2>/dev/null; then
   needs_restart=1

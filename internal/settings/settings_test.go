@@ -22,7 +22,6 @@ func TestUpdate(t *testing.T) {
 	if _, err := Update([]byte(`{"accent":"neon"}`)); err == nil {
 		t.Fatal("expected invalid accent error")
 	}
-	// round-trip through disk
 	mu.Lock()
 	cur = Defaults()
 	mu.Unlock()

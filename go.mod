@@ -1,4 +1,4 @@
-module go-island
+module github.com/AdamShannag/dynamic-island
 
 go 1.22
 

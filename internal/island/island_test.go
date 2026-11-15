@@ -31,7 +31,7 @@ func TestReSetRearmsTTL(t *testing.T) {
 	m.Set(Activity{ID: "a", Priority: 1, TTL: 30 * time.Millisecond, View: View{Kind: "notify", Title: "1"}})
 	time.Sleep(20 * time.Millisecond)
 	m.Set(Activity{ID: "a", Priority: 1, TTL: 30 * time.Millisecond, View: View{Kind: "notify", Title: "2"}})
-	time.Sleep(20 * time.Millisecond) // first timer would have fired by now
+	time.Sleep(20 * time.Millisecond)
 	if !strings.Contains(m.State(), `"2"`) {
 		t.Fatalf("old timer expired the replacement: %s", m.State())
 	}

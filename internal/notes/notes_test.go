@@ -9,8 +9,8 @@ import (
 func TestNotes(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", dir)
-	os.MkdirAll(filepath.Join(dir, "go-island"), 0o700)
-	os.WriteFile(filepath.Join(dir, "go-island", "notes.md"), []byte("old scratchpad"), 0o600)
+	os.MkdirAll(filepath.Join(dir, "dynamic-island"), 0o700)
+	os.WriteFile(filepath.Join(dir, "dynamic-island", "notes.md"), []byte("old scratchpad"), 0o600)
 
 	s, err := Open()
 	if err != nil {
@@ -28,7 +28,7 @@ func TestNotes(t *testing.T) {
 		t.Fatalf("order/pin wrong: %+v", l)
 	}
 	s.Delete(1)
-	r, _ := Open() // reload from disk
+	r, _ := Open()
 	if l := r.List(); len(l) != 1 || l[0].ID != n.ID {
 		t.Fatalf("persist failed: %+v", l)
 	}

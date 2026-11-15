@@ -10,7 +10,7 @@ func TestStore(t *testing.T) {
 	s, _ := Open(path)
 	s.Add("a")
 	s.Add("b")
-	s.Add("a") // moves to top, keeps id
+	s.Add("a")
 	l := s.List()
 	if len(l) != 2 || l[0].Text != "a" || l[0].ID != 1 {
 		t.Fatalf("dedupe/move-to-top failed: %+v", l)
@@ -22,7 +22,7 @@ func TestStore(t *testing.T) {
 		t.Fatalf("clear should keep pinned only: %+v", l)
 	}
 	s.Add("c")
-	r, err := Open(path) // reload from disk
+	r, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}

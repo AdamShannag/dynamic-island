@@ -8,8 +8,8 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"go-island/internal/island"
-	"go-island/internal/settings"
+	"github.com/AdamShannag/dynamic-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/settings"
 )
 
 const (
@@ -18,7 +18,6 @@ const (
 	displayDev   = dbus.ObjectPath("/org/freedesktop/UPower/devices/DisplayDevice")
 )
 
-// UPower device states.
 const (
 	upCharging      = 1
 	upFullyCharged  = 4
@@ -27,7 +26,6 @@ const (
 
 var lowThresholds = []float64{20, 10, 5}
 
-// Battery pops the island on plug/unplug and when crossing low thresholds.
 type Battery struct{}
 
 func NewBattery() *Battery { return &Battery{} }
@@ -69,12 +67,12 @@ func (b *Battery) Run(ctx context.Context, h island.Host) error {
 		return err
 	}
 	if !present {
-		<-ctx.Done() // desktop machine: nothing to do
+		<-ctx.Done()
 		return nil
 	}
-	nextWarn := 0 // index into lowThresholds of the next warning to fire
+	nextWarn := 0
 	for nextWarn < len(lowThresholds) && pct <= lowThresholds[nextWarn] {
-		nextWarn++ // don't warn about thresholds already passed at startup
+		nextWarn++
 	}
 
 	for {

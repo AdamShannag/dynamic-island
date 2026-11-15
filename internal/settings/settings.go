@@ -1,8 +1,3 @@
-// Package settings holds the user's island preferences (theme, visible
-// tabs, features) in ~/.config/go-island/settings.json. The daemon owns
-// them so features it runs (notification mirroring, clipboard history,
-// USB/battery popups) switch off at the source; the extension mirrors
-// them for everything visual.
 package settings
 
 import (
@@ -12,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/AdamShannag/dynamic-island/internal/paths"
 )
 
 type Settings struct {
@@ -22,9 +19,8 @@ type Settings struct {
 }
 
 var (
-	Accents  = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
-	Surfaces = []string{"black", "graphite"}
-	// Home is always shown, so it isn't listed.
+	Accents    = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
+	Surfaces   = []string{"black", "graphite"}
 	TabIDs     = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search"}
 	FeatureIDs = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery"}
 )
@@ -46,14 +42,9 @@ var (
 )
 
 func path() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		dir = filepath.Join(os.Getenv("HOME"), ".config")
-	}
-	return filepath.Join(dir, "go-island", "settings.json")
+	return paths.ConfigFile("settings.json")
 }
 
-// Load reads the settings file (missing file = defaults).
 func Load() error {
 	b, err := os.ReadFile(path())
 	if errors.Is(err, os.ErrNotExist) {
@@ -72,14 +63,12 @@ func Load() error {
 	return nil
 }
 
-// Get returns a copy of the current settings.
 func Get() Settings {
 	mu.RLock()
 	defer mu.RUnlock()
 	return clone(cur)
 }
 
-// Enabled reports whether a feature is on (unknown features default on).
 func Enabled(feature string) bool {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -87,7 +76,6 @@ func Enabled(feature string) bool {
 	return !ok || v
 }
 
-// TabOn reports whether a dashboard tab is shown (unknown tabs default on).
 func TabOn(tab string) bool {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -95,7 +83,6 @@ func TabOn(tab string) bool {
 	return !ok || v
 }
 
-// Update merges a partial JSON patch, validates, saves and returns the result.
 func Update(patch []byte) (Settings, error) {
 	mu.Lock()
 	defer mu.Unlock()
