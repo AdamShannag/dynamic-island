@@ -1,6 +1,7 @@
 ISLAND_MIN_SECS=${ISLAND_MIN_SECS:-15}
 ISLAND_IGNORE=${ISLAND_IGNORE:-'^(vim?|nvim|nano|less|more|man|ssh|top|htop|btop|tmux|screen|watch|fg|claude|git (log|diff)) ?'}
 __island_ready=1
+__island_status=0
 
 __island_preexec() {
   [[ $__island_ready == 1 ]] || return
