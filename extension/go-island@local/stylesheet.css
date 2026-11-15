@@ -931,3 +931,118 @@
 .goisland.theme-graphite .goisland-xf-mini.accent { background-color: #8e8e93; }
 .goisland.theme-graphite .goisland-xf-text { caret-color: #8e8e93; }
 .goisland-tab-dot { width: 7px; height: 7px; border-radius: 4px; background-color: #ff453a; }
+
+/* ───────────── Apple-style building blocks ───────────── */
+
+.goisland-groups { spacing: 16px; padding-right: 4px; }
+.goisland-igroup { spacing: 6px; }
+.goisland-igroup-head { padding: 0 14px; }
+.goisland-igroup-title {
+  font-size: 7.5pt;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: rgba(245, 245, 247, 0.42);
+}
+.goisland-igroup-count { font-size: 8pt; color: rgba(245, 245, 247, 0.35); }
+.goisland-inset {
+  background-color: #0d0d0f;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+}
+.goisland.surface-graphite .goisland-inset { background-color: #222225; border-color: rgba(255, 255, 255, 0.06); }
+
+/* Rows separated by hairlines; the last row has none */
+.goisland-irow {
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  transition-duration: 120ms;
+}
+.goisland-irow:last-child { border-bottom-width: 0; }
+.goisland-irow:first-child { border-radius: 13px 13px 0 0; }
+.goisland-irow:last-child  { border-radius: 0 0 13px 13px; }
+.goisland-irow:first-child:last-child { border-radius: 13px; }
+.goisland-irow:hover  { background-color: rgba(255, 255, 255, 0.035); }
+.goisland-irow:active { background-color: rgba(255, 255, 255, 0.07); }
+.goisland-irow:focus  { box-shadow: none; }
+.goisland-irow.muted .goisland-irow-title { color: rgba(245, 245, 247, 0.5); font-weight: 500; }
+.goisland-irow-box { spacing: 12px; }
+.goisland-irow-title { font-size: 10pt; font-weight: 600; }
+.goisland-irow-sub   { font-size: 8.5pt; color: rgba(245, 245, 247, 0.48); padding-top: 1px; }
+.goisland-irow-sub.goisland-mono { font-size: 8.5pt; }
+.goisland-irow-meta { spacing: 2px; }
+.goisland-row-actions { spacing: 2px; }
+.goisland-row-btn.small StIcon { icon-size: 12px; }
+
+/* iOS-style icon badges */
+.goisland-badge { width: 30px; height: 30px; border-radius: 8px; }
+.goisland-badge-icon { icon-size: 16px; color: #ffffff; }
+.goisland-badge-glyph { font-size: 8pt; font-weight: 800; color: #ffffff; }
+.goisland-app-icon { icon-size: 30px; }
+
+/* Status pills (agents) */
+.goisland-pill-badge {
+  font-size: 7.5pt;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.goisland-pill-badge.blue   { color: #6cb6ff; background-color: rgba(10, 132, 255, 0.16); }
+.goisland-pill-badge.yellow { color: #ffd60a; background-color: rgba(255, 214, 10, 0.14); }
+.goisland-pill-badge.green  { color: #30d158; background-color: rgba(48, 209, 88, 0.14); }
+.goisland-pill-badge.red    { color: #ff6961; background-color: rgba(255, 69, 58, 0.16); }
+.goisland-pill-badge.grey   { color: rgba(245, 245, 247, 0.5); background-color: rgba(255, 255, 255, 0.06); }
+
+/* Ports: the port number as a fixed-width pill */
+.goisland-port-pill {
+  min-width: 58px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 9.5pt;
+  font-weight: 700;
+  color: #6cb6ff;
+  background-color: rgba(10, 132, 255, 0.12);
+}
+.goisland-port-pill:hover { background-color: rgba(10, 132, 255, 0.22); }
+.goisland-irow.muted .goisland-port-pill { color: rgba(245, 245, 247, 0.45); background-color: rgba(255, 255, 255, 0.05); }
+
+/* Notifications: iOS-style cards */
+.goisland-ncards { spacing: 8px; padding-right: 4px; }
+.goisland-ncard {
+  background-color: #141416;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 10px 12px;
+  transition-duration: 120ms;
+}
+.goisland-ncard:hover  { background-color: #19191c; }
+.goisland-ncard:active { background-color: #1e1e22; }
+.goisland-ncard:focus  { box-shadow: none; }
+.goisland.surface-graphite .goisland-ncard { background-color: #26262a; }
+.goisland-ncard-box { spacing: 12px; }
+.goisland-ncard-head { spacing: 6px; }
+.goisland-ncard-app {
+  font-size: 7.5pt;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: rgba(245, 245, 247, 0.45);
+}
+.goisland-ncard-when { font-size: 8pt; color: rgba(245, 245, 247, 0.4); }
+.goisland-ncard-title { font-size: 10pt; font-weight: 700; padding-top: 2px; }
+.goisland-ncard-body { font-size: 9pt; color: rgba(245, 245, 247, 0.7); padding-top: 1px; }
+
+/* Top processes: app icons + hairlines */
+.goisland-proc-row { border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding: 6px 10px; }
+.goisland-proc-row:last-child { border-bottom-width: 0; }
+.goisland-proc-icon { icon-size: 18px; color: rgba(245, 245, 247, 0.5); }
+.goisland.theme-blue .goisland-port-pill { color: #53a8ff; background-color: rgba(10, 132, 255, 0.13); }
+.goisland.theme-purple .goisland-port-pill { color: #d28bf5; background-color: rgba(191, 90, 242, 0.13); }
+.goisland.theme-pink .goisland-port-pill { color: #ff738f; background-color: rgba(255, 55, 95, 0.13); }
+.goisland.theme-orange .goisland-port-pill { color: #ffbb53; background-color: rgba(255, 159, 10, 0.13); }
+.goisland.theme-green .goisland-port-pill { color: #6ede8a; background-color: rgba(48, 209, 88, 0.13); }
+.goisland.theme-teal .goisland-port-pill { color: #79d8e9; background-color: rgba(64, 200, 224, 0.13); }
+.goisland.theme-graphite .goisland-port-pill { color: #afafb3; background-color: rgba(142, 142, 147, 0.13); }
+.goisland-proc-iconbin { width: 20px; height: 20px; }
+.goisland-proc-iconbin.initial { border-radius: 6px; background-color: rgba(255, 255, 255, 0.08); }
+.goisland-proc-icon { icon-size: 20px; }
+.goisland-proc-initial { font-size: 8pt; font-weight: 800; color: rgba(245, 245, 247, 0.6); }

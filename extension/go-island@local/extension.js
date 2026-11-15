@@ -116,6 +116,9 @@ const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
 const DASH_HEIGHT = {inbox: 480, settings: 520, activity: 470, transform: 500, home: 292, search: 360, agents: 400, notes: 480, qr: 430, logs: 520, default: 500};
 const OSD_MS = 1600;
+// Tabs whose sheet hugs its content (DASH_HEIGHT is then the maximum).
+const AUTO_HEIGHT = new Set(['inbox', 'agents', 'docker', 'ports', 'clipboard', 'search']);
+const AUTO_MIN_HEIGHT = 200;
 const CLIP_DEBOUNCE_MS = 400; // collapse bursts of clipboard owner changes into one read // how long the volume/brightness bar stays up
 
 // Personality.
@@ -223,15 +226,25 @@ const ACCENT_COLORS = {
 };
 const SURFACES = [['black', 'Black'], ['graphite', 'Graphite']];
 const FEATURES = [
-    ['face', 'Face', 'Eyes next to the clock that follow your cursor'],
-    ['mediaPill', 'Music in the pill', 'Show the playing track in the pill (Home always shows it)'],
-    ['osd', 'Volume & brightness', 'Show volume and brightness changes in the island'],
-    ['hideBanners', "Hide GNOME's banners", 'Only the island shows notifications'],
-    ['mirrorNotifications', 'Notifications', 'Show app notifications in the island'],
-    ['clipboardHistory', 'Clipboard history', 'Remember what you copy'],
-    ['usb', 'USB devices', 'Pop up when a device is plugged in'],
-    ['battery', 'Battery', 'Charging and low-battery popups'],
+    ['face', 'Face', 'Eyes next to the clock that follow your cursor', 'face-smile-symbolic'],
+    ['mediaPill', 'Music in the pill', 'Show the playing track in the pill (Home always shows it)', 'audio-x-generic-symbolic'],
+    ['osd', 'Volume & brightness', 'Show volume and brightness changes in the island', 'audio-volume-high-symbolic'],
+    ['hideBanners', "Hide GNOME's banners", 'Only the island shows notifications', 'notification-disabled-symbolic'],
+    ['mirrorNotifications', 'Notifications', 'Show app notifications in the island', 'preferences-system-notifications-symbolic'],
+    ['clipboardHistory', 'Clipboard history', 'Remember what you copy', 'edit-paste-symbolic'],
+    ['usb', 'USB devices', 'Pop up when a device is plugged in', 'media-removable-symbolic'],
+    ['battery', 'Battery', 'Charging and low-battery popups', 'battery-good-symbolic'],
 ];
+// iOS-Settings-style badge colours, keyed by icon.
+const SETTING_COLORS = {
+    'user-home-symbolic': '#0a84ff', 'preferences-system-notifications-symbolic': '#ff453a',
+    'utilities-system-monitor-symbolic': '#30d158', 'utilities-terminal-symbolic': '#ff9f0a',
+    'network-server-symbolic': '#0a84ff', 'network-wired-symbolic': '#40c8e0', 'edit-paste-symbolic': '#8e8e93',
+    'edit-find-replace-symbolic': '#bf5af2', 'document-edit-symbolic': '#ffcc00', 'web-browser-symbolic': '#0a84ff',
+    'face-smile-symbolic': '#ff9f0a', 'audio-x-generic-symbolic': '#ff375f', 'audio-volume-high-symbolic': '#0a84ff',
+    'notification-disabled-symbolic': '#ff453a', 'media-removable-symbolic': '#40c8e0', 'battery-good-symbolic': '#30d158',
+    'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
+};
 const DEFAULT_SETTINGS = {
     accent: 'blue', surface: 'black',
     tabs: {},      // missing = shown
@@ -284,6 +297,32 @@ function dockerProblem(message) {
             hint: 'Run: sudo usermod -aG docker $USER, then log out and back in'};
     return {icon: 'dialog-warning-symbolic', title: "Couldn't reach Docker",
         hint: message.replace(/^.*?Error\.Failed: /, '').slice(0, 160)};
+}
+
+// What a clipboard item is, for its badge and secondary line.
+function clipKind(text) {
+    const t = text.trim();
+    if (/^https?:\/\/\S+$/i.test(t)) {
+        let host = '';
+        try {
+            host = t.split('/')[2];
+        } catch {}
+        return {label: `Link  ·  ${host}`, badge: {icon: 'web-browser-symbolic', color: '#0a84ff'}};
+    }
+    if (/^[[{]/.test(t)) {
+        try {
+            const v = JSON.parse(t);
+            const n = Array.isArray(v) ? `${v.length} items` : `${Object.keys(v).length} keys`;
+            return {label: `JSON  ·  ${n}`, badge: {glyph: '{ }', color: '#ff9f0a'}, mono: true};
+        } catch {}
+    }
+    if (/^(select|insert|update|delete|with|create|alter)\s/i.test(t))
+        return {label: 'SQL', badge: {glyph: 'SQL', color: '#5e5ce6'}, mono: true};
+    if (/^(\$ )?(sudo|kubectl|docker|git|go|npm|pnpm|yarn|curl|ssh|make|cd|ls|cat|grep|helm|terraform|psql|python3?|cargo)\b/.test(t))
+        return {label: 'Command', badge: {icon: 'utilities-terminal-symbolic', color: '#636366'}, mono: true};
+    const lines = t.split('\n').length;
+    return {label: lines > 1 ? `Text  ·  ${lines} lines` : `Text  ·  ${t.length} characters`,
+        badge: {glyph: 'Aa', color: '#8e8e93'}};
 }
 
 function ago(ms) {
@@ -710,6 +749,11 @@ class Island extends St.BoxLayout {
         // Built once; refreshes only change text (no per-second rebuilds).
         this._procRows = Array.from({length: 6}, () => {
             const row = new St.BoxLayout({style_class: 'goisland-proc-row', visible: false});
+            const iconBin = new St.Bin({style_class: 'goisland-proc-iconbin', y_align: Clutter.ActorAlign.CENTER});
+            const icon = new St.Icon({style_class: 'goisland-proc-icon'});
+            const initial = new St.Label({style_class: 'goisland-proc-initial', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+            iconBin.child = icon;
+            row.add_child(iconBin);
             const name = label('goisland-proc-name', {x_expand: true});
             const cpu = label('goisland-proc-cpu');
             const mem = label('goisland-proc-mem');
@@ -717,8 +761,9 @@ class Island extends St.BoxLayout {
             row.add_child(cpu);
             row.add_child(mem);
             this._topList.add_child(row);
-            return {row, name, cpu, mem};
+            return {row, iconBin, icon, initial, name, cpu, mem};
         });
+        this._procIcons = new Map(); // process name -> GIcon (or null), looked up once
         topCard.add_child(this._topList);
         const runCard = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
         runCard.add_child(label('goisland-group', {text: 'RUNNING'}));
@@ -840,6 +885,21 @@ class Island extends St.BoxLayout {
             if (!p)
                 return;
             setText(r.name, p.name || `pid ${p.pid}`);
+            if (r.iconFor !== p.name) { // the app's icon, else a neutral initial
+                r.iconFor = p.name;
+                if (!this._procIcons.has(p.name))
+                    this._procIcons.set(p.name, this._ext.lookupProcessApp(p.name)?.get_icon() ?? null);
+                const gi = this._procIcons.get(p.name);
+                if (gi) {
+                    r.icon.gicon = gi;
+                    r.iconBin.child = r.icon;
+                    r.iconBin.remove_style_class_name('initial');
+                } else {
+                    r.initial.text = (p.name || '?')[0].toUpperCase();
+                    r.iconBin.child = r.initial;
+                    r.iconBin.add_style_class_name('initial');
+                }
+            }
             setText(r.cpu, `${p.cpu.toFixed(p.cpu < 10 ? 1 : 0)}%`);
             setText(r.mem, fmtBytes(p.mem, 0));
             const cls = `goisland-proc-cpu${p.cpu >= 50 ? ' hot' : ''}`;
@@ -894,12 +954,13 @@ class Island extends St.BoxLayout {
 
     _buildAgentsPage() {
         const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
-        this._agentList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
-        this._agentMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
-        card.add_child(this._agentMsg);
-        card.add_child(scrollView(this._agentList));
-        page.add_child(card);
+        this._agentEmpty = this._emptyState();
+        this._agentGroup = this._group('SESSIONS');
+        const content = new St.BoxLayout({...VERTICAL, style_class: 'goisland-groups'});
+        content.add_child(this._agentGroup.actor);
+        this._agentScroll = scrollView(content);
+        page.add_child(this._agentEmpty.actor);
+        page.add_child(this._agentScroll);
         return page;
     }
 
@@ -908,8 +969,16 @@ class Island extends St.BoxLayout {
             if (!this._dashOpen || this._tab !== 'agents')
                 return;
             const list = err ? [] : JSON.parse(res[0]);
-            this._message(this._agentMsg, err ? 'Daemon not running'
-                : list.length ? '' : 'No agent sessions yet. Run `island claude install`, then start Claude Code.');
+            if (!list.length) {
+                this._agentSig = null;
+                this._agentScroll.hide();
+                this._agentEmpty.show(err ? {icon: 'dialog-warning-symbolic', title: 'Daemon not running'}
+                    : {gicon: this._ext.agentIcon, icon: 'utilities-terminal-symbolic', title: 'No agent sessions',
+                        hint: 'Run island claude install, then start Claude Code'});
+                return;
+            }
+            this._agentEmpty.hide();
+            this._agentScroll.show();
             this._renderAgents(list);
         });
     }
@@ -922,26 +991,25 @@ class Island extends St.BoxLayout {
         }
         this._agentSig = sig;
         this._agentWhen = [];
-        this._fillList(this._agentList, list, (a, k) => {
+        this._fillList(this._agentGroup.list, list, (a, k) => {
             const [stateName, color] = AGENT_STATES[a.state] ?? AGENT_STATES.ready;
-            const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-agent-row'});
-            box.add_child(new St.Widget({style_class: `goisland-dot ${color}`, y_align: Clutter.ActorAlign.CENTER}));
-            const col = new St.BoxLayout({...VERTICAL, x_expand: true});
-            const head = new St.BoxLayout({style_class: 'goisland-agent-head'});
-            head.add_child(label('goisland-row-title', {text: `${a.agent} · ${a.project || 'session'}`}));
-            head.add_child(label(`goisland-agent-state ${color}`, {text: stateName}));
-            col.add_child(head);
-            col.add_child(label('goisland-row-sub', {text: a.detail || a.title || ''}));
-            box.add_child(col);
-            const meta = new St.BoxLayout({...VERTICAL, y_align: Clutter.ActorAlign.CENTER});
-            const usage = [a.costUsd ? `$${a.costUsd.toFixed(2)}` : '', a.contextPct ? `${Math.round(a.contextPct)}% ctx` : '']
+            const row = new St.Button({style_class: 'goisland-irow', can_focus: true, x_expand: true});
+            const box = new St.BoxLayout({style_class: 'goisland-irow-box', x_expand: true});
+            box.add_child(this._badge({gicon: this._ext.agentIcon, color: 'rgba(255, 159, 10, 0.16)'}));
+            const detail = a.detail || a.title || '';
+            const text = this._rowText(`${a.project || 'session'}`, detail, {monoSub: detail.startsWith('$ ')});
+            box.add_child(text.col);
+            const meta = new St.BoxLayout({...VERTICAL, y_align: Clutter.ActorAlign.CENTER, style_class: 'goisland-irow-meta'});
+            meta.add_child(label(`goisland-pill-badge ${color}`, {text: stateName, x_align: Clutter.ActorAlign.END}));
+            const usage = [a.costUsd ? `$${a.costUsd.toFixed(2)}` : '', a.contextPct ? `${Math.round(a.contextPct)}% context` : '']
                 .filter(Boolean).join('  ·  ');
-            meta.add_child(label('goisland-agent-usage', {text: usage || ' ', x_align: Clutter.ActorAlign.END}));
-            const when = label('goisland-agent-when', {text: ago(a.updatedAt), x_align: Clutter.ActorAlign.END});
+            const when = label('goisland-irow-sub', {text: ago(a.updatedAt), x_align: Clutter.ActorAlign.END});
             this._agentWhen[k] = when;
+            if (usage)
+                meta.add_child(label('goisland-irow-sub', {text: usage, x_align: Clutter.ActorAlign.END}));
             meta.add_child(when);
             box.add_child(meta);
-            const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
+            row.child = box;
             row.connect('clicked', () => {
                 if (focusPids(a.focus))
                     this._closeDash();
@@ -954,13 +1022,11 @@ class Island extends St.BoxLayout {
 
     _buildDockerPage() {
         const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
-        this._dockerList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
         this._dockerEmpty = this._emptyState();
-        card.add_child(this._dockerEmpty.actor);
-        this._dockerScroll = scrollView(this._dockerList);
-        card.add_child(this._dockerScroll);
-        page.add_child(card);
+        this._dockerGroups = new St.BoxLayout({...VERTICAL, style_class: 'goisland-groups'});
+        this._dockerScroll = scrollView(this._dockerGroups);
+        page.add_child(this._dockerEmpty.actor);
+        page.add_child(this._dockerScroll);
         return page;
     }
 
@@ -1027,7 +1093,7 @@ class Island extends St.BoxLayout {
             const list = err ? [] : JSON.parse(res[0]);
             if (err || !list.length) {
                 this._dockerSig = null;
-                this._dockerList.destroy_all_children();
+                this._dockerGroups.destroy_all_children();
                 this._dockerScroll.hide();
                 this._dockerEmpty.show(err ? dockerProblem(err.message) : {
                     icon: 'network-server-symbolic', title: 'No containers running',
@@ -1058,13 +1124,21 @@ class Island extends St.BoxLayout {
         return {
             actor,
             show: spec => {
-                icon.icon_name = spec.icon;
+                this._refit();
+                if (spec.gicon)
+                    icon.gicon = spec.gicon;
+                else
+                    icon.icon_name = spec.icon;
                 setText(title, spec.title);
                 setText(hint, spec.hint ?? '');
                 hint.visible = !!spec.hint;
                 actor.show();
             },
-            hide: () => actor.hide(),
+            hide: () => {
+                if (actor.visible)
+                    this._refit();
+                actor.hide();
+            },
         };
     }
 
@@ -1080,17 +1154,20 @@ class Island extends St.BoxLayout {
         }
         this._dockerSig = sig;
         this._dockerStats = new Map();
-        const entries = [];
-        let project = null;
+        this._dockerGroups.destroy_all_children();
+        const projects = new Map();
         for (const c of list) {
-            if (c.project !== project) {
-                project = c.project;
-                entries.push({header: (project || 'standalone').toUpperCase()});
-            }
-            entries.push({c});
+            const key = c.project || '';
+            if (!projects.has(key))
+                projects.set(key, []);
+            projects.get(key).push(c);
         }
-        this._fillList(this._dockerList, entries, e =>
-            e.header ? label('goisland-group', {text: e.header}) : this._makeDockerRow(e.c));
+        for (const [project, containers] of projects) {
+            const count = label('goisland-igroup-count', {text: `${containers.length} running`});
+            const g = this._group((project || 'standalone').toUpperCase(), count);
+            this._dockerGroups.add_child(g.actor);
+            this._fillList(g.list, containers, c => this._makeDockerRow(c));
+        }
     }
 
     _setDockerStats(refs, st) {
@@ -1101,40 +1178,36 @@ class Island extends St.BoxLayout {
     }
 
     _makeDockerRow(c) {
-        {
-            const row = new St.BoxLayout({style_class: 'goisland-row'});
-            const healthy = c.state === 'running' && !/unhealthy/.test(c.status);
-            row.add_child(new St.Widget({
-                style_class: `goisland-dot ${healthy ? 'ok' : 'bad'}`, y_align: Clutter.ActorAlign.CENTER,
-            }));
-            const col = new St.BoxLayout({...VERTICAL, x_expand: true});
-            col.add_child(label('goisland-row-title', {text: c.name}));
-            col.add_child(label('goisland-row-sub', {text: [c.status, c.image].filter(Boolean).join('  ·  ')}));
-            row.add_child(col);
-            const chips = new St.BoxLayout({style_class: 'goisland-port-chips', y_align: Clutter.ActorAlign.CENTER});
-            for (const p of (c.ports || '').split(', ').filter(Boolean).slice(0, 3))
-                chips.add_child(this._portButton(p, 'goisland-port-chip'));
-            row.add_child(chips);
-            const usage = new St.BoxLayout({...VERTICAL, style_class: 'goisland-usage', y_align: Clutter.ActorAlign.CENTER});
-            const refs = {
-                cpu: label('goisland-usage-cpu', {x_align: Clutter.ActorAlign.END}),
-                mem: label('goisland-usage-mem', {x_align: Clutter.ActorAlign.END}),
-            };
-            this._setDockerStats(refs, c.stats);
-            this._dockerStats.set(c.id, refs);
-            usage.add_child(refs.cpu);
-            usage.add_child(refs.mem);
-            row.add_child(usage);
-            row.add_child(iconButton('format-justify-left-symbolic', 'goisland-row-btn',
-                () => this._showLogs(c), `Logs of ${c.name}`));
-            for (const [op, icon] of [['restart', 'view-refresh-symbolic'], ['stop', 'media-playback-stop-symbolic']]) {
-                row.add_child(iconButton(icon, 'goisland-row-btn', () => {
-                    row.opacity = 128;
-                    this._ext.call('DockerAction', [c.id, op], () => this._loadDocker());
-                }, `${op} ${c.name}`));
-            }
-            return row;
+        const unhealthy = /unhealthy/.test(c.status);
+        const color = c.state !== 'running' ? '#8e8e93' : unhealthy ? '#ff9f0a' : '#30d158';
+        const row = new St.BoxLayout({style_class: 'goisland-irow goisland-irow-box', x_expand: true});
+        row.add_child(this._badge({icon: 'network-server-symbolic', color}));
+        const status = c.status.replace(/\s*\((healthy|unhealthy)\)/, '');
+        const health = unhealthy ? 'Unhealthy' : /\(healthy\)/.test(c.status) ? 'Healthy' : '';
+        row.add_child(this._rowText(c.name, [health, status, c.image].filter(Boolean).join('  ·  ')).col);
+        const chips = new St.BoxLayout({style_class: 'goisland-port-chips', y_align: Clutter.ActorAlign.CENTER});
+        for (const p of (c.ports || '').split(', ').filter(Boolean).slice(0, 3))
+            chips.add_child(this._portButton(p, 'goisland-port-chip'));
+        row.add_child(chips);
+        const usage = new St.BoxLayout({...VERTICAL, style_class: 'goisland-usage', y_align: Clutter.ActorAlign.CENTER});
+        const refs = {
+            cpu: label('goisland-usage-cpu', {x_align: Clutter.ActorAlign.END}),
+            mem: label('goisland-usage-mem', {x_align: Clutter.ActorAlign.END}),
+        };
+        this._setDockerStats(refs, c.stats);
+        this._dockerStats.set(c.id, refs);
+        usage.add_child(refs.cpu);
+        usage.add_child(refs.mem);
+        row.add_child(usage);
+        const btns = [iconButton('format-justify-left-symbolic', 'goisland-row-btn', () => this._showLogs(c), `Logs of ${c.name}`)];
+        for (const [op, icon] of [['restart', 'view-refresh-symbolic'], ['stop', 'media-playback-stop-symbolic']]) {
+            btns.push(iconButton(icon, 'goisland-row-btn', () => {
+                row.opacity = 128;
+                this._ext.call('DockerAction', [c.id, op], () => this._loadDocker());
+            }, `${op} ${c.name}`));
         }
+        row.add_child(this._hoverActions(row, btns));
+        return row;
     }
 
     // ----- Ports -----
@@ -1156,13 +1229,11 @@ class Island extends St.BoxLayout {
                 this._freePort(port);
             }
         });
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
-        this._portList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
         this._portMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
-        card.add_child(this._portMsg);
-        card.add_child(scrollView(this._portList));
+        this._portGroups = new St.BoxLayout({...VERTICAL, style_class: 'goisland-groups'});
         page.add_child(this._portEntry);
-        page.add_child(card);
+        page.add_child(this._portMsg);
+        page.add_child(scrollView(this._portGroups));
         this._ports = [];
         return page;
     }
@@ -1182,42 +1253,52 @@ class Island extends St.BoxLayout {
             ? this._ports.filter(l => `${l.port} ${l.process ?? ''} ${l.container ?? ''} ${l.cmd ?? ''}`.toLowerCase().includes(q))
             : this._ports;
         this._message(this._portMsg, error ?? (items.length ? '' : q ? 'No matches. Press Enter to free that port.' : 'Nothing listening'));
-        this._fillList(this._portList, items, l => {
-            const mine = !!(l.container || l.pid);
-            const row = new St.BoxLayout({style_class: `goisland-row${mine ? '' : ' muted'}`});
-            row.add_child(this._portButton(l.port, 'goisland-port'));
-            const col = new St.BoxLayout({...VERTICAL, x_expand: true});
-            const owner = l.container ? `${l.container}  ·  container` : l.process ? `${l.process}  ·  pid ${l.pid}` : 'System service';
-            col.add_child(label('goisland-row-title', {text: owner}));
-            col.add_child(label('goisland-row-sub', {text: [l.addr, l.cmd].filter(Boolean).join('  ·  ')}));
-            row.add_child(col);
-            if (mine) {
-                const verb = l.container ? 'Stop' : 'Kill';
-                const btn = new St.Button({style_class: 'goisland-pill-btn danger', label: verb, can_focus: true, y_align: Clutter.ActorAlign.CENTER});
-                let armed = false;
-                btn.connect('clicked', () => {
-                    if (!armed) { // two-step confirm
-                        armed = true;
-                        btn.label = 'Sure?';
-                        btn.add_style_pseudo_class('armed');
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
-                            if (armed && btn.get_stage()) {
-                                armed = false;
-                                btn.label = verb;
-                                btn.remove_style_pseudo_class('armed');
-                            }
-                            return GLib.SOURCE_REMOVE;
-                        });
-                        return;
-                    }
-                    armed = false;
-                    row.opacity = 128;
-                    this._freePort(l.port);
-                });
-                row.add_child(btn);
-            }
-            return row;
-        });
+        this._portGroups.destroy_all_children();
+        const mine = items.filter(l => l.container || l.pid);
+        const system = items.filter(l => !(l.container || l.pid));
+        for (const [title, list] of [['YOUR APPS & CONTAINERS', mine], ['SYSTEM', system]]) {
+            if (!list.length)
+                continue;
+            const g = this._group(title);
+            this._portGroups.add_child(g.actor);
+            this._fillList(g.list, list, l => this._makePortRow(l));
+        }
+    }
+
+    _makePortRow(l) {
+        const own = !!(l.container || l.pid);
+        const row = new St.BoxLayout({style_class: `goisland-irow goisland-irow-box${own ? '' : ' muted'}`, x_expand: true});
+        row.add_child(this._portButton(l.port, 'goisland-port-pill'));
+        const title = l.container ?? l.process ?? 'System service';
+        const kind = l.container ? 'Container' : l.pid ? `PID ${l.pid}` : '';
+        const where = l.addr === '0.0.0.0' || l.addr === '::' ? 'All interfaces' : l.addr === '127.0.0.1' || l.addr === '::1' ? 'Localhost' : l.addr;
+        row.add_child(this._rowText(title, [kind, where].filter(Boolean).join('  ·  ')).col);
+        if (own) {
+            const verb = l.container ? 'Stop' : 'Kill';
+            const btn = new St.Button({style_class: 'goisland-pill-btn danger', label: verb, can_focus: true, y_align: Clutter.ActorAlign.CENTER});
+            let armed = false;
+            btn.connect('clicked', () => {
+                if (!armed) { // two-step confirm
+                    armed = true;
+                    btn.label = 'Sure?';
+                    btn.add_style_pseudo_class('armed');
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+                        if (armed && btn.get_stage()) {
+                            armed = false;
+                            btn.label = verb;
+                            btn.remove_style_pseudo_class('armed');
+                        }
+                        return GLib.SOURCE_REMOVE;
+                    });
+                    return;
+                }
+                armed = false;
+                row.opacity = 128;
+                this._freePort(l.port);
+            });
+            row.add_child(this._hoverActions(row, [btn]));
+        }
+        return row;
     }
 
     // A port number that opens http://localhost:PORT when clicked.
@@ -1250,7 +1331,7 @@ class Island extends St.BoxLayout {
         const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
         const top = new St.BoxLayout({style_class: 'goisland-toolbar'});
         this._clipFilter = new St.Entry({
-            style_class: 'goisland-entry', hint_text: 'Filter clipboard', can_focus: true, x_expand: true,
+            style_class: 'goisland-entry', hint_text: 'Search clipboard history', can_focus: true, x_expand: true,
             primary_icon: new St.Icon({icon_name: 'system-search-symbolic', style_class: 'goisland-entry-icon'}),
         });
         this._clipFilter.clutter_text.connect('text-changed', () => this._renderClipboard());
@@ -1263,14 +1344,12 @@ class Island extends St.BoxLayout {
         clear.connect('clicked', () => this._ext.call('ClipboardClear', [], () => this._loadClipboard()));
         top.add_child(this._clipFilter);
         top.add_child(clear);
-
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
-        this._clipList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
-        this._clipMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
-        card.add_child(this._clipMsg);
-        card.add_child(scrollView(this._clipList));
+        this._clipEmpty = this._emptyState();
+        this._clipGroups = new St.BoxLayout({...VERTICAL, style_class: 'goisland-groups'});
+        this._clipScroll = scrollView(this._clipGroups);
         page.add_child(top);
-        page.add_child(card);
+        page.add_child(this._clipEmpty.actor);
+        page.add_child(this._clipScroll);
         return page;
     }
 
@@ -1703,13 +1782,11 @@ class Island extends St.BoxLayout {
         bar.add_child(this._inboxCount);
         bar.add_child(clear);
         page.add_child(bar);
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
         this._inboxEmpty = this._emptyState();
-        this._inboxList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
+        this._inboxList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-ncards'});
         this._inboxScroll = scrollView(this._inboxList);
-        card.add_child(this._inboxEmpty.actor);
-        card.add_child(this._inboxScroll);
-        page.add_child(card);
+        page.add_child(this._inboxEmpty.actor);
+        page.add_child(this._inboxScroll);
         return page;
     }
 
@@ -1749,53 +1826,36 @@ class Island extends St.BoxLayout {
         }
         this._inboxSig = sig;
         this._inboxWhen = [];
-        // Group consecutive notifications from the same app.
-        const entries = [];
-        let app = null;
-        for (const it of items) {
-            if (it.app !== app) {
-                app = it.app;
-                entries.push({header: it});
-            }
-            entries.push({it});
-        }
-        let k = 0;
-        this._fillList(this._inboxList, entries, e => {
-            if (e.header) {
-                const h = new St.BoxLayout({style_class: 'goisland-inbox-app'});
-                const icon = new St.Icon({style_class: 'goisland-inbox-app-icon', y_align: Clutter.ActorAlign.CENTER});
-                const appInfo = this._ext.lookupApp(e.header);
-                if (appInfo)
-                    icon.gicon = appInfo.get_icon();
-                else
-                    icon.icon_name = 'application-x-executable-symbolic';
-                h.add_child(icon);
-                h.add_child(label('goisland-group goisland-inbox-app-name', {text: (e.header.app || 'App').toUpperCase(), x_expand: true}));
-                return h;
-            }
-            const it = e.it;
-            const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-inbox-row'});
+        this._fillList(this._inboxList, items, (it, k) => {
+            const card = new St.Button({style_class: 'goisland-ncard', can_focus: true, x_expand: true});
+            const box = new St.BoxLayout({style_class: 'goisland-ncard-box', x_expand: true});
+            box.add_child(this._appBadge(it.app, it.desktopEntry));
             const col = new St.BoxLayout({...VERTICAL, x_expand: true});
-            col.add_child(label('goisland-row-title', {text: it.title}));
+            const head = new St.BoxLayout({style_class: 'goisland-ncard-head'});
+            const app = label('goisland-ncard-app', {text: (it.app || 'App').toUpperCase(), x_expand: true});
+            app.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            head.add_child(app);
+            const when = label('goisland-ncard-when', {text: ago(it.at)});
+            this._inboxWhen[k] = when;
+            head.add_child(when);
+            head.add_child(this._hoverActions(card, [iconButton('window-close-symbolic', 'goisland-row-btn small', () =>
+                this._ext.call('InboxRemove', [it.id], () => this._loadInbox()), 'Dismiss')]));
+            col.add_child(head);
+            col.add_child(label('goisland-ncard-title', {text: it.title}));
             if (it.body) {
-                const body = new St.Label({style_class: 'goisland-inbox-body', text: it.body.slice(0, 280)});
+                const body = new St.Label({style_class: 'goisland-ncard-body', text: it.body.slice(0, 280)});
                 body.clutter_text.line_wrap = true;
                 body.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 col.add_child(body);
             }
             box.add_child(col);
-            const when = label('goisland-inbox-when', {text: ago(it.at), y_align: Clutter.ActorAlign.START});
-            this._inboxWhen[k++] = when;
-            box.add_child(when);
-            box.add_child(iconButton('window-close-symbolic', 'goisland-row-btn', () =>
-                this._ext.call('InboxRemove', [it.id], () => this._loadInbox()), 'Dismiss'));
-            const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
-            row.connect('clicked', () => {
+            card.child = box;
+            card.connect('clicked', () => {
                 this._ext.activateNotification({title: it.title, subtitle: it.body, app: it.app, desktopEntry: it.desktopEntry});
                 this._ext.call('InboxRemove', [it.id]);
                 this._closeDash();
             });
-            return row;
+            return card;
         });
     }
 
@@ -1853,35 +1913,50 @@ class Island extends St.BoxLayout {
 
     _renderClipboard(error = null) {
         const items = this._filteredClips();
-        let msg = '';
-        if (this._ext.presenting) {
-            this._clipList.destroy_all_children();
-            this._message(this._clipMsg, 'Hidden while presenting');
+        this._clipGroups.destroy_all_children();
+        let empty = null;
+        if (this._ext.presenting)
+            empty = {icon: 'edit-paste-symbolic', title: 'Hidden while presenting'};
+        else if (error)
+            empty = {icon: 'dialog-warning-symbolic', title: error};
+        else if (!this._clipItems.length)
+            empty = {icon: 'edit-paste-symbolic', title: 'Nothing copied yet', hint: 'Copy text anywhere and it shows up here'};
+        else if (!items.length)
+            empty = {icon: 'system-search-symbolic', title: 'No matches'};
+        this._clipScroll.visible = !empty;
+        if (empty) {
+            this._clipEmpty.show(empty);
             return;
         }
-        if (error)
-            msg = error;
-        else if (!this._clipItems.length)
-            msg = 'Copy something and it shows up here';
-        else if (!items.length)
-            msg = 'No matches';
-        this._message(this._clipMsg, msg);
-        // 50 visible rows keeps the list light; the filter searches everything.
-        this._fillList(this._clipList, items.slice(0, 50), it => {
-            const box = new St.BoxLayout({x_expand: true});
-            const preview = it.text.slice(0, 300).replace(/\s*\n\s*/g, ' ⏎ ');
-            box.add_child(label('goisland-clip-text', {text: preview, x_expand: true}));
-            box.add_child(iconButton('view-app-grid-symbolic', 'goisland-row-btn',
-                () => this._showQR(it.text), 'Show as QR code'));
-            box.add_child(iconButton('view-pin-symbolic', `goisland-row-btn${it.pinned ? ' pinned' : ''}`,
-                () => this._ext.call('ClipboardPin', [it.id, !it.pinned], () => this._loadClipboard()),
-                it.pinned ? 'Unpin' : 'Pin'));
-            box.add_child(iconButton('edit-delete-symbolic', 'goisland-row-btn',
-                () => this._ext.call('ClipboardDelete', [it.id], () => this._loadClipboard()), 'Delete'));
-            const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
-            row.connect('clicked', () => this._copy(it.text));
-            return row;
-        });
+        this._clipEmpty.hide();
+        const shown = items.slice(0, 50);
+        const pinned = shown.filter(i => i.pinned), recent = shown.filter(i => !i.pinned);
+        for (const [title, list] of [['PINNED', pinned], ['RECENT', recent]]) {
+            if (!list.length)
+                continue;
+            const g = this._group(title);
+            this._clipGroups.add_child(g.actor);
+            this._fillList(g.list, list, it => this._makeClipRow(it));
+        }
+    }
+
+    _makeClipRow(it) {
+        const kind = clipKind(it.text);
+        const row = new St.Button({style_class: 'goisland-irow', can_focus: true, x_expand: true});
+        const box = new St.BoxLayout({style_class: 'goisland-irow-box', x_expand: true});
+        box.add_child(this._badge(kind.badge));
+        const first = it.text.trim().split('\n')[0].slice(0, 200);
+        box.add_child(this._rowText(first, `${kind.label}  ·  ${ago(it.at)}`, {monoTitle: kind.mono}).col);
+        box.add_child(this._hoverActions(row, [
+            iconButton('view-app-grid-symbolic', 'goisland-row-btn', () => this._showQR(it.text), 'Show as QR code'),
+            iconButton('view-pin-symbolic', `goisland-row-btn${it.pinned ? ' pinned' : ''}`,
+                () => this._ext.call('ClipboardPin', [it.id, !it.pinned], () => this._loadClipboard()), it.pinned ? 'Unpin' : 'Pin'),
+            iconButton('user-trash-symbolic', 'goisland-row-btn',
+                () => this._ext.call('ClipboardDelete', [it.id], () => this._loadClipboard()), 'Delete'),
+        ]));
+        row.child = box;
+        row.connect('clicked', () => this._copy(it.text));
+        return row;
     }
 
     _copy(text) {
@@ -1942,9 +2017,9 @@ class Island extends St.BoxLayout {
         this._calcValue = null;
         page.add_child(this._calcRow);
 
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-sites-card', ...VERTICAL, x_expand: true, y_expand: true});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-sites-card', ...VERTICAL, x_expand: true});
         const head = new St.BoxLayout({style_class: 'goisland-section-head'});
-        head.add_child(label('goisland-group', {text: 'SAVED SITES', x_expand: true}));
+        head.add_child(label('goisland-group', {text: 'FAVORITES', x_expand: true}));
         head.add_child(label('goisland-hint', {text: 'Right-click to remove'}));
         card.add_child(head);
 
@@ -2126,7 +2201,7 @@ class Island extends St.BoxLayout {
 
         // Appearance
         const look = this._settingsCard(box, 'APPEARANCE');
-        const accentRow = this._settingsRow(look, 'Accent colour', null);
+        const accentRow = this._settingsRow(look, 'Accent colour', null, 'applications-graphics-symbolic');
         const swatches = new St.BoxLayout({style_class: 'goisland-swatches', y_align: Clutter.ActorAlign.CENTER});
         for (const [name, hex] of Object.entries(ACCENT_COLORS)) {
             const dot = new St.Widget({style_class: 'goisland-swatch-dot', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
@@ -2137,7 +2212,7 @@ class Island extends St.BoxLayout {
             this._settingControls.push(st => (btn.checked = (st.accent ?? 'blue') === name));
         }
         accentRow.add_child(swatches);
-        const surfaceRow = this._settingsRow(look, 'Surface', null);
+        const surfaceRow = this._settingsRow(look, 'Surface', null, 'weather-clear-night-symbolic');
         const seg = new St.BoxLayout({style_class: 'goisland-seg', y_align: Clutter.ActorAlign.CENTER});
         for (const [id, name] of SURFACES) {
             const btn = new St.Button({style_class: 'goisland-seg-btn', label: name, can_focus: true});
@@ -2156,43 +2231,34 @@ class Island extends St.BoxLayout {
 
         // Features
         const feats = this._settingsCard(box, 'FEATURES');
-        for (const [key, name, desc] of FEATURES)
-            this._settingsToggle(feats, name, desc, null, st => featureOn(st, key), on => ({features: {[key]: on}}));
+        for (const [key, name, desc, icon] of FEATURES)
+            this._settingsToggle(feats, name, desc, icon, st => featureOn(st, key), on => ({features: {[key]: on}}));
 
         page.add_child(scrollView(box));
         return page;
     }
 
     _settingsCard(parent, title) {
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-settings-card', ...VERTICAL, x_expand: true});
-        card.add_child(label('goisland-group', {text: title}));
-        parent.add_child(card);
-        return card;
+        const g = this._group(title);
+        parent.add_child(g.actor);
+        return g.list;
     }
 
     _settingsRow(card, title, desc, icon = null) {
-        const row = new St.BoxLayout({style_class: 'goisland-setting-row', x_expand: true});
+        const row = new St.BoxLayout({style_class: 'goisland-irow goisland-irow-box', x_expand: true});
         if (icon)
-            row.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-setting-icon', y_align: Clutter.ActorAlign.CENTER}));
-        const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-        col.add_child(label('goisland-setting-title', {text: title}));
-        if (desc)
-            col.add_child(label('goisland-setting-desc', {text: desc}));
-        row.add_child(col);
+            row.add_child(this._badge({icon, color: SETTING_COLORS[icon] ?? '#636366'}));
+        row.add_child(this._rowText(title, desc).col);
         card.add_child(row);
         return row;
     }
 
     _settingsToggle(card, title, desc, icon, get, patch) {
-        const row = new St.Button({style_class: 'goisland-row goisland-setting-toggle', can_focus: true, x_expand: true});
-        const inner = new St.BoxLayout({style_class: 'goisland-setting-row', x_expand: true});
+        const row = new St.Button({style_class: 'goisland-irow', can_focus: true, x_expand: true});
+        const inner = new St.BoxLayout({style_class: 'goisland-irow-box', x_expand: true});
         if (icon)
-            inner.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-setting-icon', y_align: Clutter.ActorAlign.CENTER}));
-        const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-        col.add_child(label('goisland-setting-title', {text: title}));
-        if (desc)
-            col.add_child(label('goisland-setting-desc', {text: desc}));
-        inner.add_child(col);
+            inner.add_child(this._badge({icon, color: SETTING_COLORS[icon] ?? '#636366'}));
+        inner.add_child(this._rowText(title, desc).col);
         const sw = new Toggle(true);
         inner.add_child(sw.actor);
         row.child = inner;
@@ -2531,7 +2597,7 @@ class Island extends St.BoxLayout {
     // From `island open [tab]` (bind it to a keyboard shortcut).
     toggleDash(tab) {
         tab = TAB_ALIASES[tab] ?? tab;
-        const valid = TABS.some(([id]) => id === tab);
+        const valid = TABS.some(([id]) => id === tab) || tab === 'settings';
         if (this._dashOpen) {
             if (valid && tab !== this._tab)
                 this._showTab(tab);
@@ -2719,6 +2785,8 @@ class Island extends St.BoxLayout {
                 if (actor)
                     box.add_child(actor);
             }
+            if (i >= items.length)
+                this._refit();
             return i < items.length;
         };
         if (step())
@@ -2742,6 +2810,93 @@ class Island extends St.BoxLayout {
             page.get_preferred_width(-1);
             page.get_preferred_height(width);
             return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    // ---------- Apple-style building blocks ----------
+
+    // Inset grouped list: a small caps title above a rounded card whose rows
+    // are separated by hairlines. The card hugs its content.
+    _group(title = null, trailing = null) {
+        const actor = new St.BoxLayout({...VERTICAL, style_class: 'goisland-igroup'});
+        if (title || trailing) {
+            const head = new St.BoxLayout({style_class: 'goisland-igroup-head'});
+            const t = label('goisland-igroup-title', {text: title ?? '', x_expand: true});
+            t.clutter_text.ellipsize = Pango.EllipsizeMode.NONE; // letter-spacing isn't measured
+            head.add_child(t);
+            if (trailing)
+                head.add_child(trailing);
+            actor.add_child(head);
+        }
+        const list = new St.BoxLayout({...VERTICAL, style_class: 'goisland-inset'});
+        actor.add_child(list);
+        return {actor, list};
+    }
+
+    // A rounded-square icon badge, like iOS Settings: {icon|gicon|glyph, color}.
+    _badge(spec) {
+        const bin = new St.Bin({style_class: `goisland-badge${spec.small ? ' small' : ''}`, y_align: Clutter.ActorAlign.CENTER});
+        bin.set_style(`background-color: ${spec.color};`);
+        bin.child = spec.glyph !== undefined
+            ? new St.Label({text: spec.glyph, style_class: 'goisland-badge-glyph', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER})
+            : new St.Icon({style_class: 'goisland-badge-icon', gicon: spec.gicon ?? null, icon_name: spec.icon ?? null,
+                x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+        if (spec.tint)
+            bin.child.set_style(`color: ${spec.tint};`);
+        return bin;
+    }
+
+    // The sending app's real icon, or a coloured initial badge (iOS style).
+    _appBadge(app, desktopEntry) {
+        const info = this._ext.lookupApp({app, desktopEntry});
+        if (info)
+            return new St.Icon({gicon: info.get_icon(), style_class: 'goisland-app-icon', y_align: Clutter.ActorAlign.CENTER});
+        const name = app || '?';
+        const hash = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+        return this._badge({glyph: name[0].toUpperCase(), color: TILE_COLORS[hash % TILE_COLORS.length]});
+    }
+
+    // Row actions that fade in on hover (macOS hover controls). While
+    // hidden they can't be clicked, so nothing destructive is hit blindly.
+    _hoverActions(row, buttons) {
+        const box = new St.BoxLayout({style_class: 'goisland-row-actions', opacity: 0, y_align: Clutter.ActorAlign.CENTER});
+        for (const b of buttons) {
+            b.reactive = false;
+            box.add_child(b);
+        }
+        row.reactive = true;
+        row.track_hover = true;
+        row.connect('notify::hover', () => {
+            buttons.forEach(b => (b.reactive = row.hover));
+            box.ease({opacity: row.hover ? 255 : 0, duration: 120, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        });
+        return box;
+    }
+
+    // Title + secondary line column used by every row.
+    _rowText(title, sub, {monoSub = false, monoTitle = false} = {}) {
+        const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        const t = label(`goisland-irow-title${monoTitle ? ' goisland-mono' : ''}`, {text: title});
+        col.add_child(t);
+        let s = null;
+        if (sub) {
+            s = label(`goisland-irow-sub${monoSub ? ' goisland-mono' : ''}`, {text: sub});
+            col.add_child(s);
+        }
+        return {col, title: t, sub: s};
+    }
+
+    // Re-measure an auto-height tab after its content changed (debounced to
+    // the next frame so several updates cost one relayout).
+    _refit() {
+        if (!this._dashOpen || !AUTO_HEIGHT.has(this._tab) || this._refitQueued)
+            return;
+        this._refitQueued = true;
+        eachFrame(() => {
+            this._refitQueued = false;
+            if (this._dashOpen)
+                this.relayout(true);
+            return false;
         });
     }
 
@@ -2946,8 +3101,18 @@ class Island extends St.BoxLayout {
         }
         case 'notify':
             return [420 * k, 72 * k];
-        case 'dashboard':
-            return [DASH_WIDTH * k, (DASH_HEIGHT[this._tab] ?? DASH_HEIGHT.default) * k];
+        case 'dashboard': {
+            const max = (DASH_HEIGHT[this._tab] ?? DASH_HEIGHT.default) * k;
+            if (!AUTO_HEIGHT.has(this._tab))
+                return [DASH_WIDTH * k, max];
+            // Hug the content: measure the dashboard at its inner width.
+            const node = this.get_theme_node();
+            const innerW = DASH_WIDTH * k - node.get_horizontal_padding();
+            this._dash.set_size(-1, -1);
+            const [, natural] = this._dash.get_preferred_height(innerW);
+            const h = Math.ceil(natural + node.get_vertical_padding());
+            return [DASH_WIDTH * k, Math.max(AUTO_MIN_HEIGHT * k, Math.min(max, h))];
+        }
         case 'osd':
             return [300 * k, barH];
         default:
@@ -3187,10 +3352,29 @@ export default class GoIslandExtension extends Extension {
     lookupApp(view) {
         const apps = Shell.AppSystem.get_default();
         for (const id of [view.desktopEntry, view.app?.toLowerCase(), view.app].filter(Boolean)) {
-            const app = apps.lookup_app(`${id}.desktop`) ?? apps.lookup_heuristic_basename(`${id}.desktop`) ??
-                apps.lookup_desktop_wmclass(id) ?? apps.lookup_startup_wmclass(id);
+            // Exact matches only: the heuristic lookup returns unrelated apps.
+            const app = apps.lookup_app(`${id}.desktop`) ?? apps.lookup_desktop_wmclass(id) ?? apps.lookup_startup_wmclass(id);
             if (app)
                 return app;
+        }
+        return null;
+    }
+
+    // Map a process name (brave, code, slack…) to its app: exact ids first,
+    // then a search hit whose desktop id starts with the name.
+    lookupProcessApp(name) {
+        if (!name)
+            return null;
+        const exact = this.lookupApp({app: name});
+        if (exact)
+            return exact;
+        const apps = Shell.AppSystem.get_default();
+        const low = name.toLowerCase();
+        for (const group of Shell.AppSystem.search(low)) {
+            for (const id of group) {
+                if (id.toLowerCase().startsWith(low))
+                    return apps.lookup_app(id);
+            }
         }
         return null;
     }
