@@ -2065,7 +2065,10 @@ class Island extends St.BoxLayout {
     _updateCalc() {
         const v = calc(this._searchEntry.text);
         this._calcValue = v === null ? null : formatNumber(v);
-        this._calcRow.visible = v !== null;
+        if (this._calcRow.visible !== (v !== null)) {
+            this._calcRow.visible = v !== null;
+            this._refit();
+        }
         if (v !== null) {
             this._calcResult.text = `= ${this._calcValue}`;
             this._calcHint.text = 'Enter to copy';
@@ -2088,6 +2091,7 @@ class Island extends St.BoxLayout {
             tiles.slice(i, i + SITE_COLS).forEach(t => row.add_child(t));
             this._siteGrid.add_child(row);
         }
+        this._refit(); // the favourites arrived after the sheet was sized
     }
 
     _tile(iconActor, name, styleClass = '') {
@@ -2140,6 +2144,7 @@ class Island extends St.BoxLayout {
         btn.accessible_name = 'Add site';
         btn.connect('clicked', () => {
             this._addRow.visible = !this._addRow.visible;
+            this._refit();
             if (this._addRow.visible)
                 this._addUrl.grab_key_focus();
         });
@@ -2909,7 +2914,10 @@ class Island extends St.BoxLayout {
 
     _message(lbl, text) {
         lbl.text = text ?? '';
-        lbl.visible = !!text;
+        if (lbl.visible !== !!text) {
+            lbl.visible = !!text;
+            this._refit();
+        }
     }
 
     // ---------- personality ----------
