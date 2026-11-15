@@ -54,6 +54,7 @@ const IFACE_XML = `
     </method>
     <method name="ClipboardClear"/>
     <method name="AgentsList"><arg name="sessions" type="s" direction="out"/></method>
+    <method name="ActivityList"><arg name="items" type="s" direction="out"/></method>
     <method name="NotesGet"><arg name="text" type="s" direction="out"/></method>
     <method name="NotesSave"><arg name="text" type="s" direction="in"/></method>
     <method name="QR">
@@ -89,6 +90,7 @@ const MODES = ['idle', 'compact', 'notify', 'dashboard', 'osd'];
 const ACCENTS = ['ok', 'warn', 'error'];
 const TABS = [
     ['home', 'Home', 'user-home-symbolic'],
+    ['activity', 'Activity', 'system-run-symbolic'],
     ['agents', 'Agents', 'utilities-terminal-symbolic'],
     ['docker', 'Docker', 'network-server-symbolic'],
     ['ports', 'Ports', 'network-wired-symbolic'],
@@ -99,7 +101,7 @@ const TABS = [
 ];
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
+const DASH_HEIGHT = {activity: 440, transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
 const OSD_MS = 1600;
 const CLIP_DEBOUNCE_MS = 400; // collapse bursts of clipboard owner changes into one read // how long the volume/brightness bar stays up
 
@@ -210,11 +212,11 @@ function ago(ms) {
     return `${Math.floor(s / 3600)}h ago`;
 }
 
-// A tiny "now playing" equalizer. It steps at a few frames per second
-// (like a real level meter) instead of animating every frame, which keeps
-// the shell nearly idle while music plays.
-const EQ_STEP_MS = 180;
-const EQ_PATTERN = [[0.5, 0.9, 0.4, 0.7], [0.8, 0.5, 0.9, 0.4], [0.4, 1.0, 0.6, 0.8], [0.9, 0.6, 0.5, 1.0], [0.6, 0.4, 0.8, 0.5]];
+// "Now playing" equalizer: each bar is a blend of two sine waves at
+// unrelated frequencies (organic, never repeating), evaluated once per
+// displayed frame on the frame clock. It runs only while the music is
+// playing and the bars are on screen.
+const EQ_WAVES = [[7.1, 11.3, 0.0], [8.7, 5.9, 1.7], [6.3, 13.1, 3.1], [9.4, 7.7, 4.4]]; // rad/s, rad/s, phase
 
 class Equalizer {
     constructor(styleClass) {
@@ -227,8 +229,7 @@ class Equalizer {
             return bar;
         });
         this._running = false;
-        this._timer = 0;
-        this._step = 0;
+        this._tl = null;
         this.actor.connect('notify::mapped', () => this._sync());
         this.actor.connect('destroy', () => this._stop());
     }
@@ -238,15 +239,20 @@ class Equalizer {
         this._sync();
     }
 
-    // Only tick while playing *and* on screen.
     _sync() {
         const on = this._running && this.actor.mapped;
-        if (on && !this._timer) {
-            this._timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, EQ_STEP_MS, () => {
-                const row = EQ_PATTERN[this._step++ % EQ_PATTERN.length];
-                this._bars.forEach((bar, i) => (bar.scale_y = row[i]));
-                return GLib.SOURCE_CONTINUE;
+        if (on && !this._tl) {
+            const tl = new Clutter.Timeline({actor: this.actor, duration: 1000, repeat_count: -1});
+            tl.connect('new-frame', () => {
+                const t = GLib.get_monotonic_time() / 1e6;
+                this._bars.forEach((bar, i) => {
+                    const [f1, f2, ph] = EQ_WAVES[i];
+                    const v = 0.58 + 0.26 * Math.sin(t * f1 + ph) + 0.16 * Math.sin(t * f2 + ph * 1.7);
+                    bar.scale_y = Math.max(0.18, Math.min(1, v));
+                });
             });
+            this._tl = tl;
+            tl.start();
         } else if (!on) {
             this._stop();
             this._bars.forEach(bar => (bar.scale_y = 0.35));
@@ -254,9 +260,9 @@ class Equalizer {
     }
 
     _stop() {
-        if (this._timer) {
-            GLib.source_remove(this._timer);
-            this._timer = 0;
+        if (this._tl) {
+            this._tl.stop();
+            this._tl = null;
         }
     }
 }
@@ -390,22 +396,36 @@ class Island extends St.BoxLayout {
         this._clip.add_child(this._dash);
 
         const header = new St.BoxLayout({style_class: 'goisland-header'});
-        const tabs = new St.BoxLayout({style_class: 'goisland-tabs', x_expand: true});
+        // Segmented tab bar: a highlight pill glides (spring) to the selected
+        // tab, which expands to show its name; the others stay icon-only.
+        // Fixed layout: the highlight goes exactly where it's placed (a
+        // BinLayout would re-centre it under the row).
+        const tabsWrap = new St.Widget({
+            style_class: 'goisland-tabs', layout_manager: new Clutter.FixedLayout(), y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._tabIndicator = new St.Widget({style_class: 'goisland-tab-indicator', x: 0, y: 0});
+        const tabs = new St.BoxLayout({style_class: 'goisland-tabs-row', x: 0, y: 0});
+        tabsWrap.add_child(this._tabIndicator);
+        tabsWrap.add_child(tabs);
         this._tabButtons = {};
+        this._tabLabels = {};
         for (const [id, name, icon] of TABS) {
-            const btn = new St.Button({
-                style_class: 'goisland-tab',
-                can_focus: true,
-                accessible_name: name,
-                child: new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon'}),
-            });
+            const box = new St.BoxLayout({style_class: 'goisland-tab-box'});
+            box.add_child(new St.Icon({icon_name: icon, style_class: 'goisland-tab-icon', y_align: Clutter.ActorAlign.CENTER}));
+            const lbl = new St.Label({text: name, style_class: 'goisland-tab-label', y_align: Clutter.ActorAlign.CENTER,
+                clip_to_allocation: true, width: 0, opacity: 0});
+            lbl.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            box.add_child(lbl);
+            const btn = new St.Button({style_class: 'goisland-tab', can_focus: true, accessible_name: name, child: box});
             btn.connect('clicked', () => this._showTab(id));
             tabs.add_child(btn);
             this._tabButtons[id] = btn;
+            this._tabLabels[id] = lbl;
         }
-        this._tabName = label('goisland-tab-name');
-        tabs.add_child(this._tabName);
-        header.add_child(tabs);
+        this._indicator = {pos: [0, 0], vel: [0, 0], tl: null, lastT: 0, still: 0, placed: false};
+        header.add_child(tabsWrap);
+        this._tabName = label('goisland-tab-name', {x_expand: true});
+        header.add_child(this._tabName);
         this._presentBadge = label('goisland-present-badge', {text: 'Presenting · private info hidden', visible: false});
         header.add_child(this._presentBadge);
         header.add_child(iconButton('color-select-symbolic', 'goisland-head-btn', () => {
@@ -426,6 +446,7 @@ class Island extends St.BoxLayout {
         const body = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
         this._pages = {
             home: this._buildHomePage(),
+            activity: this._buildActivityPage(),
             agents: this._buildAgentsPage(),
             docker: this._buildDockerPage(),
             ports: this._buildPortsPage(),
@@ -533,6 +554,73 @@ class Island extends St.BoxLayout {
                 this._dockerRow.sub.text = `${list.length} running${bad ? ` · ${bad} unhealthy` : ''}`;
             }
         });
+    }
+
+    // ----- Activity: builds, tests and dev servers detected on the system -----
+
+    _buildActivityPage() {
+        const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
+        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        this._activityList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
+        this._activityMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
+        card.add_child(this._activityMsg);
+        card.add_child(scrollView(this._activityList));
+        page.add_child(card);
+        return page;
+    }
+
+    _loadActivity() {
+        this._ext.call('ActivityList', [], (res, err) => {
+            if (!this._dashOpen || this._tab !== 'activity')
+                return;
+            const items = err ? [] : JSON.parse(res[0]);
+            this._message(this._activityMsg, err ? 'Daemon not running'
+                : items.length ? '' : 'Nothing running. Builds, tests and dev servers you start in a terminal or IDE show up here.');
+            this._renderActivity(items);
+        });
+    }
+
+    _renderActivity(items) {
+        this._activityList.destroy_all_children();
+        const now = Date.now();
+        let section = null;
+        for (const it of items) {
+            if (it.state !== section) {
+                section = it.state;
+                this._activityList.add_child(label('goisland-group', {text: section === 'running' ? 'RUNNING' : 'RECENTLY FINISHED'}));
+            }
+            const running = it.state === 'running';
+            const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-activity-row'});
+            const badge = new St.Widget({
+                style_class: `goisland-activity-badge ${it.kind}${running ? '' : ' done'}`,
+                layout_manager: new Clutter.BinLayout(), y_align: Clutter.ActorAlign.CENTER,
+            });
+            badge.add_child(new St.Icon({
+                icon_name: !running ? 'object-select-symbolic' : it.kind === 'service' ? 'network-server-symbolic' : 'system-run-symbolic',
+                style_class: 'goisland-activity-icon', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+            }));
+            box.add_child(badge);
+            const col = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+            col.add_child(label('goisland-row-title goisland-mono', {text: it.title}));
+            col.add_child(label('goisland-row-sub', {text: [it.project, it.app].filter(Boolean).join('  ·  ')}));
+            box.add_child(col);
+            if (running && it.ports?.length) {
+                const chips = new St.BoxLayout({style_class: 'goisland-port-chips', y_align: Clutter.ActorAlign.CENTER});
+                for (const port of it.ports.slice(0, 3))
+                    chips.add_child(this._portButton(port, 'goisland-port-chip'));
+                box.add_child(chips);
+            }
+            const when = running
+                ? fmtClock((now - it.startedAt) / 1000)
+                : `took ${fmtClock((it.endedAt - it.startedAt) / 1000)} · ${ago(it.endedAt)}`;
+            box.add_child(label(`goisland-activity-time${running ? ' live' : ''}`, {text: when, y_align: Clutter.ActorAlign.CENTER}));
+            const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
+            row.connect('clicked', () => {
+                if (focusPids(it.focus))
+                    this._closeDash();
+            });
+            this._activityList.add_child(row);
+        }
     }
 
     // ----- Agents -----
@@ -1562,7 +1650,7 @@ class Island extends St.BoxLayout {
         if (s.kind !== 'media' && s.kind !== 'timer' && s.click) // e.g. dismiss a notification
             this._ext.action(s.click);
         else
-            this.openDash(s.kind === 'agent' ? 'agents' : 'home');
+            this.openDash({agent: 'agents', task: 'activity', service: 'activity'}[s.kind] ?? 'home');
         return Clutter.EVENT_STOP;
     }
 
@@ -1636,13 +1724,20 @@ class Island extends St.BoxLayout {
             btn.checked = tid === id;
         for (const [pid, page] of Object.entries(this._pages))
             page.visible = pid === id;
-        this._tabName.text = TABS.find(([tid]) => tid === id)?.[1] ?? {qr: 'QR code', logs: 'Logs'}[id] ?? '';
-        if (id === 'logs')
-            this._tabButtons.docker.checked = true;
+        // Sub-pages keep their parent tab selected and name themselves.
+        const parent = {logs: 'docker', qr: this._qrReturn ?? 'clipboard'}[id] ?? id;
+        this._tabName.text = {qr: '›  QR code', logs: '›  Logs'}[id] ?? '';
+        this._selectTab(parent);
 
         this._stopDocker();
         let focus = this;
-        if (id === 'logs') {
+        if (id === 'activity') {
+            this._loadActivity();
+            this._dockerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+                this._loadActivity();
+                return GLib.SOURCE_CONTINUE;
+            });
+        } else if (id === 'logs') {
             this._loadLogs(true);
             this._dockerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
                 this._loadLogs(false);
@@ -1690,6 +1785,69 @@ class Island extends St.BoxLayout {
         this.relayout(true); // tabs have different heights
         this._tick();
         this._syncTicker();
+    }
+
+    _selectTab(id) {
+        for (const [tid, btn] of Object.entries(this._tabButtons)) {
+            const on = tid === id;
+            btn.checked = on;
+            const lbl = this._tabLabels[tid];
+            // The label has a fixed width (animated), so measure its text.
+            const [, textW] = lbl.clutter_text.get_preferred_width(-1);
+            const natural = Math.ceil(textW + lbl.get_theme_node().get_horizontal_padding());
+            lbl.ease({
+                width: on ? natural : 0, opacity: on ? 255 : 0,
+                duration: 260, mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+            });
+        }
+        this._selectedTab = id;
+        this._runIndicator();
+    }
+
+    // The highlight follows the selected button every frame (its position
+    // and width change while labels expand/collapse), on a critically
+    // damped spring, then stops once settled.
+    _runIndicator() {
+        const ind = this._indicator;
+        if (ind.tl)
+            return;
+        ind.lastT = 0;
+        ind.still = 0;
+        const tl = new Clutter.Timeline({actor: this._tabIndicator, duration: 1000, repeat_count: -1});
+        tl.connect('new-frame', () => {
+            const btn = this._tabButtons[this._selectedTab];
+            if (!btn)
+                return;
+            const target = [btn.x, btn.width];
+            if (!ind.placed) { // first show: no slide-in from x=0
+                ind.pos = [...target];
+                ind.vel = [0, 0];
+                ind.placed = btn.width > 0;
+            }
+            const now = GLib.get_monotonic_time() / 1e6;
+            const dt = ind.lastT ? Math.min(0.05, Math.max(0.001, now - ind.lastT)) : 1 / 60;
+            ind.lastT = now;
+            const w = 22, e = Math.exp(-w * dt);
+            let moving = false;
+            for (let a = 0; a < 2; a++) {
+                const x = ind.pos[a] - target[a], v = ind.vel[a];
+                const nx = (x + (v + w * x) * dt) * e;
+                ind.vel[a] = (v - w * (v + w * x) * dt) * e;
+                ind.pos[a] = target[a] + nx;
+                if (Math.abs(nx) > 0.05 || Math.abs(ind.vel[a]) > 0.5)
+                    moving = true;
+            }
+            this._tabIndicator.set_position(Math.round(ind.pos[0] * 2) / 2, btn.y);
+            this._tabIndicator.set_size(Math.max(0, ind.pos[1]), btn.height);
+            if (moving || this._tabLabels[this._selectedTab]?.get_transition('width'))
+                ind.still = 0;
+            else if (++ind.still > 8) {
+                tl.stop();
+                ind.tl = null;
+            }
+        });
+        ind.tl = tl;
+        tl.start();
     }
 
     _stopDocker() {
@@ -2086,6 +2244,30 @@ export default class GoIslandExtension extends Extension {
         this._island?.setPresenting(on);
     }
 
+    // GNOME shows a banner only when MessageTray._bannerBlocked is false,
+    // and panel menus toggle that flag as they open/close. While the island
+    // is connected (it shows notifications itself), pin it on by shadowing
+    // the accessor on the instance. Notifications still land in the
+    // calendar's list.
+    _blockBanners(on) {
+        const tray = Main.messageTray;
+        if (!tray || on === !!this._bannersBlocked)
+            return;
+        this._bannersBlocked = on;
+        if (on) {
+            Object.defineProperty(tray, 'bannerBlocked', {
+                configurable: true,
+                get: () => true,
+                set: () => {}, // ignore panel menus while the island is active
+            });
+            tray._bannerBlocked = true;
+        } else {
+            delete tray.bannerBlocked; // back to MessageTray's own accessor
+            tray._bannerBlocked = false;
+        }
+        tray._updateState?.();
+    }
+
     // ---------- clipboard ----------
     //
     // A GNOME Shell crash (SIGSEGV in a GJS callback trampoline, invoked
@@ -2169,6 +2351,7 @@ export default class GoIslandExtension extends Extension {
                 return;
             }
             this._proxy = proxy;
+            this._blockBanners(true);
             this._signalIds = [
                 proxy.connectSignal('StateChanged', (_p, _sender, [json]) => this._applyState(json)),
                 proxy.connectSignal('OpenDashboard', (_p, _sender, [tab]) => this._island?.toggleDash(tab)),
@@ -2185,6 +2368,7 @@ export default class GoIslandExtension extends Extension {
     }
 
     _disconnect() {
+        this._blockBanners(false); // daemon gone: GNOME's banners come back
         this._cancellable?.cancel();
         this._cancellable = null;
         for (const id of this._signalIds ?? [])

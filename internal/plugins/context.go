@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,9 +26,11 @@ import (
 // tasks are reported as "Finished", not passed/failed. (`island run` and the
 // shell hook do know exit codes.)
 type Context struct {
-	tracked map[int]*tracked
-	bootT   time.Time
-	tick    int
+	mu       sync.Mutex // guards tracked, finished and tracked items' ports
+	finished []*tracked
+	tracked  map[int]*tracked
+	bootT    time.Time
+	tick     int
 
 	// Process cache: a scan only lists /proc and reads processes that are
 	// new or young (a fork becomes `go test` via exec under the same pid);
@@ -40,6 +44,7 @@ func NewContext() *Context {
 }
 
 const (
+	keepFinished  = 15              // recently finished tasks kept for the Activity tab
 	fullScanEvery = 15              // scans
 	youngFor      = 5 * time.Second // keep re-reading processes this young
 )
@@ -61,6 +66,7 @@ type tracked struct {
 	ide     bool // launched from an IDE (completion is reported)
 	project string
 	start   time.Time
+	ended   time.Time
 	focus   []int
 	ports   []int
 	shown   bool
@@ -87,11 +93,10 @@ const (
 
 func (c *Context) Run(ctx context.Context, h island.Host) error {
 	c.bootT = bootTime()
-	defer h.ClearPrefix("ctx.")
 	t := time.NewTicker(scanEvery)
 	defer t.Stop()
 	for {
-		c.scan(h)
+		c.scan()
 		select {
 		case <-ctx.Done():
 			return nil
@@ -100,7 +105,9 @@ func (c *Context) Run(ctx context.Context, h island.Host) error {
 	}
 }
 
-func (c *Context) scan(h island.Host) {
+// Detected commands never touch the pill: they're listed in the
+// dashboard's Activity tab (running + recently finished) via List.
+func (c *Context) scan() {
 	c.tick++
 	procs := c.refreshProcs()
 	seen := map[int]bool{}
@@ -109,18 +116,16 @@ func (c *Context) scan(h island.Host) {
 			p.title, p.kind, p.match = classify(p, procs)
 			p.classified = true
 		}
-		title, k, ok := p.title, p.kind, p.match
-		if !ok {
+		if !p.match || hasAncestor(p, procs, "island") { // `island run` shows its own
 			continue
-		}
-		if hasAncestor(p, procs, "island") {
-			continue // `island run` already shows it
 		}
 		seen[p.pid] = true
 		if c.tracked[p.pid] == nil {
-			t := &tracked{pid: p.pid, title: title, kind: k, start: c.startTime(p), project: projectOf(p.pid)}
+			t := &tracked{pid: p.pid, title: p.title, kind: p.kind, start: c.startTime(p), project: projectOf(p.pid)}
 			t.app, t.ide, t.focus = launcher(p, procs)
+			c.mu.Lock()
 			c.tracked[p.pid] = t
+			c.mu.Unlock()
 		}
 	}
 
@@ -129,67 +134,79 @@ func (c *Context) scan(h island.Host) {
 		c.updatePorts(procs)
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for pid, t := range c.tracked {
-		id := fmt.Sprintf("ctx.%d", pid)
 		if !seen[pid] {
 			delete(c.tracked, pid)
-			h.Clear(id)
-			took := time.Since(t.start)
-			// Report IDE-launched tasks. Terminal commands are reported by the
-			// shell hook (with the exit code); agents run lots of commands, so
-			// their individual completions would just be noise.
-			if t.kind == kindTask && t.shown && t.ide && took >= reportAfter {
-				h.Set(island.Activity{
-					ID: "notify.ctx." + strconv.Itoa(pid), Priority: island.PriorityNotify, TTL: 5 * time.Second,
-					View: island.View{
-						Kind: "notify", Title: "Finished " + t.title,
-						Subtitle: joinNonEmpty(" · ", t.project, island.FormatDuration(took), t.app),
-						Icon:     "object-select-symbolic", Click: "notify.dismiss", Focus: t.focus,
-					},
-				})
+			if t.shown && t.kind == kindTask {
+				t.ended = time.Now()
+				c.finished = append([]*tracked{t}, c.finished...)
+				if len(c.finished) > keepFinished {
+					c.finished = c.finished[:keepFinished]
+				}
 			}
 			continue
 		}
-		if time.Since(t.start) < showAfter {
-			continue
+		if time.Since(t.start) >= showAfter {
+			t.shown = true
 		}
-		t.shown = true
-		h.Set(c.activity(id, t))
 	}
 }
 
-func (c *Context) activity(id string, t *tracked) island.Activity {
-	v := island.View{
-		Title:     t.title,
-		Subtitle:  joinNonEmpty(" · ", t.project, t.app),
-		Focus:     t.focus,
-		StartedAt: island.UnixMs(t.start),
-	}
-	prio := island.PriorityTask
-	if t.kind == kindRun {
-		v.Kind, v.Icon, v.StartedAt = "service", "network-server-symbolic", 0
-		if len(t.ports) > 0 {
-			ps := make([]string, len(t.ports))
-			for i, p := range t.ports {
-				ps[i] = ":" + strconv.Itoa(p)
-			}
-			v.Trailing = strings.Join(ps, " ")
-			v.URL = "http://localhost:" + strconv.Itoa(t.ports[0])
+// Item is one row in the Activity tab.
+type Item struct {
+	PID       int    `json:"pid"`
+	Title     string `json:"title"`
+	Kind      string `json:"kind"`  // task | service
+	State     string `json:"state"` // running | finished
+	App       string `json:"app,omitempty"`
+	Project   string `json:"project,omitempty"`
+	StartedAt int64  `json:"startedAt"`
+	EndedAt   int64  `json:"endedAt,omitempty"`
+	Ports     []int  `json:"ports,omitempty"`
+	Focus     []int  `json:"focus,omitempty"`
+}
+
+// List returns running items (newest first), then recently finished tasks.
+func (c *Context) List() []Item {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	item := func(t *tracked, state string) Item {
+		it := Item{
+			PID: t.pid, Title: t.title, Kind: "task", State: state, App: t.app, Project: t.project,
+			StartedAt: island.UnixMs(t.start), Ports: append([]int(nil), t.ports...), Focus: t.focus,
 		}
-		prio = island.PriorityService
-	} else {
-		v.Kind, v.Icon = "task", "system-run-symbolic"
+		if t.kind == kindRun {
+			it.Kind = "service"
+		}
+		if !t.ended.IsZero() {
+			it.EndedAt = island.UnixMs(t.ended)
+		}
+		return it
 	}
-	return island.Activity{ID: id, Priority: prio, View: v}
+	out := []Item{}
+	for _, t := range c.tracked {
+		if t.shown {
+			out = append(out, item(t, "running"))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
+	for _, t := range c.finished {
+		out = append(out, item(t, "finished"))
+	}
+	return out
 }
 
 func (c *Context) updatePorts(procs map[int]*procInfo) {
 	var runs []*tracked
+	c.mu.Lock()
 	for _, t := range c.tracked {
 		if t.kind == kindRun {
 			runs = append(runs, t)
 		}
 	}
+	c.mu.Unlock()
 	if len(runs) == 0 {
 		return
 	}
@@ -197,6 +214,8 @@ func (c *Context) updatePorts(procs map[int]*procInfo) {
 	if err != nil {
 		return
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, t := range runs {
 		t.ports = t.ports[:0]
 		seen := map[int]bool{}

@@ -39,9 +39,10 @@ You don't need to wrap anything. The daemon checks your processes about once a s
 
 It also traces each command back to the app that started it: GoLand, IntelliJ, VS Code, Cursor, a terminal, or Claude Code.
 
-- **Builds and tests** appear as a slim pill with a live timer. Hover over it to see the project and the app. Tasks launched from an IDE also show a "Finished" popup.
-- **Dev servers** (`go run`, `npm run dev`, `spring-boot:run`, `bootRun`, IDE run configurations) appear as a service along with their ports, for example `:8080`. Clicking the service opens `localhost:8080` in your browser. Services rank below music.
-- **Clicking** jumps to the window that started the command.
+- Detected commands **never appear in the pill**. They're listed in the dashboard's **Activity** tab:
+  - **Running:** builds and tests with a live timer, and dev servers (`go run`, `npm run dev`, `spring-boot:run`, `bootRun`, IDE run configurations) with clickable port chips that open `localhost:PORT`.
+  - **Recently finished:** the last 15 tasks, with how long each took.
+- **Clicking** a row jumps to the window that started the command.
 
 Linux won't let one process read another unrelated process's exit code. Commands the watcher detects on its own are therefore reported as *Finished*, not passed or failed. `island run` and the bash hook do know the exit code.
 
@@ -69,6 +70,7 @@ Cost and context usage come from Claude Code's documented status-line feed. Your
 
 | Tab | What it does |
 |---|---|
+| Activity | Builds, tests and dev servers running on your machine, plus recently finished tasks (see Context awareness). |
 | Agents | Claude Code sessions with their state, cost, context usage and when they were last active. Click a session to focus its window. |
 | Home | A Now Playing card (art, live progress with time remaining, controls) and a Today card with a one-click focus timer and a container summary. |
 | Docker | Running containers grouped by compose project, with health, **live CPU and memory**, and **clickable port chips** that open `localhost:PORT`. Each one has a **logs view** (last 50 lines, following live), restart and stop. |
@@ -128,7 +130,7 @@ A brand-new extension loads only after GNOME Shell restarts. On **X11**, press A
 | `pomodoro` | A focus countdown, followed by a break. |
 | `docker` | Alerts when a container crashes (a non-zero exit that wasn't from `docker stop`), turns unhealthy, or runs out of memory. |
 
-**Tip:** to avoid getting GNOME's own banner as well as the island for each notification, turn GNOME banners off: `gsettings set org.gnome.desktop.notifications show-banners false`. Notifications still land in the calendar menu.
+While the island is running, **GNOME's own notification banners are suppressed**, so you only see the island. Notifications still collect in the calendar menu (right-click the pill). If the daemon stops, GNOME's banners come back automatically.
 
 ## CLI
 

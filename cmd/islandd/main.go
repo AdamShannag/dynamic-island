@@ -52,7 +52,8 @@ func main() {
 		log.Printf("saved sites: %v (starting empty)", err)
 	}
 	m := island.NewManager()
-	if err := dbusapi.Serve(conn, m, clip, st); err != nil {
+	ctxw := plugins.NewContext()
+	if err := dbusapi.Serve(conn, m, clip, st, ctxw); err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("serving %s", dbusapi.BusName)
@@ -76,7 +77,7 @@ func main() {
 		plugins.NewNotifications(cfg.Notifications.IgnoreApps),
 		plugins.NewPomodoro(cfg.Pomodoro.FocusMinutes, cfg.Pomodoro.BreakMinutes),
 		plugins.NewDocker(),
-		plugins.NewContext(),
+		ctxw,
 		plugins.NewUSB(),
 	}
 

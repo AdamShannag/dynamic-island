@@ -18,6 +18,7 @@ import (
 	"go-island/internal/clipboard"
 	"go-island/internal/docker"
 	"go-island/internal/island"
+	"go-island/internal/plugins"
 	"go-island/internal/ports"
 	"go-island/internal/sites"
 	"go-island/internal/tools"
@@ -124,6 +125,9 @@ const introXML = `
     <method name="SetPresenting">
       <arg name="on" type="b" direction="in"/>
     </method>
+    <method name="ActivityList">
+      <arg name="items" type="s" direction="out"/>
+    </method>
     <method name="Open">
       <arg name="tab" type="s" direction="in"/>
     </method>
@@ -149,6 +153,7 @@ type api struct {
 	tasks map[uint32]task
 
 	conn   *dbus.Conn
+	ctxw   *plugins.Context
 	agents *agents.Tracker
 	clip   *clipboard.Store
 	sites  *sites.Store
@@ -163,6 +168,13 @@ func (a *api) AgentEvent(event string, focus []int32) *dbus.Error {
 }
 func (a *api) AgentStatus(status string) *dbus.Error { return dbusErr(a.agents.Status([]byte(status))) }
 func (a *api) AgentsList() (string, *dbus.Error)     { return toJSON(a.agents.List()) }
+
+func (a *api) ActivityList() (string, *dbus.Error) {
+	if a.ctxw == nil {
+		return "[]", nil
+	}
+	return toJSON(a.ctxw.List())
+}
 
 // Open asks the UI to toggle the dashboard (optionally on a given tab).
 func (a *api) Open(tab string) *dbus.Error {
@@ -358,8 +370,8 @@ func (a *api) TaskEnd(id uint32, exitCode int32) *dbus.Error {
 }
 
 // Serve claims the bus name, exports the API and wires StateChanged signals.
-func Serve(conn *dbus.Conn, m *island.Manager, clip *clipboard.Store, st *sites.Store) error {
-	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn, agents: agents.NewTracker(m)}
+func Serve(conn *dbus.Conn, m *island.Manager, clip *clipboard.Store, st *sites.Store, ctxw *plugins.Context) error {
+	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn, agents: agents.NewTracker(m), ctxw: ctxw}
 	m.HandleAction("notify.dismiss", func() { m.ClearPrefix("notify.") })
 
 	if err := conn.Export(a, Path, Iface); err != nil {
