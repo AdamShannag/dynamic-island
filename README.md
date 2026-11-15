@@ -145,7 +145,7 @@ A brand-new extension loads only after GNOME Shell restarts. On **X11**, press A
 |---|---|
 | `mpris` | The current track from Spotify, browsers, mpv and so on. Click the pill to expand it into album art, a live progress bar and controls. |
 | `battery` | A popup when you plug in or unplug, and warnings at 20%, 10% and 5%. |
-| `notifications` | Mirrors desktop notifications (Slack, Telegram, calendar and so on) into the island. |
+| `notifications` | Mirrors desktop notifications (Slack, Telegram, Discord, calendar and so on) into the island. **Clicking one works like clicking GNOME's banner:** the app receives its default action, so Discord opens the message, for example. If GNOME no longer has that notification, the island just opens the app. |
 | `pomodoro` | A focus countdown, followed by a break. |
 | `docker` | Alerts when a container crashes (a non-zero exit that wasn't from `docker stop`), turns unhealthy, or runs out of memory. |
 

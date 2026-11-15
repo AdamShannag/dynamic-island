@@ -96,12 +96,16 @@ func (n *Notifications) view(msg *dbus.Message) (island.View, time.Duration, boo
 		return island.View{}, 0, false
 	}
 
+	de, _ := hints["desktop-entry"].Value().(string)
 	v := island.View{
-		Kind:     "notify",
-		Title:    clean(summary),
-		Subtitle: clean(body),
-		Trailing: app,
-		Click:    "notify.dismiss",
+		Kind:         "notify",
+		Title:        clean(summary),
+		Subtitle:     clean(body),
+		Trailing:     app,
+		Click:        "notify.dismiss",
+		Mirror:       true,
+		App:          app,
+		DesktopEntry: de,
 	}
 	if p, _ := hints["image-path"].Value().(string); isPath(p) {
 		v.Art = strings.TrimPrefix(p, "file://")

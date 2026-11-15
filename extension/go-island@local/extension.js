@@ -2072,6 +2072,13 @@ class Island extends St.BoxLayout {
             this.openDash('agents');
             return Clutter.EVENT_STOP;
         }
+        // A mirrored app notification behaves like GNOME's banner: open
+        // the app (Discord jumps to the message), then dismiss.
+        if (s.mirror) {
+            this._ext.activateNotification(s);
+            this._ext.action('notify.dismiss');
+            return Clutter.EVENT_STOP;
+        }
         // A dev server with a port opens in the browser.
         if (s.url) {
             openUri(s.url);
@@ -2730,6 +2737,39 @@ export default class GoIslandExtension extends Extension {
         this._island?.applySettings(st);
         this._setOsdTakeover(featureOn(st, 'osd'));
         this._blockBanners(!!this._proxy && featureOn(st, 'hideBanners'));
+    }
+
+    // Activate GNOME's own copy of a mirrored notification exactly like a
+    // banner click: the app receives its "default" action plus an
+    // activation token (so it can raise itself and open the message), or
+    // GNOME opens the app if it has no default action. If that copy is
+    // gone, fall back to opening the app.
+    activateNotification(view) {
+        const norm = t => (t ?? '').replace(/<[^>]*>/g, '')
+            .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+            .replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+        let match = null;
+        for (const source of Main.messageTray.getSources()) {
+            for (const n of source.notifications ?? []) {
+                if (norm(n.title) === view.title && (!view.subtitle || norm(n.body) === view.subtitle))
+                    match = n; // the last match is the newest
+            }
+        }
+        if (match) {
+            match.activate();
+            return true;
+        }
+        const apps = Shell.AppSystem.get_default();
+        for (const id of [view.desktopEntry, view.app?.toLowerCase(), view.app].filter(Boolean)) {
+            const app = apps.lookup_app(`${id}.desktop`) ?? apps.lookup_heuristic_basename(`${id}.desktop`) ??
+                apps.lookup_desktop_wmclass(id) ?? apps.lookup_startup_wmclass(id);
+            if (app) {
+                app.activate();
+                Main.overview.hide();
+                return true;
+            }
+        }
+        return false;
     }
 
     // Send a partial settings patch to the daemon; it saves and broadcasts.

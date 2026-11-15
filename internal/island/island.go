@@ -17,22 +17,27 @@ import (
 // position) are sent as timestamps so the UI ticks locally without the
 // daemon emitting a signal every second.
 type View struct {
-	Kind      string   `json:"kind"` // idle | media | battery | notify | task | timer | ci
-	Title     string   `json:"title,omitempty"`
-	Subtitle  string   `json:"subtitle,omitempty"`
-	Icon      string   `json:"icon,omitempty"`      // freedesktop icon name
-	Art       string   `json:"art,omitempty"`       // local image path
-	Accent    string   `json:"accent,omitempty"`    // "" | ok | warn | error
-	Trailing  string   `json:"trailing,omitempty"`  // short text on the right
-	Click     string   `json:"click,omitempty"`     // action fired when the pill is clicked
-	EndsAt    int64    `json:"endsAt,omitempty"`    // unix ms; UI shows a countdown
-	StartedAt int64    `json:"startedAt,omitempty"` // unix ms; UI shows elapsed time
-	Playing   bool     `json:"playing,omitempty"`
-	Timing    *Timing  `json:"timing,omitempty"`
-	Focus     []int    `json:"focus,omitempty"`   // pids; clicking focuses the first with a window
-	Swatch    string   `json:"swatch,omitempty"`  // a colour to show in place of the icon
-	URL       string   `json:"url,omitempty"`     // clicking opens this in the browser
-	Actions   []string `json:"actions,omitempty"` // action names the UI may offer
+	Kind      string  `json:"kind"` // idle | media | battery | notify | task | timer | ci
+	Title     string  `json:"title,omitempty"`
+	Subtitle  string  `json:"subtitle,omitempty"`
+	Icon      string  `json:"icon,omitempty"`      // freedesktop icon name
+	Art       string  `json:"art,omitempty"`       // local image path
+	Accent    string  `json:"accent,omitempty"`    // "" | ok | warn | error
+	Trailing  string  `json:"trailing,omitempty"`  // short text on the right
+	Click     string  `json:"click,omitempty"`     // action fired when the pill is clicked
+	EndsAt    int64   `json:"endsAt,omitempty"`    // unix ms; UI shows a countdown
+	StartedAt int64   `json:"startedAt,omitempty"` // unix ms; UI shows elapsed time
+	Playing   bool    `json:"playing,omitempty"`
+	Timing    *Timing `json:"timing,omitempty"`
+	Focus     []int   `json:"focus,omitempty"`  // pids; clicking focuses the first with a window
+	Swatch    string  `json:"swatch,omitempty"` // a colour to show in place of the icon
+	URL       string  `json:"url,omitempty"`    // clicking opens this in the browser
+	// Mirrored desktop notifications: clicking activates the original
+	// (like clicking GNOME's banner); App/DesktopEntry identify the sender.
+	Mirror       bool     `json:"mirror,omitempty"`
+	App          string   `json:"app,omitempty"`
+	DesktopEntry string   `json:"desktopEntry,omitempty"`
+	Actions      []string `json:"actions,omitempty"` // action names the UI may offer
 }
 
 // Timing describes media playback so the UI can draw a live progress bar.
