@@ -1,127 +1,22 @@
 # Dynamic Island
 
 [![CI](https://github.com/AdamShannag/dynamic-island/actions/workflows/ci.yml/badge.svg)](https://github.com/AdamShannag/dynamic-island/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AdamShannag/dynamic-island)](https://github.com/AdamShannag/dynamic-island/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A Dynamic Island for Ubuntu (GNOME Shell 46–49). It replaces the top-bar clock with a pill. When nothing is happening the pill shows the time. When something happens, the pill grows down out of the top bar.
+A Dynamic Island for the GNOME desktop on Ubuntu. It replaces the top-bar clock with a small pill. The pill grows to show what's happening: music, timers, notifications, finished builds, Claude Code sessions, volume changes. Click it to open a dashboard of everyday developer tools.
 
-- **Left-click** opens the dashboard, with tabs for Home, Docker, Ports, Clipboard and Web.
-- **Right-click** opens the regular calendar and notifications menu.
-- **Esc** or clicking outside the dashboard closes it.
-- **`island open [tab]`** toggles the dashboard from the command line. Bind it to a key in Settings → Keyboard → Custom Shortcuts, for example Super+Space → `island open`.
+<p align="center">
+  <img src="docs/screenshots/dashboard-home.png" width="720" alt="The dashboard open on the Home tab">
+</p>
 
-## Settings
-
-Click the **gear** in the dashboard header.
-
-- **Appearance:**
-  - **Accent colour:** blue, purple, pink, orange, green, teal or graphite. It's used for highlights, switches, progress bars, the equalizer and port chips.
-  - **Surface:** Black or Graphite.
-- **Tabs:** turn any tab except Home on or off.
-- **Features:** turn these on or off:
-  - the face
-  - music in the pill
-  - volume and brightness in the island
-  - hiding GNOME's banners
-  - notification mirroring
-  - clipboard history
-  - USB popups
-  - battery popups
-
-Changes apply instantly. They're saved by the daemon in `~/.config/dynamic-island/settings.json`, so features the daemon runs (notification mirroring, clipboard history, USB and battery) really stop when you turn them off.
-
-## Tools in the header
-
-- **Colour picker (eyedropper):** pick any pixel on screen. The HEX value is copied, and the island shows a swatch along with RGB and HSL values. It uses the desktop portal.
-- **Presentation mode (sunglasses):** hides track names, album art, command details, clipboard history and notes. It also pauses mirroring of desktop notifications, stops recording clipboard copies, and turns GNOME's notification banners off (restoring them afterwards). The face puts on sunglasses. It **turns on automatically when a screen share starts** and off again when the share ends, unless you turned it on yourself.
-
-The **Transform** tab is a set of developer utilities with a tool sidebar:
-- **Format:** JSON (format or minify), JWT (decodes the header and payload and shows expiry), Timestamp (Unix ↔ date).
-- **Encode:** Base64 and URL, each with encode and decode.
-- **Case:** UPPERCASE, lowercase, Title Case, snake_case, camelCase, kebab-case.
-
-The output updates live as you type, and errors show inline. **Copy** puts the result on the clipboard; typing never does. **Swap** feeds the output back in as input, so you can chain tools. The input is pre-filled with your latest clipboard text.
-
-## Volume and brightness
-
-GNOME's volume, brightness and microphone popups are replaced by a slim level bar that grows out of the notch, showing an icon, the level and a percentage. Over-amplified volume reads above 100%.
-
-## Personality
-
-- **Face:** two eyes next to the clock that follow your cursor and blink every now and then. They go dizzy when the CPU is pegged, turn into hearts when something succeeds, and look surprised when you plug in a USB device.
-- **Sleepy:** after 3 minutes of inactivity the eyes close and little Zs float up. Moving the mouse wakes it.
-- **Wobble:** shake your mouse quickly over the island, or middle-click it, and it wobbles like jelly with a `> <` face.
-- **Hover intent:** a slim live pill (agent, build or service) only expands after you rest the cursor on it for about half a second, so passing over it does nothing.
-- **USB reactions:** drives, keyboards, mice, game controllers, phones, audio devices and cameras each get a popup with an icon and a little bounce.
-
-## Context awareness
-
-You don't need to wrap anything. The daemon checks your processes about once a second and recognises dev commands:
-
-- **Go:** `go build`, `test`, `mod`, `generate` and `run`
-- **Maven:** including IntelliJ's built-in runner
-- **Gradle**
-- **JavaScript:** npm, pnpm, yarn and bun
-- **Others:** cargo, make, `docker build`, pytest, uvicorn and Django
-- **IDE run configurations:** JetBrains Java and Go run configurations
-
-It also traces each command back to the app that started it: GoLand, IntelliJ, VS Code, Cursor, a terminal, or Claude Code.
-
-- Detected commands **never appear in the pill**. They're listed in the dashboard's **Activity** tab:
-  - **Running:** builds and tests with a live timer, and dev servers (`go run`, `npm run dev`, `spring-boot:run`, `bootRun`, IDE run configurations) with clickable port chips that open `localhost:PORT`.
-- **Clicking** a row jumps to the window that started the command.
-
-Linux won't let one process read another unrelated process's exit code. Commands the watcher detects on its own are therefore reported as *Finished*, not passed or failed. `island run` and the bash hook do know the exit code.
-
-## Claude Code
-
-```sh
-island claude install      # adds hooks + wraps your status line (backs up ~/.claude/settings.json first)
-island claude uninstall    # removes exactly what install added
-```
-
-The island shows a Claude session as:
-
-| State | Shown as |
-|---|---|
-| Working | A slim pill: `Claude · project`, a live timer, and the current tool on hover (e.g. `$ go test ./...` or `Editing ports.go`) |
-| Needs approval | A yellow popup with the command or tool waiting for you |
-| Finished | A popup with the turn's duration, its cost, and the start of Claude's reply. Only for turns longer than 5 s. |
-| Error | A red popup with the API error (rate limit, overloaded and so on), from the `StopFailure` hook |
-
-Clicking any of these focuses the terminal or IDE the session runs in. The **Agents** tab lists every session with its state, cost and context usage.
-
-Cost and context usage come from Claude Code's documented status-line feed. Your own status-line command still runs and still prints the same output. Transcripts are not parsed, because their format is internal and changes between versions.
-
-## Dashboard
-
-| Tab | What it does |
-|---|---|
-| Activity | A system monitor: CPU (with temperature and load), memory, disk and network tiles with one-minute sparklines, and the top processes by CPU. Next to them, the builds, tests and dev servers running on your machine (see Context awareness). Data is sampled only while the tab is open. |
-| Agents | Claude Code sessions with their state, cost, context usage and when they were last active. Click a session to focus its window. |
-| Home | A Now Playing card (art, live progress with time remaining, controls) and a Today card with a one-click focus timer and a container summary. |
-| Docker | Running containers grouped by compose project, with health, **live CPU and memory**, and **clickable port chips** that open `localhost:PORT`. Each one has a **logs view** (last 50 lines, following live), restart and stop. |
-| Ports | Every listening TCP port and which process or container owns it. Click a port to open it in your browser. **Kill** frees the port (two clicks to confirm). You can also type a port number and press Enter to free it. Ports published by Docker stop their container. |
-| Notifications | An inbox of every app notification, for when you were away. Newest first, grouped by app, with how long ago each arrived. Clicking one opens the app (Discord jumps to the message); you can dismiss one or clear all. A red dot on the tab means there are unread ones. History is kept **in memory only**, never on disk, and notifications that arrive while you're presenting are kept but hidden. |
-| Notes | A notes app in the style of Apple Notes: a list (search, new note, pinned section, date and preview) and an editor with autosave, pin and delete. A note you leave empty is removed. Stored in `~/.local/share/dynamic-island/notes.json` (mode 0600); the old single scratchpad is imported as the first note. Open it with `island open notes`. |
-| Clipboard | A history of everything you copy, saved across reboots. Click an entry to copy it again; you can also pin, delete or filter. Copies flagged by password managers are skipped. |
-| QR | Click the grid icon on any clipboard item, or next to the Web search box, to get a scannable QR code. |
-| Web | A calculator (type `150*1.16` and press Enter to copy `174`) and a Google search box (a typed URL or `localhost:3000` opens directly), plus a grid of saved sites. **＋** adds a site and right-click removes one. Icons are fetched from each site itself. |
-
-```
-MPRIS / UPower / notifications / docker / ss / CLI
-        ──► dynamic-islandd (plugins → priority Manager) ══ D-Bus ══► GNOME extension (pill)
-```
-
-- **`dynamic-islandd`** is a Go daemon. It runs plugins and serves the island state on the session bus as `io.github.AdamShannag.DynamicIsland`.
-- **`extension/dynamic-island@adamshannag.github.io`** is a GNOME Shell extension that draws the pill. It just renders whatever state the daemon sends.
-- **`island`** is the command-line client (notifications, `island run`, Claude Code hooks, setup).
+<p align="center">
+  <img src="docs/screenshots/pill-states.png" width="420" alt="The pill showing the clock, a playing track, the volume level and a notification">
+</p>
 
 ## Install
 
-**Requirements:** Ubuntu or any other distro with GNOME Shell **46–49** (Ubuntu 24.04 through 25.10), on X11 or Wayland, on x86-64 or ARM64. Docker is optional.
-
-**With apt (recommended):**
+Ubuntu 24.04 or newer (GNOME Shell 46–49), x86-64 or ARM64:
 
 ```sh
 curl -fsSL https://adamshannag.github.io/dynamic-island/setup.sh | sudo sh
@@ -129,150 +24,132 @@ sudo apt install dynamic-island
 island setup
 ```
 
-The first line adds the project's signed APT repository (once). After that, updates arrive with your normal `sudo apt upgrade`. `island setup` runs as your own user: it starts the daemon and enables the GNOME extension. To add the repository by hand instead:
+The first command adds the project's signed APT repository; after that, updates arrive through `sudo apt upgrade`. `island setup` runs as your user and starts the daemon and enables the extension. On Wayland, log out and back in once afterwards. On X11, press <kbd>Alt</kbd>+<kbd>F2</kbd>, type `r` and press Enter.
+
+<details>
+<summary>Other ways to install</summary>
+
+**Add the repository by hand**
 
 ```sh
-curl -fsSL https://adamshannag.github.io/dynamic-island/dynamic-island.gpg | sudo tee /usr/share/keyrings/dynamic-island.gpg >/dev/null
+curl -fsSL https://adamshannag.github.io/dynamic-island/dynamic-island.gpg \
+  | sudo tee /usr/share/keyrings/dynamic-island.gpg >/dev/null
 echo "deb [signed-by=/usr/share/keyrings/dynamic-island.gpg] https://adamshannag.github.io/dynamic-island stable main" \
   | sudo tee /etc/apt/sources.list.d/dynamic-island.list
 sudo apt update && sudo apt install dynamic-island
 ```
 
-Or download the `.deb` from the [releases page](https://github.com/AdamShannag/dynamic-island/releases) and run `sudo apt install ./dynamic-island_<version>_amd64.deb`.
+**A single .deb.** Download it from the [releases page](https://github.com/AdamShannag/dynamic-island/releases), then run `sudo apt install ./dynamic-island_<version>_amd64.deb`. This way it doesn't update automatically.
 
-**From a release tarball (no Go needed, installs into your home directory):**
+**Into your home directory, without root.** Unpack the release tarball (or clone the repo, which needs Go 1.22+) and run `./install.sh`. It installs to `~/.local`. `./uninstall.sh` removes it; add `--purge` to delete your data too.
 
-```sh
-tar xzf dynamic-island-<version>.tar.gz && cd dynamic-island
-./install.sh
-```
+</details>
 
-**From source** (needs Go 1.22 or newer: `sudo apt install golang-go`):
-
-```sh
-./install.sh            # or: make install
-```
-
-The installer:
-1. puts `dynamic-islandd` and `island` in `~/.local/bin`,
-2. enables the `dynamic-island` systemd user service,
-3. installs and enables the extension,
-4. removes an older Go Island install if it finds one. Your data moves over automatically from `~/.local/share/go-island` (and the matching config and cache directories) the first time the daemon starts.
-
-A brand-new extension loads only after GNOME Shell restarts. On **X11**, press Alt+F2, type `r` and press Enter. On **Wayland** (the Ubuntu default), log out and back in.
-
-`make dist` builds the release tarball and `make deb` the `.deb` packages, with static binaries for amd64 and arm64. `./uninstall.sh` removes a home-directory install (`sudo apt remove dynamic-island` removes the package). Your data in `~/.local/share/dynamic-island` is kept unless you pass `--purge`.
-
-**Portability notes:**
-- Sizes follow your display scale, so 2× HiDPI and fractional scaling stay in proportion.
-- On GNOME 48 and later, the extension uses the newer layout API.
-- Volume and brightness popups fall back to GNOME's own popup over fullscreen apps and while the dashboard is open.
-- Only GNOME 46 has actually been run. 47–49 are declared supported and use the matching APIs, but haven't been tested yet.
+To remove the package: `island setup --remove`, then `sudo apt remove dynamic-island`.
 
 ## Features
 
-| Plugin | What it shows |
+**The pill** shows one thing at a time, chosen by priority:
+
+- **Clock:** the time, with two small eyes that follow your cursor. You can turn them off.
+- **Music:** the playing track from any MPRIS player (Spotify, browsers, mpv).
+- **Notifications:** from your apps. Clicking one opens the app, the same as clicking GNOME's banner.
+- **Volume and brightness:** shown in the pill instead of GNOME's popup.
+- **Timers and tasks:** a focus timer, and commands wrapped with `island run`.
+- **Claude Code:** approval requests and finished turns.
+- **Alerts:** battery, USB devices, and containers that crash or turn unhealthy.
+
+**The dashboard** opens on click or from a keyboard shortcut:
+
+| Tab | |
 |---|---|
-| `mpris` | The current track from Spotify, browsers, mpv and so on. Click the pill to expand it into album art, a live progress bar and controls. |
-| `battery` | A popup when you plug in or unplug, and warnings at 20%, 10% and 5%. |
-| `notifications` | Mirrors desktop notifications (Slack, Telegram, Discord, calendar and so on) into the island. **Clicking one works like clicking GNOME's banner:** the app receives its default action, so Discord opens the message, for example. If GNOME no longer has that notification, the island just opens the app. |
-| `pomodoro` | A focus countdown, followed by a break. |
-| `docker` | Alerts when a container crashes (a non-zero exit that wasn't from `docker stop`), turns unhealthy, or runs out of memory. |
+| Home | Now playing with controls, a focus timer, and a container summary |
+| Notifications | Everything your apps sent while you were away. Kept in memory only. |
+| Activity | CPU, memory, disk and network with live graphs; top processes; running builds, tests and dev servers with clickable ports |
+| Agents | Claude Code sessions with their state, cost and context usage. Click one to jump to its terminal. |
+| Docker | Containers grouped by Compose project, with health, live CPU and memory, logs, restart and stop |
+| Ports | Every listening port and the process or container behind it. Free a port with two clicks. |
+| Clipboard | Searchable history with pinning. Skips anything password managers flag as secret. |
+| Transform | JSON, JWT, timestamps, Base64, URL encoding and case conversion, updated as you type |
+| Notes | A small notes app with search, pinning and autosave |
+| Web | Search or open a URL, a calculator (`150*1.16` ⏎ copies `174`), saved sites, and QR codes |
 
-While the island is running, **GNOME's own notification banners are suppressed**, so you only see the island. Notifications still collect in the calendar menu (right-click the pill). If the daemon stops, GNOME's banners come back automatically.
+The header also has a colour picker and a **presentation mode**. Presentation mode hides track names, notifications, clipboard history and notes, and it turns on automatically while you share your screen. Tabs, features, the accent colour and the background are all set in **Settings**.
 
-## CLI
+<p align="center">
+  <img src="docs/screenshots/dashboard-transform.png" width="49%" alt="The Transform tab formatting JSON">
+  <img src="docs/screenshots/dashboard-settings.png" width="49%" alt="The Settings tab">
+</p>
+
+## Usage
+
+Left-click the pill to open the dashboard. Right-click it for GNOME's calendar menu. Press <kbd>Esc</kbd> or click outside to close.
+
+To open the dashboard from the keyboard, add a custom shortcut in **Settings → Keyboard** that runs `island open` (or `island open notes`, `island open docker`, and so on).
 
 ```sh
-island notify "Deployed" "prod is live"           # -a ok|warn|error  -i icon  -t ms
-island run -- make test                           # live elapsed timer, then ✓/✗ with duration
-island run -n "deploy" -- ./deploy.sh
-island kill-port 8080                             # kill the process, or stop the container, holding a port
-island pomodoro start|stop|toggle
-island action media.play-pause                    # any registered action
-island state                                      # current View JSON
-island setup [--remove]                           # per-user setup after an apt install
-island version
+island notify "Deployed" "prod is live"        # -a ok|warn|error  -i icon-name  -t ms
+island run -- make test                        # live timer in the pill, then ✓ or ✗
+island kill-port 8080                          # free a port
+island pomodoro start
+island claude install                          # report Claude Code sessions to the island
 ```
 
-### Long-command alerts in bash
+**Claude Code.** `island claude install` adds hooks and wraps your status line; it backs up `~/.claude/settings.json` first. The pill shows approval requests and finished turns, and the Agents tab lists every session. `island claude uninstall` removes exactly what was added.
+
+**Long-running shell commands.** Source the bash hook and every command that runs longer than 15 seconds reports when it finishes:
 
 ```sh
-echo 'source /usr/share/dynamic-island/island-hook.bash' >> ~/.bashrc   # apt install
-echo 'source /path/to/dynamic-island/contrib/island-hook.bash' >> ~/.bashrc   # source checkout
+echo 'source /usr/share/dynamic-island/island-hook.bash' >> ~/.bashrc
 ```
 
-Any command that runs for 15 seconds or more pops the island with ✓ or ✗ and how long it took. Set `ISLAND_MIN_SECS` to change the threshold and `ISLAND_IGNORE` to skip commands. The hook installs a `DEBUG` trap, so it can conflict with other preexec hooks such as bash-preexec.
+Set `ISLAND_MIN_SECS` to change the threshold and `ISLAND_IGNORE` (a regex) to skip commands.
 
-## Config
+## Configuration
 
-Optional. Copy `config.example.json` (also in `/usr/share/dynamic-island/`) to `~/.config/dynamic-island/config.json`, then run `systemctl --user restart dynamic-island`.
+Most options are in the dashboard under **Settings**. A few daemon options are in `~/.config/dynamic-island/config.json`; see [`config.example.json`](config.example.json):
 
 ```json
 {
   "disable": ["docker"],
-  "notifications": { "enabled": true, "ignoreApps": ["Spotify"] },
+  "notifications": { "ignoreApps": ["Spotify"] },
   "pomodoro": { "focusMinutes": 25, "breakMinutes": 5 }
 }
 ```
 
-Data lives in `~/.local/share/dynamic-island/`: `clipboard.json` and `sites.json` (both mode 0600), plus `site-icons/`.
+Restart the daemon after changing it: `systemctl --user restart dynamic-island`.
 
-## Resource use and stability
+Your data stays on your machine, in `~/.local/share/dynamic-island`. The clipboard history, notes and saved sites are stored with owner-only permissions. Notifications are never written to disk.
 
-- **Daemon:** about 14 MB of RAM and roughly 0.15% of one CPU core. It caches process scans, and its heap is capped softly at 32 MB.
-- **Extension:**
-  - The eyes animate on the display's own frame clock (60, 144 Hz and so on) with a critically damped spring, which glides with no overshoot. That loop runs only while the eyes move and stops once they settle. A light 7–16 Hz check wakes it when the cursor moves.
-  - The equalizer animates on the frame clock, and only while it's on screen and the music is playing.
-  - Live timers tick once a second.
-  - Docker stats run only while the Docker tab is open.
-- **Frame budget:** everything is tuned for 60 fps, because GNOME Shell's interface shares one thread with the compositor.
-  - Lists are built a few rows per frame.
-  - Periodic refreshes (Activity, Docker, Agents) update text in place and rebuild rows only when the set of items changes.
-  - Every page is laid out in the background shortly after startup, so the first switch to a tab doesn't stall.
-  - Measured on 12 s of live Activity updates: 1 frame over 16.7 ms out of about 5,900.
-- **Clipboard:** a GNOME Shell crash was traced to clipboard reads completing into a JavaScript callback. The extension now reads the clipboard only to record history: once per burst of changes (debounced 400 ms), never two reads at a time, and never for text it copied itself. Everything else uses the daemon's history.
+## How it works
 
-## D-Bus API (`io.github.AdamShannag.DynamicIsland` at `/io/github/AdamShannag/DynamicIsland`)
-
-| Member | Signature | Notes |
-|---|---|---|
-| `GetState()` | `→ s` | Current View as JSON |
-| `Action(name)` | `s →` | e.g. `media.next`, `notify.dismiss`, `pomodoro.toggle` |
-| `Notify(title, body, icon, accent, timeout_ms)` | `ssssi → u` | A timeout ≤ 0 means 5 s |
-| `TaskStart(title)` / `TaskEnd(id, exit_code)` | `s → u` / `ui →` | Used by `island run` |
-| `DockerList()` / `DockerAction(id, op)` | `→ s` / `ss →` | `op` is start, stop or restart |
-| `PortsList()` / `PortFree(port)` | `→ s` / `u → s` | |
-| `ClipboardAdd/List/Delete/Pin/Clear` | | Clipboard history |
-| `SitesList()` / `SiteAdd(url, name)` / `SiteRemove(id)` | | Saved sites |
-| `StateChanged(state)` | signal `s` | Sent whenever the View changes |
-
-Live values are sent as timestamps (`endsAt`, `startedAt`, `timing`), and the extension ticks them locally, so the daemon doesn't have to emit a signal every second.
-
-## Adding a plugin
-
-1. Implement `island.Plugin` (`Name()` and `Run(ctx, host)`) in `internal/plugins/`.
-2. Call `host.Set(island.Activity{ID, Priority, View, TTL})` to take over the island, and `host.Clear(id)` to give it back. The activity with the highest priority wins; ties go to the most recent one. The standard priorities are in `internal/island`.
-3. Register any UI actions with `host.HandleAction("myplugin.thing", fn)`. Set `View.Click` to choose what clicking the pill does.
-4. Add the plugin to the list in `cmd/dynamic-islandd/main.go`.
-
-If a plugin's `Run` returns an error, the daemon restarts it with exponential backoff.
-
-## Contributing
-
-`CLAUDE.md` describes the architecture, the conventions and the gotchas in detail. It's written for AI coding agents but works just as well for people. The short version:
-
-```sh
-make check   # gofmt, go vet, and the extension's static checks
-make test    # Go tests (with -race) and the extension's unit tests
-make install # build and install into your home directory
-make logs    # follow the daemon's and GNOME Shell's logs
+```
+MPRIS, UPower, notifications, Docker, /proc, ss, CLI
+        │
+        ▼
+dynamic-islandd  (Go)  ──── D-Bus ────►  GNOME Shell extension  (GJS)
+plugins → priority queue → view            renders the pill and dashboard
 ```
 
-The extension's checks need Node.js 22: run `npm ci` in `extension/` once.
+The daemon does all the work. Plugins post activities with a priority and an optional lifetime, the highest-priority one becomes the current view, and the daemon publishes it on the session bus. The extension only draws what it receives and asks the daemon for dashboard data while a tab is open. That keeps GNOME Shell responsive: the daemon uses about 15 MB of memory and a fraction of a percent of one CPU core.
 
-- **A new dashboard tab:** add a class extending `Page` in `extension/.../pages/` (see `pages/page.js` for the contract) and list it in `pages/index.js` and `TABS` in `lib/constants.js`.
-- **A new daemon feature:** a plugin (above), plus D-Bus methods in `internal/dbusapi/` if the extension needs to call it. Every method must also be declared in `extension/.../lib/dbus.js`; `npm run check` catches calls to undeclared methods, and a Go test checks the daemon's introspection data.
+The D-Bus interface is documented in [docs/dbus-api.md](docs/dbus-api.md). Any script can drive the island through it.
+
+## Compatibility
+
+Only GNOME Shell 46 (Ubuntu 24.04) has actually been run. The extension declares support for 46–49 and uses the newer APIs where they changed, but 47–49 haven't been tested yet. X11 and Wayland both work. Docker is optional.
+
+## Development
+
+```sh
+git clone https://github.com/AdamShannag/dynamic-island && cd dynamic-island
+(cd extension && npm ci)      # dev tools for the extension checks (Node 22)
+make check test               # gofmt, go vet, static checks, and the Go and JS tests
+make install                  # build and install into ~/.local
+make logs                     # follow the daemon's and GNOME Shell's logs
+```
+
+[CLAUDE.md](CLAUDE.md) covers the architecture, how to add a dashboard tab or a daemon plugin, how to test in a headless GNOME Shell, and the pitfalls that keep the shell at 60 fps. Read it before your first change. Releases are cut by pushing a `v*` tag. CI then builds the packages and publishes the APT repository.
 
 ## License
 
