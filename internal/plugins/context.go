@@ -26,11 +26,10 @@ import (
 // tasks are reported as "Finished", not passed/failed. (`island run` and the
 // shell hook do know exit codes.)
 type Context struct {
-	mu       sync.Mutex // guards tracked, finished and tracked items' ports
-	finished []*tracked
-	tracked  map[int]*tracked
-	bootT    time.Time
-	tick     int
+	mu      sync.Mutex // guards tracked and tracked items' ports
+	tracked map[int]*tracked
+	bootT   time.Time
+	tick    int
 
 	// Process cache: a scan only lists /proc and reads processes that are
 	// new or young (a fork becomes `go test` via exec under the same pid);
@@ -44,7 +43,6 @@ func NewContext() *Context {
 }
 
 const (
-	keepFinished  = 15              // recently finished tasks kept for the Activity tab
 	fullScanEvery = 15              // scans
 	youngFor      = 5 * time.Second // keep re-reading processes this young
 )
@@ -66,7 +64,6 @@ type tracked struct {
 	ide     bool // launched from an IDE (completion is reported)
 	project string
 	start   time.Time
-	ended   time.Time
 	focus   []int
 	ports   []int
 	shown   bool
@@ -106,7 +103,7 @@ func (c *Context) Run(ctx context.Context, h island.Host) error {
 }
 
 // Detected commands never touch the pill: they're listed in the
-// dashboard's Activity tab (running + recently finished) via List.
+// dashboard's Activity tab via List.
 func (c *Context) scan() {
 	c.tick++
 	procs := c.refreshProcs()
@@ -139,13 +136,6 @@ func (c *Context) scan() {
 	for pid, t := range c.tracked {
 		if !seen[pid] {
 			delete(c.tracked, pid)
-			if t.shown && t.kind == kindTask {
-				t.ended = time.Now()
-				c.finished = append([]*tracked{t}, c.finished...)
-				if len(c.finished) > keepFinished {
-					c.finished = c.finished[:keepFinished]
-				}
-			}
 			continue
 		}
 		if time.Since(t.start) >= showAfter {
@@ -159,16 +149,15 @@ type Item struct {
 	PID       int    `json:"pid"`
 	Title     string `json:"title"`
 	Kind      string `json:"kind"`  // task | service
-	State     string `json:"state"` // running | finished
+	State     string `json:"state"` // running
 	App       string `json:"app,omitempty"`
 	Project   string `json:"project,omitempty"`
 	StartedAt int64  `json:"startedAt"`
-	EndedAt   int64  `json:"endedAt,omitempty"`
 	Ports     []int  `json:"ports,omitempty"`
 	Focus     []int  `json:"focus,omitempty"`
 }
 
-// List returns running items (newest first), then recently finished tasks.
+// List returns running items, newest first.
 func (c *Context) List() []Item {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -180,9 +169,6 @@ func (c *Context) List() []Item {
 		if t.kind == kindRun {
 			it.Kind = "service"
 		}
-		if !t.ended.IsZero() {
-			it.EndedAt = island.UnixMs(t.ended)
-		}
 		return it
 	}
 	out := []Item{}
@@ -192,9 +178,6 @@ func (c *Context) List() []Item {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
-	for _, t := range c.finished {
-		out = append(out, item(t, "finished"))
-	}
 	return out
 }
 

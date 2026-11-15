@@ -21,6 +21,7 @@ import (
 	"go-island/internal/plugins"
 	"go-island/internal/ports"
 	"go-island/internal/sites"
+	"go-island/internal/sysmon"
 	"go-island/internal/tools"
 )
 
@@ -125,6 +126,9 @@ const introXML = `
     <method name="SetPresenting">
       <arg name="on" type="b" direction="in"/>
     </method>
+    <method name="SystemStats">
+      <arg name="stats" type="s" direction="out"/>
+    </method>
     <method name="ActivityList">
       <arg name="items" type="s" direction="out"/>
     </method>
@@ -154,6 +158,7 @@ type api struct {
 
 	conn   *dbus.Conn
 	ctxw   *plugins.Context
+	sys    *sysmon.Monitor
 	agents *agents.Tracker
 	clip   *clipboard.Store
 	sites  *sites.Store
@@ -168,6 +173,8 @@ func (a *api) AgentEvent(event string, focus []int32) *dbus.Error {
 }
 func (a *api) AgentStatus(status string) *dbus.Error { return dbusErr(a.agents.Status([]byte(status))) }
 func (a *api) AgentsList() (string, *dbus.Error)     { return toJSON(a.agents.List()) }
+
+func (a *api) SystemStats() (string, *dbus.Error) { return toJSON(a.sys.Sample()) }
 
 func (a *api) ActivityList() (string, *dbus.Error) {
 	if a.ctxw == nil {
@@ -371,7 +378,7 @@ func (a *api) TaskEnd(id uint32, exitCode int32) *dbus.Error {
 
 // Serve claims the bus name, exports the API and wires StateChanged signals.
 func Serve(conn *dbus.Conn, m *island.Manager, clip *clipboard.Store, st *sites.Store, ctxw *plugins.Context) error {
-	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn, agents: agents.NewTracker(m), ctxw: ctxw}
+	a := &api{m: m, tasks: map[uint32]task{}, clip: clip, sites: st, conn: conn, agents: agents.NewTracker(m), ctxw: ctxw, sys: sysmon.New()}
 	m.HandleAction("notify.dismiss", func() { m.ClearPrefix("notify.") })
 
 	if err := conn.Export(a, Path, Iface); err != nil {

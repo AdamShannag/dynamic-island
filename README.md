@@ -41,7 +41,6 @@ It also traces each command back to the app that started it: GoLand, IntelliJ, V
 
 - Detected commands **never appear in the pill**. They're listed in the dashboard's **Activity** tab:
   - **Running:** builds and tests with a live timer, and dev servers (`go run`, `npm run dev`, `spring-boot:run`, `bootRun`, IDE run configurations) with clickable port chips that open `localhost:PORT`.
-  - **Recently finished:** the last 15 tasks, with how long each took.
 - **Clicking** a row jumps to the window that started the command.
 
 Linux won't let one process read another unrelated process's exit code. Commands the watcher detects on its own are therefore reported as *Finished*, not passed or failed. `island run` and the bash hook do know the exit code.
@@ -70,7 +69,7 @@ Cost and context usage come from Claude Code's documented status-line feed. Your
 
 | Tab | What it does |
 |---|---|
-| Activity | Builds, tests and dev servers running on your machine, plus recently finished tasks (see Context awareness). |
+| Activity | A system monitor: CPU (with temperature and load), memory, disk and network tiles with one-minute sparklines, and the top processes by CPU. Next to them, the builds, tests and dev servers running on your machine (see Context awareness). Data is sampled only while the tab is open. |
 | Agents | Claude Code sessions with their state, cost, context usage and when they were last active. Click a session to focus its window. |
 | Home | A Now Playing card (art, live progress with time remaining, controls) and a Today card with a one-click focus timer and a container summary. |
 | Docker | Running containers grouped by compose project, with health, **live CPU and memory**, and **clickable port chips** that open `localhost:PORT`. Each one has a **logs view** (last 50 lines, following live), restart and stop. |

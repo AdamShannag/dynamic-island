@@ -55,6 +55,7 @@ const IFACE_XML = `
     <method name="ClipboardClear"/>
     <method name="AgentsList"><arg name="sessions" type="s" direction="out"/></method>
     <method name="ActivityList"><arg name="items" type="s" direction="out"/></method>
+    <method name="SystemStats"><arg name="stats" type="s" direction="out"/></method>
     <method name="NotesGet"><arg name="text" type="s" direction="out"/></method>
     <method name="NotesSave"><arg name="text" type="s" direction="in"/></method>
     <method name="QR">
@@ -90,7 +91,7 @@ const MODES = ['idle', 'compact', 'notify', 'dashboard', 'osd'];
 const ACCENTS = ['ok', 'warn', 'error'];
 const TABS = [
     ['home', 'Home', 'user-home-symbolic'],
-    ['activity', 'Activity', 'system-run-symbolic'],
+    ['activity', 'Activity', 'utilities-system-monitor-symbolic'],
     ['agents', 'Agents', 'utilities-terminal-symbolic'],
     ['docker', 'Docker', 'network-server-symbolic'],
     ['ports', 'Ports', 'network-wired-symbolic'],
@@ -101,7 +102,7 @@ const TABS = [
 ];
 const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 const DASH_WIDTH = 760;
-const DASH_HEIGHT = {activity: 440, transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
+const DASH_HEIGHT = {activity: 470, transform: 470, home: 292, search: 360, agents: 400, notes: 420, qr: 430, logs: 520, default: 500};
 const OSD_MS = 1600;
 const CLIP_DEBOUNCE_MS = 400; // collapse bursts of clipboard owner changes into one read // how long the volume/brightness bar stays up
 
@@ -201,6 +202,23 @@ function focusPids(pids) {
         }
     }
     return false;
+}
+
+const SPARK_POINTS = 60; // one minute of history at 1 sample/s
+
+function fmtBytes(n, digits = 1) {
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) {
+        n /= 1024;
+        i++;
+    }
+    return `${n.toFixed(i < 2 ? 0 : digits)} ${u[i]}`;
+}
+
+function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255];
 }
 
 function ago(ms) {
@@ -551,47 +569,162 @@ class Island extends St.BoxLayout {
         });
     }
 
-    // ----- Activity: builds, tests and dev servers detected on the system -----
+    // ----- Activity: system monitor + running dev builds/servers -----
 
     _buildActivityPage() {
         const page = new St.BoxLayout({style_class: 'goisland-page', ...VERTICAL});
-        const card = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        const tiles = new St.BoxLayout({style_class: 'goisland-tiles'});
+        tiles.layout_manager.homogeneous = true; // four equal tiles
+        this._tiles = {
+            cpu: this._metricTile('CPU', '#0a84ff'),
+            mem: this._metricTile('MEMORY', '#30d158'),
+            disk: this._metricTile('DISK', '#bf5af2', true),
+            net: this._metricTile('NETWORK', '#ff9f0a'),
+        };
+        for (const t of Object.values(this._tiles))
+            tiles.add_child(t.actor);
+        page.add_child(tiles);
+
+        const lower = new St.BoxLayout({style_class: 'goisland-activity-lower', y_expand: true});
+        const topCard = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        topCard.add_child(label('goisland-group', {text: 'TOP PROCESSES'}));
+        this._topList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
+        topCard.add_child(this._topList);
+        const runCard = new St.BoxLayout({style_class: 'goisland-card goisland-list-card', ...VERTICAL, x_expand: true, y_expand: true});
+        runCard.add_child(label('goisland-group', {text: 'RUNNING'}));
+        this._activityMsg = label('goisland-empty goisland-empty-small', {visible: false, x_align: Clutter.ActorAlign.CENTER});
         this._activityList = new St.BoxLayout({...VERTICAL, style_class: 'goisland-list'});
-        this._activityMsg = label('goisland-empty', {x_align: Clutter.ActorAlign.CENTER, visible: false});
-        card.add_child(this._activityMsg);
-        card.add_child(scrollView(this._activityList));
-        page.add_child(card);
+        runCard.add_child(this._activityMsg);
+        runCard.add_child(scrollView(this._activityList));
+        lower.add_child(topCard);
+        lower.add_child(runCard);
+        page.add_child(lower);
         return page;
     }
 
+    _metricTile(title, color, bar = false) {
+        const actor = new St.BoxLayout({style_class: 'goisland-card goisland-tile', ...VERTICAL, x_expand: true});
+        actor.add_child(label('goisland-group goisland-tile-title', {text: title}));
+        const value = label('goisland-tile-value');
+        const sub = label('goisland-tile-sub');
+        actor.add_child(value);
+        actor.add_child(sub);
+        const tile = {actor, value, sub, series: [], max: 100, color};
+        if (bar) {
+            tile.track = new St.Widget({style_class: 'goisland-tile-track', x_expand: true});
+            tile.fill = new St.Widget({style_class: 'goisland-tile-fill', x: 0, y: 0});
+            tile.fill.set_style(`background-color: ${color};`);
+            tile.track.add_child(tile.fill);
+            tile.track.connect('notify::allocation', () => this._syncTileBar(tile));
+            actor.add_child(tile.track);
+        } else {
+            tile.chart = new St.DrawingArea({style_class: 'goisland-spark', x_expand: true});
+            tile.chart.connect('repaint', area => this._paintSpark(area, tile));
+            actor.add_child(tile.chart);
+        }
+        return tile;
+    }
+
+    _syncTileBar(tile) {
+        const w = tile.track.width;
+        if (w > 0)
+            tile.fill.set_size(Math.round(w * Math.min(1, tile.frac ?? 0)), tile.track.height);
+    }
+
+    // Area + line sparkline, newest sample at the right edge.
+    _paintSpark(area, tile) {
+        const cr = area.get_context();
+        try {
+            const [w, h] = area.get_surface_size();
+            const pts = tile.series;
+            if (pts.length < 2)
+                return;
+            const [r, g, b] = hexToRgb(tile.color);
+            const step = w / (SPARK_POINTS - 1);
+            const xy = pts.map((v, i) => [w - (pts.length - 1 - i) * step, h - 1 - Math.min(1, v / tile.max) * (h - 3)]);
+            cr.moveTo(xy[0][0], h);
+            for (const [x, y] of xy)
+                cr.lineTo(x, y);
+            cr.lineTo(w, h);
+            cr.closePath();
+            cr.setSourceRGBA(r, g, b, 0.16);
+            cr.fill();
+            cr.moveTo(...xy[0]);
+            for (const [x, y] of xy.slice(1))
+                cr.lineTo(x, y);
+            cr.setSourceRGBA(r, g, b, 0.95);
+            cr.setLineWidth(1.6 * scale());
+            cr.stroke();
+        } finally {
+            cr.$dispose();
+        }
+    }
+
+    _pushSample(tile, v, autoScaleFloor = 0) {
+        tile.series.push(v);
+        if (tile.series.length > SPARK_POINTS)
+            tile.series.shift();
+        if (autoScaleFloor)
+            tile.max = Math.max(autoScaleFloor, ...tile.series) * 1.15;
+        tile.chart?.queue_repaint();
+    }
+
     _loadActivity() {
+        this._ext.call('SystemStats', [], (res, err) => {
+            if (!err && this._dashOpen && this._tab === 'activity')
+                this._renderStats(JSON.parse(res[0]));
+        });
         this._ext.call('ActivityList', [], (res, err) => {
             if (!this._dashOpen || this._tab !== 'activity')
                 return;
             const items = err ? [] : JSON.parse(res[0]);
-            this._message(this._activityMsg, err ? 'Daemon not running'
-                : items.length ? '' : 'Nothing running. Builds, tests and dev servers you start in a terminal or IDE show up here.');
+            this._message(this._activityMsg, err ? 'Daemon not running' : items.length ? '' : 'No builds or dev servers running');
             this._renderActivity(items);
         });
+    }
+
+    _renderStats(st) {
+        const T = this._tiles;
+        T.cpu.value.text = `${Math.round(st.cpu)}%`;
+        T.cpu.sub.text = [`${st.cores} cores`, st.tempC ? `${Math.round(st.tempC)}°C` : '', `load ${st.load1.toFixed(2)}`]
+            .filter(Boolean).join('  ·  ');
+        this._pushSample(T.cpu, st.cpu);
+
+        const memPct = st.memTotal ? 100 * st.memUsed / st.memTotal : 0;
+        T.mem.value.text = fmtBytes(st.memUsed);
+        T.mem.sub.text = `of ${fmtBytes(st.memTotal, 0)}${st.swapTotal ? `  ·  swap ${fmtBytes(st.swapUsed)}` : ''}`;
+        this._pushSample(T.mem, memPct);
+
+        T.disk.frac = st.diskTotal ? st.diskUsed / st.diskTotal : 0;
+        T.disk.value.text = `${Math.round(T.disk.frac * 100)}%`;
+        T.disk.sub.text = `${fmtBytes(st.diskUsed, 0)} of ${fmtBytes(st.diskTotal, 0)}`;
+        this._syncTileBar(T.disk);
+
+        T.net.value.text = `↓ ${fmtBytes(st.netRx)}/s`;
+        T.net.sub.text = `↑ ${fmtBytes(st.netTx)}/s`;
+        this._pushSample(T.net, st.netRx + st.netTx, 64 * 1024);
+
+        this._topList.destroy_all_children();
+        for (const p of st.top) {
+            const row = new St.BoxLayout({style_class: 'goisland-proc-row'});
+            row.add_child(label('goisland-proc-name', {text: p.name || `pid ${p.pid}`, x_expand: true}));
+            row.add_child(label(`goisland-proc-cpu${p.cpu >= 50 ? ' hot' : ''}`, {text: `${p.cpu.toFixed(p.cpu < 10 ? 1 : 0)}%`}));
+            row.add_child(label('goisland-proc-mem', {text: fmtBytes(p.mem, 0)}));
+            this._topList.add_child(row);
+        }
     }
 
     _renderActivity(items) {
         this._activityList.destroy_all_children();
         const now = Date.now();
-        let section = null;
         for (const it of items) {
-            if (it.state !== section) {
-                section = it.state;
-                this._activityList.add_child(label('goisland-group', {text: section === 'running' ? 'RUNNING' : 'RECENTLY FINISHED'}));
-            }
-            const running = it.state === 'running';
             const box = new St.BoxLayout({x_expand: true, style_class: 'goisland-activity-row'});
             const badge = new St.Widget({
-                style_class: `goisland-activity-badge ${it.kind}${running ? '' : ' done'}`,
+                style_class: `goisland-activity-badge ${it.kind}`,
                 layout_manager: new Clutter.BinLayout(), y_align: Clutter.ActorAlign.CENTER,
             });
             badge.add_child(new St.Icon({
-                icon_name: !running ? 'object-select-symbolic' : it.kind === 'service' ? 'network-server-symbolic' : 'system-run-symbolic',
+                icon_name: it.kind === 'service' ? 'network-server-symbolic' : 'system-run-symbolic',
                 style_class: 'goisland-activity-icon', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
             }));
             box.add_child(badge);
@@ -599,16 +732,13 @@ class Island extends St.BoxLayout {
             col.add_child(label('goisland-row-title goisland-mono', {text: it.title}));
             col.add_child(label('goisland-row-sub', {text: [it.project, it.app].filter(Boolean).join('  ·  ')}));
             box.add_child(col);
-            if (running && it.ports?.length) {
+            if (it.ports?.length) {
                 const chips = new St.BoxLayout({style_class: 'goisland-port-chips', y_align: Clutter.ActorAlign.CENTER});
-                for (const port of it.ports.slice(0, 3))
+                for (const port of it.ports.slice(0, 2))
                     chips.add_child(this._portButton(port, 'goisland-port-chip'));
                 box.add_child(chips);
             }
-            const when = running
-                ? fmtClock((now - it.startedAt) / 1000)
-                : `took ${fmtClock((it.endedAt - it.startedAt) / 1000)} · ${ago(it.endedAt)}`;
-            box.add_child(label(`goisland-activity-time${running ? ' live' : ''}`, {text: when, y_align: Clutter.ActorAlign.CENTER}));
+            box.add_child(label('goisland-activity-time live', {text: fmtClock((now - it.startedAt) / 1000), y_align: Clutter.ActorAlign.CENTER}));
             const row = new St.Button({style_class: 'goisland-row goisland-clip-row', can_focus: true, child: box, x_expand: true});
             row.connect('clicked', () => {
                 if (focusPids(it.focus))
