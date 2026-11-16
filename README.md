@@ -16,7 +16,7 @@ A Dynamic Island for the GNOME desktop on Ubuntu. It replaces the top-bar clock 
 
 ## Install
 
-Ubuntu 24.04 or newer (GNOME Shell 46–49), x86-64 or ARM64:
+Ubuntu 24.04 or newer (GNOME Shell 46–50), x86-64 or ARM64:
 
 ```sh
 curl -fsSL https://adamshannag.github.io/dynamic-island/setup.sh | sudo sh
@@ -137,7 +137,7 @@ The D-Bus interface is documented in [docs/dbus-api.md](docs/dbus-api.md). Any s
 
 ## Compatibility
 
-Only GNOME Shell 46 (Ubuntu 24.04) has actually been run. The extension declares support for 46–49 and uses the newer APIs where they changed, but 47–49 haven't been tested yet. X11 and Wayland both work. Docker is optional.
+Only GNOME Shell 46 (Ubuntu 24.04) has actually been run. The extension declares support for 46–50 and uses the newer APIs where they changed, but 47–50 haven't been tested yet. X11 and Wayland both work on 46–49; GNOME Shell 50 dropped X11 entirely, so it's Wayland-only there. Docker is optional.
 
 ## Development
 

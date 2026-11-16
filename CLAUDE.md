@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guide for AI agents (and humans) working on **Dynamic Island**: a macOS-style Dynamic Island for Ubuntu's GNOME Shell (46–49, X11 and Wayland). It has two halves that talk over the session D-Bus:
+Guide for AI agents (and humans) working on **Dynamic Island**: a macOS-style Dynamic Island for Ubuntu's GNOME Shell (46–50; 46–49 run on X11 or Wayland, 50 is Wayland-only since GNOME Shell dropped X11). It has two halves that talk over the session D-Bus:
 
 ```
 MPRIS / UPower / notifications / docker / /proc / ss / CLI
