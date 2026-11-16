@@ -1,6 +1,6 @@
 module github.com/AdamShannag/dynamic-island
 
-go 1.25
+go 1.27.4
 
 require (
 	github.com/godbus/dbus/v5 v5.2.4
