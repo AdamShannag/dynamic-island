@@ -187,9 +187,8 @@ func (s *Server) removeSub(lobbyID string, ch chan json.RawMessage) {
 
 func (s *Server) Broadcast(lobbyID string, payload json.RawMessage) {
 	s.mu.Lock()
-	chans := append([]chan json.RawMessage{}, s.subs[lobbyID]...)
-	s.mu.Unlock()
-	for _, ch := range chans {
+	defer s.mu.Unlock()
+	for _, ch := range s.subs[lobbyID] {
 		select {
 		case ch <- payload:
 		default:
@@ -199,9 +198,9 @@ func (s *Server) Broadcast(lobbyID string, payload json.RawMessage) {
 
 func (s *Server) EndLobby(lobbyID string, payload json.RawMessage) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	chans := s.subs[lobbyID]
 	delete(s.subs, lobbyID)
-	s.mu.Unlock()
 	for _, ch := range chans {
 		select {
 		case ch <- payload:

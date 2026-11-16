@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,5 +95,55 @@ func TestSubscribeReceivesBroadcastAndClose(t *testing.T) {
 	case <-closedErr:
 	case <-time.After(2 * time.Second):
 		t.Fatal("onClosed never called after EndLobby")
+	}
+}
+
+func TestBroadcastDuringEndLobbyDoesNotPanic(t *testing.T) {
+	s := lobby.NewServer(48564, lobby.Callbacks{})
+	go s.ListenAndServe()
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	cancel := lobby.Subscribe("127.0.0.1:48564", "l1",
+		func(json.RawMessage) {},
+		func(error) {})
+	defer cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	var wg sync.WaitGroup
+	var panicked atomic.Bool
+	stop := make(chan struct{})
+
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if recover() != nil {
+					panicked.Store(true)
+				}
+			}()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					s.Broadcast("l1", json.RawMessage(`{"n":1}`))
+				}
+			}
+		}()
+	}
+
+	go func() {
+		time.Sleep(2 * time.Millisecond)
+		s.EndLobby("l1", json.RawMessage(`{"ended":true}`))
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	close(stop)
+	wg.Wait()
+
+	if panicked.Load() {
+		t.Fatal("Broadcast panicked racing EndLobby")
 	}
 }
