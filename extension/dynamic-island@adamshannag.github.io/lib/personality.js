@@ -5,6 +5,7 @@ import {
     CPU_DIZZY, POINTER_MS, SHAKE_MIN_PX, SHAKE_REVERSALS, SHAKE_WINDOW_MS, SLEEP_AFTER_MS, WATCH_ACTIVE_MS,
     WATCH_IDLE_MS,
 } from './constants.js';
+import {LOG_PREFIX} from './dbus.js';
 
 const CPU_SAMPLE_S = 4;
 const WOBBLE_MS = 760;
@@ -97,7 +98,14 @@ export class Personality {
     _schedulePointer(ms) {
         this._pointerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
             this._pointerId = 0;
-            this._schedulePointer(this._onPointer());
+            let next;
+            try {
+                next = this._onPointer();
+            } catch (e) {
+                console.error(`${LOG_PREFIX}: pointer tick: ${e.message}`);
+                next = 1000;
+            }
+            this._schedulePointer(next);
             return GLib.SOURCE_REMOVE;
         });
     }

@@ -2,6 +2,8 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 
+import {LOG_PREFIX} from './dbus.js';
+
 const LOOK_X = 3;
 const LOOK_Y = 2;
 
@@ -132,6 +134,15 @@ export class Face {
     }
 
     _frame() {
+        try {
+            this._frameInner();
+        } catch (e) {
+            console.error(`${LOG_PREFIX}: face frame: ${e.message}`);
+            this._stopLoop();
+        }
+    }
+
+    _frameInner() {
         if (this._mood === 'sleep' || this._spyOn) {
             this._stopLoop();
             return;
