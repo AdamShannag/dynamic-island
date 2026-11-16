@@ -83,13 +83,13 @@ func TestNoActivityWhilePresenting(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	h := &fakeHost{presenting: true}
 	r := NewRace("h1", "Host", "127.0.0.1", 18620)
-	r.Engine().Enable() // simulate a race already active before presenting started
+	r.Engine().Enable()
 	defer r.Engine().Disable()
 	ctx, cancel := context.WithCancel(context.Background())
 	go r.Run(ctx, h)
 	defer cancel()
 	r.Engine().CreateLobby()
-	time.Sleep(200 * time.Millisecond) // give OnChange a moment to fire, if it's going to
+	time.Sleep(200 * time.Millisecond)
 	if _, ok := h.activity("race"); ok {
 		t.Fatal("must not set a pill Activity while presenting, even for a race the engine already had running")
 	}

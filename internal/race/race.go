@@ -77,9 +77,9 @@ type Engine struct {
 	disc   *discovery.Discovery
 	server *lobby.Server
 
-	notifyMu    sync.Mutex
-	notifying   bool
-	notifyQueue []State
+	notifyMu      sync.Mutex
+	notifying     bool
+	notifyPending bool
 }
 
 func NewEngine(selfID, selfName, selfAddr string, port int) *Engine {
@@ -180,32 +180,10 @@ func (e *Engine) State() State {
 	return cloneState(e.state)
 }
 
-// notify delivers the current State to the registered OnChange callback.
-//
-// Callbacks must never run concurrently (two goroutines calling the same
-// user callback at once is a data race on whatever the callback touches)
-// and must never deadlock on reentrancy (a callback that calls back into
-// the Engine, e.g. Leave(), triggers another notify() from the same
-// goroutine before the first call has returned).
-//
-// To satisfy both, notify() is a single-flight queue: the first caller to
-// find nothing in progress becomes the sole "notifier" for as long as there
-// is work queued, invoking fn with no lock held; every other caller -
-// whether a genuinely concurrent goroutine or the same goroutine calling
-// back in reentrantly - just appends its snapshot and returns immediately,
-// to be delivered by the in-progress notifier's next loop iteration.
 func (e *Engine) notify() {
-	e.mu.Lock()
-	fn := e.onChange
-	snap := cloneState(e.state)
-	e.mu.Unlock()
-	if fn == nil {
-		return
-	}
-
 	e.notifyMu.Lock()
 	if e.notifying {
-		e.notifyQueue = append(e.notifyQueue, snap)
+		e.notifyPending = true
 		e.notifyMu.Unlock()
 		return
 	}
@@ -213,16 +191,21 @@ func (e *Engine) notify() {
 	e.notifyMu.Unlock()
 
 	for {
-		fn(snap)
+		e.mu.Lock()
+		fn := e.onChange
+		snap := cloneState(e.state)
+		e.mu.Unlock()
+		if fn != nil {
+			fn(snap)
+		}
 
 		e.notifyMu.Lock()
-		if len(e.notifyQueue) == 0 {
+		if !e.notifyPending {
 			e.notifying = false
 			e.notifyMu.Unlock()
 			return
 		}
-		snap = e.notifyQueue[0]
-		e.notifyQueue = e.notifyQueue[1:]
+		e.notifyPending = false
 		e.notifyMu.Unlock()
 	}
 }

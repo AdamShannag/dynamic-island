@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -406,5 +407,38 @@ func TestBogusProgressIsClampedToThePassage(t *testing.T) {
 	h, _ := racer(host, "h1")
 	if g.Progress != 1 || g.WPM > h.WPM*2+1 {
 		t.Fatalf("guest progress %v wpm %v (host wpm %v): a huge count must not inflate WPM", g.Progress, g.WPM, h.WPM)
+	}
+}
+
+func TestNotifyDeliversOnlyTheLatestQueuedState(t *testing.T) {
+	e := engine(t, "h1", 18619)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var got []race.State
+	e.OnChange(func(s race.State) {
+		mu.Lock()
+		first := len(got) == 0
+		got = append(got, s)
+		mu.Unlock()
+		if first {
+			<-release
+		}
+	})
+
+	go e.CreateLobby()
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(got) == 1 })
+	e.Leave()
+	second := e.CreateLobby()
+	close(release)
+
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(got) >= 2 })
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("delivered %d states, want the blocked one plus only the latest", len(got))
+	}
+	if last := got[len(got)-1]; last.LobbyID != second || last.Phase != race.PhaseLobby {
+		t.Fatalf("last delivered state = %+v, want the current lobby %s", last, second)
 	}
 }

@@ -56,6 +56,10 @@ internal/
   agents/               Claude Code sessions from hooks and the status line
   clipboard/ notes/ sites/ inbox/   stores (inbox is memory-only by design)
   docker/ ports/ sysmon/ tools/     Docker CLI, listening ports, system stats, QR and colour picker
+  identity/             stable per-install peer id and display name
+  discovery/            mDNS advertise/browse of other daemons on the LAN, and LocalIP
+  lobby/                game-agnostic HTTP+SSE lobby: invite, respond, start, progress, events
+  race/                 typing-race engine built on discovery + lobby (host-authoritative)
 extension/
   dynamic-island@adamshannag.github.io/   the shipped extension (no build step)
     extension.js        Extension entry: lifecycle, wiring, settings, clipboard, presenting
@@ -126,6 +130,7 @@ Use these rather than building the same actors by hand: `label`, `setText` (no-o
 - **D-Bus methods** live in `internal/dbusapi/<feature>.go` as methods on `*api`. Add each one to `introspect.go` (a test checks the XML matches the exported methods) and to the extension's `lib/dbus.js`. Return JSON strings through the `toJSON`/`resultJSON`/`listJSON` helpers and errors through `dbusErr`.
 - **Notifications** are observed with `BecomeMonitor` on a dedicated connection. GNOME forwards every `Notify` call again with an `x-shell-sender` hint, so those copies are skipped (otherwise each notification appears twice).
 - **Resource limits:** the daemon sets a soft memory limit of 32 MB and `GOMAXPROCS=2`. `plugins/context.go` caches `/proc` scans. Keep polling proportional to whether anyone is looking (the extension only calls stats methods while their tab is open).
+- **LAN race is the daemon's only network listener** and the first code that talks to other machines. It is off by default (`settings` keeps `race` off until the user opts in) and is torn down while presenting. The listener (`lobby.Server`, port 54372, `ISLAND_RACE_PORT` overrides) binds synchronously in `Enable`. Treat every peer message as untrusted: the lobby rejects bad shapes and oversized fields, caps subscribers, and takes peer IPs from the connection rather than the body; the race host clamps reported progress. Outbound calls use a short timeout, and the host sends an SSE heartbeat so a guest sees a silent host within about 15 s. `discovery.LocalIP` is the single answer to "what is our LAN address" (it skips docker, bridge and VPN interfaces). A second multiplayer feature should reuse `discovery` and `lobby` as they are and add its own engine package, plugin, D-Bus file and page.
 - **Paths:** always `paths.Data()/Config()/Cache()` (or `DataFile` and friends), never `$HOME/...` by hand. Files holding user content are written with mode 0600.
 
 ## Testing
