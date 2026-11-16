@@ -114,3 +114,22 @@ export class ScreenShareWatcher {
         this._shares.clear();
     }
 }
+
+export class PanelTransparency {
+    static styleClass = 'island-transparent-panel';
+
+    constructor() {
+        this._on = false;
+    }
+
+    set enabled(on) {
+        const panel = Main.panel;
+        if (!panel || on === this._on)
+            return;
+        this._on = on;
+        if (on)
+            panel.add_style_class_name(PanelTransparency.styleClass);
+        else
+            panel.remove_style_class_name(PanelTransparency.styleClass);
+    }
+}

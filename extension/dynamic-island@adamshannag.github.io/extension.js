@@ -9,7 +9,7 @@ import {Island} from './island.js';
 import {ClipboardWatcher} from './lib/clipboard.js';
 import {DEFAULT_SETTINGS, IDLE, featureOn} from './lib/constants.js';
 import {DaemonClient, LOG_PREFIX} from './lib/dbus.js';
-import {BannerBlocker, BannerMute, OsdTakeover, ScreenShareWatcher} from './lib/gnome.js';
+import {BannerBlocker, BannerMute, OsdTakeover, PanelTransparency, ScreenShareWatcher} from './lib/gnome.js';
 import {activateNotification} from './lib/shell.js';
 
 const PREWARM_DELAY_S = 3;
@@ -39,6 +39,8 @@ export default class DynamicIslandExtension extends Extension {
         this._osd.enabled = true;
         this._banners = new BannerBlocker();
         this._bannerMute = new BannerMute();
+        this._panel = new PanelTransparency();
+        this._panel.enabled = featureOn(this.settings, 'transparentPanel');
         this._shares = new ScreenShareWatcher(sharing => {
             if (sharing)
                 this.setPresenting(true, true);
@@ -70,6 +72,8 @@ export default class DynamicIslandExtension extends Extension {
         this._shares = null;
         this._osd.enabled = false;
         this._banners.enabled = false;
+        this._panel.enabled = false;
+        this._panel = null;
         this.setPresenting(false, false);
         St.ThemeContext.get_for_stage(global.stage).disconnectObject(this);
         Main.layoutManager.disconnectObject(this);
@@ -121,6 +125,7 @@ export default class DynamicIslandExtension extends Extension {
         this._island?.applySettings(st);
         this._osd.enabled = featureOn(st, 'osd');
         this._banners.enabled = !!this._daemon?.connected && featureOn(st, 'hideBanners');
+        this._panel.enabled = featureOn(st, 'transparentPanel');
     }
 
     updateSettings(patch) {

@@ -1027,3 +1027,9 @@
 .island.theme-green .island-more-star.pinned { background-color: #30d158; }
 .island.theme-teal .island-more-star.pinned { background-color: #40c8e0; }
 .island.theme-graphite .island-more-star.pinned { background-color: #8e8e93; }
+
+#panel.island-transparent-panel { background-color: transparent; }
+#panel.island-transparent-panel .panel-button {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
