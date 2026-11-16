@@ -308,10 +308,12 @@ export class RacePage extends Page {
     _respond(accept) {
         this._acceptBtn.reactive = false;
         this._declineBtn.reactive = false;
-        this.call('RaceRespond', [accept], () => {
-            this._guestResponded = true;
+        this.call('RaceRespond', [accept], (_result, err) => {
             this._acceptBtn.reactive = true;
             this._declineBtn.reactive = true;
+            if (err)
+                return;
+            this._guestResponded = true;
             this.refresh();
         });
     }
