@@ -205,7 +205,10 @@ export class RacePage extends Page {
         const code = unicode.codePointAt(0);
         if (code < 0x20 || code === 0x7f)
             return Clutter.EVENT_PROPAGATE;
-        if (Array.from(this._typed).length >= passageLen)
+        const typedLen = Array.from(this._typed).length;
+        if (typedLen >= passageLen)
+            return Clutter.EVENT_STOP;
+        if (typedLen > correctPrefix(this._typed, this._passage))
             return Clutter.EVENT_STOP;
         this._typed += unicode;
         this._applyTyped();
