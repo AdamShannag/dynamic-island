@@ -2,6 +2,7 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 
 import {featureOn} from '../lib/constants.js';
+import {correctPrefix} from '../lib/format.js';
 import {
     EmptyState, badge, column, fillList, group, label, multilineEntry, page, pillButton, rowText, scrollView,
     setText, wrappingLabel,
@@ -148,7 +149,7 @@ export class RacePage extends Page {
     tick() {
         if (this._phase !== 'racing')
             return;
-        const len = this._entry.text.length;
+        const len = correctPrefix(this._entry.text, this._passage);
         if (len === this._lastSubmittedLen)
             return;
         this._lastSubmittedLen = len;
@@ -343,7 +344,8 @@ export class RacePage extends Page {
     }
 
     _renderRacing(state) {
-        setText(this._passageLabel, state.passage ?? '');
+        this._passage = state.passage ?? '';
+        setText(this._passageLabel, this._passage);
         this._syncRaceRows(state.racers ?? []);
     }
 

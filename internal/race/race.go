@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AdamShannag/dynamic-island/internal/discovery"
 	"github.com/AdamShannag/dynamic-island/internal/lobby"
@@ -605,17 +606,18 @@ func (e *Engine) applyProgress(lobbyID, peerID string, typedChars int) bool {
 	if e.host && e.state.LobbyID == lobbyID && e.state.Phase == PhaseRacing {
 		idx = e.racerIndexLocked(peerID)
 	}
-	if idx == -1 || len(e.state.Passage) == 0 {
+	passageLen := utf8.RuneCountInString(e.state.Passage)
+	if idx == -1 || passageLen == 0 {
 		e.mu.Unlock()
 		return false
 	}
 
-	progress := clamp(float64(typedChars)/float64(len(e.state.Passage)), 0, 1)
-	e.state.Racers[idx].Progress = progress
-	if progress >= 1 && e.state.Racers[idx].FinishedAtMs == 0 {
+	typed := min(max(typedChars, 0), passageLen)
+	e.state.Racers[idx].Progress = float64(typed) / float64(passageLen)
+	if typed == passageLen && e.state.Racers[idx].FinishedAtMs == 0 {
 		e.state.Racers[idx].FinishedAtMs = time.Now().UnixMilli()
 		if minutes := time.Since(e.raceStartedAt).Minutes(); minutes > 0 {
-			e.state.Racers[idx].WPM = (float64(typedChars) / 5) / minutes
+			e.state.Racers[idx].WPM = (float64(typed) / 5) / minutes
 		}
 	}
 	e.finishIfDoneLocked()
@@ -732,16 +734,6 @@ func allRacersFinished(racers []Racer) bool {
 		}
 	}
 	return true
-}
-
-func clamp(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 func cloneState(s State) State {

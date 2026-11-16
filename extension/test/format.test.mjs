@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    ago, clipKind, dockerProblem, fmtBytes, fmtClock, hashColor, hexToRgb, searchUri, stripMarkup,
+    ago, clipKind, correctPrefix, dockerProblem, fmtBytes, fmtClock, hashColor, hexToRgb, searchUri, stripMarkup,
 } from '../dynamic-island@adamshannag.github.io/lib/format.js';
 
 test('fmtClock', () => {
@@ -55,4 +55,14 @@ test('searchUri', () => {
     assert.equal(searchUri('localhost:3000/x'), 'http://localhost:3000/x');
     assert.equal(searchUri('ftp://a.b'), 'ftp://a.b');
     assert.equal(searchUri('go generics'), 'https://www.google.com/search?q=go%20generics');
+});
+
+test('correctPrefix', () => {
+    assert.equal(correctPrefix('', 'hello'), 0);
+    assert.equal(correctPrefix('hel', 'hello'), 3);
+    assert.equal(correctPrefix('hex', 'hello'), 2);
+    assert.equal(correctPrefix('hello world', 'hello'), 5);
+    assert.equal(correctPrefix('xxxxxxxxxx', 'hello'), 0);
+    assert.equal(correctPrefix('café', 'café au lait'), 4);
+    assert.equal(correctPrefix(null, 'a'), 0);
 });

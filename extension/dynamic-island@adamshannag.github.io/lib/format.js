@@ -81,3 +81,12 @@ export function searchUri(q) {
         return `https://${q}`;
     return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 }
+
+export function correctPrefix(typed, target) {
+    const a = Array.from(typed ?? ''), b = Array.from(target ?? '');
+    const n = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < n && a[i] === b[i])
+        i++;
+    return i;
+}

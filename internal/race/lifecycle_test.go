@@ -385,3 +385,26 @@ func TestEnableFailsWhenThePortIsTaken(t *testing.T) {
 		t.Fatal("a failed Enable must leave the engine disabled")
 	}
 }
+
+func TestBogusProgressIsClampedToThePassage(t *testing.T) {
+	host := engine(t, "h1", 18617)
+	guest := engine(t, "g1", 18618)
+	acceptedLobby(t, host, map[string]int{"g1": 18618}, guest)
+	if err := host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return guest.State().Phase == race.PhaseRacing })
+	passage := guest.State().Passage
+	if err := guest.SubmitProgress(1 << 30); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.SubmitProgress(len(passage)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return host.State().Phase == race.PhaseFinished })
+	g, _ := racer(host, "g1")
+	h, _ := racer(host, "h1")
+	if g.Progress != 1 || g.WPM > h.WPM*2+1 {
+		t.Fatalf("guest progress %v wpm %v (host wpm %v): a huge count must not inflate WPM", g.Progress, g.WPM, h.WPM)
+	}
+}
