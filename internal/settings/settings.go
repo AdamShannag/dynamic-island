@@ -22,10 +22,11 @@ type Settings struct {
 }
 
 var (
-	Accents    = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
-	Surfaces   = []string{"black", "graphite"}
-	TabIDs     = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "race"}
-	FeatureIDs = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "race"}
+	Accents      = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
+	Surfaces     = []string{"black", "graphite"}
+	TabIDs       = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "race"}
+	FeatureIDs   = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "race"}
+	offByDefault = map[string]bool{"race": true}
 )
 
 func Defaults() Settings {
@@ -34,7 +35,7 @@ func Defaults() Settings {
 		s.Tabs[t] = true
 	}
 	for _, f := range FeatureIDs {
-		s.Features[f] = true
+		s.Features[f] = !offByDefault[f]
 	}
 	return s
 }
@@ -78,7 +79,10 @@ func Enabled(feature string) bool {
 	mu.RLock()
 	defer mu.RUnlock()
 	v, ok := cur.Features[feature]
-	return !ok || v
+	if !ok {
+		return !offByDefault[feature]
+	}
+	return v
 }
 
 func TabOn(tab string) bool {

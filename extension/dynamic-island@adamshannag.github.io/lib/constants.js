@@ -80,6 +80,6 @@ export const SETTING_COLORS = {
     'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
     'input-keyboard-symbolic': '#ff9f0a',
 };
-export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {}};
+export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {race: false}};
 export const featureOn = (st, key) => st?.features?.[key] !== false;
 export const tabOn = (st, id) => id === 'home' || st?.tabs?.[id] !== false;

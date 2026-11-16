@@ -1,6 +1,7 @@
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 
+import {featureOn} from '../lib/constants.js';
 import {
     EmptyState, badge, column, fillList, group, label, multilineEntry, page, pillButton, rowText, scrollView,
     setText, wrappingLabel,
@@ -186,15 +187,26 @@ export class RacePage extends Page {
             view.visible = key === name;
     }
 
+    onSettings(st) {
+        this._peerSig = null;
+        if (this.active && (this._phase === 'idle' || this._phase === undefined))
+            this.refresh();
+    }
+
     _renderIdle(peers) {
-        const sig = peers.map(p => p.id).join('|');
+        const on = featureOn(this.island.settings, 'race');
+        const sig = `${on}:${peers.map(p => p.id).join('|')}`;
         if (sig === this._peerSig)
             return;
         this._peerSig = sig;
-        if (!peers.length) {
+        if (!on || !peers.length) {
             this._idleScroll.hide();
-            this._peerEmpty.show({
+            this._peerEmpty.show(on ? {
                 icon: 'input-keyboard-symbolic', title: 'No one else found on this network yet',
+                hint: 'Others show up here once they turn on LAN typing race',
+            } : {
+                icon: 'input-keyboard-symbolic', title: 'LAN typing race is off',
+                hint: 'Turn it on in Settings to race people on your network',
             });
             return;
         }

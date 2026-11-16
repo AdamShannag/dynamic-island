@@ -43,7 +43,29 @@ func TestUpdateDisplayName(t *testing.T) {
 	if _, err := Update([]byte(`{"displayName":"` + strings.Repeat("x", 41) + `"}`)); err == nil {
 		t.Fatal("expected error for an over-long display name")
 	}
-	if !Enabled("race") || !TabOn("race") {
-		t.Fatal("race feature/tab ids must be registered and default on, like every other feature")
+	if !TabOn("race") {
+		t.Fatal("race tab id must be registered and default on")
+	}
+}
+
+func TestRaceFeatureOffByDefault(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	mu.Lock()
+	cur = Defaults()
+	mu.Unlock()
+	if Enabled("race") || Defaults().Features["race"] {
+		t.Fatal("race opens a network listener, so it must stay off until the user opts in")
+	}
+	if !Enabled("usb") {
+		t.Fatal("other features still default on")
+	}
+	mu.Lock()
+	delete(cur.Features, "race")
+	mu.Unlock()
+	if Enabled("race") {
+		t.Fatal("a missing race key must read as off")
+	}
+	if _, err := Update([]byte(`{"features":{"race":true}}`)); err != nil || !Enabled("race") {
+		t.Fatalf("opting in must turn race on: %v", err)
 	}
 }
