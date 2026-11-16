@@ -2,6 +2,8 @@ import Gio from 'gi://Gio';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+import {SHELL_MAJOR} from './constants.js';
+
 export class OsdTakeover {
     constructor(handler) {
         this._handler = handler;
@@ -14,7 +16,15 @@ export class OsdTakeover {
             const orig = osd.show;
             const handler = this._handler;
             this._orig = orig;
-            osd.show = function (monitorIndex, icon, label, level, maxLevel) {
+            osd.show = SHELL_MAJOR >= 50 ? function (icon, label, levels) {
+                const rest = {};
+                for (const [idx, lv] of Object.entries(levels)) {
+                    if (!handler(Number(idx), icon, label, lv.level, lv.maxLevel ?? -1))
+                        rest[idx] = lv;
+                }
+                if (Object.keys(rest).length)
+                    orig.call(this, icon, label, rest);
+            } : function (monitorIndex, icon, label, level, maxLevel) {
                 if (!handler(monitorIndex, icon, label, level, maxLevel))
                     orig.call(this, monitorIndex, icon, label, level, maxLevel);
             };
