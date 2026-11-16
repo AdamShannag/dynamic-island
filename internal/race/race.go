@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -63,6 +64,7 @@ type Engine struct {
 	mu            sync.Mutex
 	state         State
 	enabled       bool
+	addr          string
 	host          bool
 	hostAddr      string
 	peerAddrs     map[string]string
@@ -99,7 +101,11 @@ func (e *Engine) Enable() error {
 		return nil
 	}
 
-	disc, err := discovery.Start(e.selfID, e.selfName, e.port)
+	addr := e.selfAddr
+	if addr == "" {
+		addr = discovery.LocalIP()
+	}
+	disc, err := discovery.Start(e.selfID, e.selfName, addr, e.port)
 	if err != nil {
 		return err
 	}
@@ -117,6 +123,7 @@ func (e *Engine) Enable() error {
 		return fmt.Errorf("race: lobby server did not start listening on port %d", e.port)
 	}
 
+	e.addr = addr
 	e.disc = disc
 	e.server = server
 	e.enabled = true
@@ -266,6 +273,7 @@ func (e *Engine) Invite(peer discovery.Peer) error {
 	e.state.Racers = append(e.state.Racers, Racer{PeerID: peer.ID, Name: peer.Name, Status: "pending"})
 	e.peerAddrs[peer.ID] = peer.Addr
 	lobbyID := e.state.LobbyID
+	hostAddr := net.JoinHostPort(e.addr, strconv.Itoa(e.port))
 	e.publishLocked(false)
 	e.mu.Unlock()
 	e.notify()
@@ -275,7 +283,7 @@ func (e *Engine) Invite(peer discovery.Peer) error {
 		Kind:     "race",
 		HostID:   e.selfID,
 		HostName: e.selfName,
-		HostAddr: fmt.Sprintf("%s:%d", e.selfAddr, e.port),
+		HostAddr: hostAddr,
 	})
 	if err != nil {
 		e.mu.Lock()
@@ -398,6 +406,7 @@ func (e *Engine) handleRespond(r lobby.Response) error {
 	case PhaseLobby:
 		if r.Accept {
 			e.state.Racers[idx].Status = "accepted"
+			e.peerAddrs[r.PeerID] = lobby.WithHost(e.peerAddrs[r.PeerID], r.RemoteIP)
 		} else {
 			e.state.Racers[idx].Status = "declined"
 		}
@@ -488,7 +497,7 @@ func (e *Engine) handleStart(s lobby.Start) error {
 		return lobby.ErrRejected
 	}
 	e.mu.Lock()
-	if e.host || e.state.LobbyID != s.LobbyID || e.unsubscribe == nil {
+	if e.host || e.state.LobbyID != s.LobbyID || e.unsubscribe == nil || !lobby.SameHost(e.hostAddr, s.RemoteIP) {
 		e.mu.Unlock()
 		return lobby.ErrClosed
 	}
@@ -578,7 +587,10 @@ func (e *Engine) handleProgress(p lobby.Progress) error {
 	if err := json.Unmarshal(p.Payload, &payload); err != nil {
 		return lobby.ErrRejected
 	}
-	if !e.applyProgress(p.LobbyID, p.PeerID, payload.TypedChars) {
+	e.mu.Lock()
+	known := lobby.SameHost(e.peerAddrs[p.PeerID], p.RemoteIP)
+	e.mu.Unlock()
+	if !known || !e.applyProgress(p.LobbyID, p.PeerID, payload.TypedChars) {
 		return lobby.ErrClosed
 	}
 	return nil

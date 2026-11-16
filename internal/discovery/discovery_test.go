@@ -12,12 +12,12 @@ func TestDiscoveryFindsPeerNotSelf(t *testing.T) {
 		t.Skip("needs multicast")
 	}
 
-	a, err := discovery.Start("peer-a", "Alice", 48551)
+	a, err := discovery.Start("peer-a", "Alice", "127.0.0.1", 48551)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	b, err := discovery.Start("peer-b", "Bob", 48552)
+	b, err := discovery.Start("peer-b", "Bob", "127.0.0.1", 48552)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestDiscoveryFindsPeerNotSelf(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if found.ID != "peer-b" || found.Name != "Bob" || found.Addr == "" {
+	if found.ID != "peer-b" || found.Name != "Bob" || found.Addr != "127.0.0.1:48552" {
 		t.Fatalf("did not discover peer-b in time: %+v", found)
 	}
 	for _, p := range a.Peers() {

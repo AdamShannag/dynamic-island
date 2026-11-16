@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -27,16 +29,19 @@ type Invite struct {
 type Response struct {
 	LobbyID, PeerID, PeerName string
 	Accept                    bool
+	RemoteIP                  string `json:"-"`
 }
 
 type Start struct {
-	LobbyID string
-	Payload json.RawMessage
+	LobbyID  string
+	Payload  json.RawMessage
+	RemoteIP string `json:"-"`
 }
 
 type Progress struct {
 	LobbyID, PeerID string
 	Payload         json.RawMessage
+	RemoteIP        string `json:"-"`
 }
 
 type Callbacks struct {
@@ -91,14 +96,22 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 
 func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	v, ok := decodeBody[Invite](w, r)
-	if ok {
-		reply(w, call(s.cb.OnInvite, v))
+	if !ok {
+		return
 	}
+	addr, err := fromRemote(r, v.HostAddr)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	v.HostAddr = addr
+	reply(w, call(s.cb.OnInvite, v))
 }
 
 func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 	v, ok := decodeBody[Response](w, r)
 	if ok {
+		v.RemoteIP = remoteIP(r)
 		reply(w, call(s.cb.OnRespond, v))
 	}
 }
@@ -106,6 +119,7 @@ func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	v, ok := decodeBody[Start](w, r)
 	if ok {
+		v.RemoteIP = remoteIP(r)
 		reply(w, call(s.cb.OnStart, v))
 	}
 }
@@ -113,8 +127,41 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 	v, ok := decodeBody[Progress](w, r)
 	if ok {
+		v.RemoteIP = remoteIP(r)
 		reply(w, call(s.cb.OnProgress, v))
 	}
+}
+
+func remoteIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func fromRemote(r *http.Request, claimed string) (string, error) {
+	_, port, err := net.SplitHostPort(claimed)
+	if err != nil {
+		return "", err
+	}
+	if n, err := strconv.Atoi(port); err != nil || n <= 0 || n > 65535 {
+		return "", fmt.Errorf("lobby: bad port %q", port)
+	}
+	return net.JoinHostPort(remoteIP(r), port), nil
+}
+
+func WithHost(addr, ip string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || ip == "" {
+		return addr
+	}
+	return net.JoinHostPort(ip, port)
+}
+
+func SameHost(addr, ip string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	return err == nil && host == ip
 }
 
 func call[T any](fn func(T) error, v T) error {

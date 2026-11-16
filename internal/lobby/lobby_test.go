@@ -39,6 +39,38 @@ func TestInviteRespondRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInboundAddressesComeFromTheConnection(t *testing.T) {
+	invites := make(chan lobby.Invite, 1)
+	responses := make(chan lobby.Response, 1)
+	s := lobby.NewServer(48568, lobby.Callbacks{
+		OnInvite:  func(inv lobby.Invite) error { invites <- inv; return nil },
+		OnRespond: func(r lobby.Response) error { responses <- r; return nil },
+	})
+	go s.ListenAndServe()
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	if err := lobby.SendInvite("127.0.0.1:48568", lobby.Invite{
+		LobbyID: "l1", Kind: "race", HostID: "h1", HostAddr: "10.9.9.9:4000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if inv := <-invites; inv.HostAddr != "127.0.0.1:4000" {
+		t.Fatalf("HostAddr = %q, want the connection's IP with the claimed port", inv.HostAddr)
+	}
+	if err := lobby.SendRespond("127.0.0.1:48568", lobby.Response{LobbyID: "l1", PeerID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-responses; r.RemoteIP != "127.0.0.1" {
+		t.Fatalf("RemoteIP = %q", r.RemoteIP)
+	}
+	if err := lobby.SendInvite("127.0.0.1:48568", lobby.Invite{
+		LobbyID: "l1", Kind: "race", HostID: "h1", HostAddr: "no-port",
+	}); err == nil {
+		t.Fatal("an invite without a usable host port must be rejected")
+	}
+}
+
 func TestServerRejectsBadBody(t *testing.T) {
 	called := false
 	s := lobby.NewServer(48562, lobby.Callbacks{OnInvite: func(lobby.Invite) error { called = true; return nil }})

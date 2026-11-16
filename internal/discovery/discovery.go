@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -27,8 +28,12 @@ type Discovery struct {
 	peers map[string]Peer
 }
 
-func Start(selfID, selfName string, port int) (*Discovery, error) {
-	svc, err := mdns.NewMDNSService(selfID, serviceName, "", "", port, nil, []string{"id=" + selfID, "name=" + selfName})
+func Start(selfID, selfName, addr string, port int) (*Discovery, error) {
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return nil, fmt.Errorf("discovery: invalid address %q", addr)
+	}
+	svc, err := mdns.NewMDNSService(selfID, serviceName, "", "", port, []net.IP{ip}, []string{"id=" + selfID, "name=" + selfName})
 	if err != nil {
 		return nil, err
 	}

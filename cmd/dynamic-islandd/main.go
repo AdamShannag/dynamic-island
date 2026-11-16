@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"runtime"
@@ -80,7 +79,7 @@ func main() {
 			racePort = n
 		}
 	}
-	racePlugin := plugins.NewRace(peerID, identity.Name(), lanAddr(), racePort)
+	racePlugin := plugins.NewRace(peerID, identity.Name(), "", racePort)
 	if err := dbusapi.Serve(dbusapi.Deps{
 		Conn:      conn,
 		Manager:   m,
@@ -130,23 +129,6 @@ func main() {
 	}
 	<-ctx.Done()
 	wg.Wait()
-}
-
-func lanAddr() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
-	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP.IsLoopback() {
-			continue
-		}
-		if ip4 := ipNet.IP.To4(); ip4 != nil {
-			return ip4.String()
-		}
-	}
-	return "127.0.0.1"
 }
 
 func supervise(ctx context.Context, p island.Plugin, h island.Host) {

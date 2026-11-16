@@ -1,7 +1,10 @@
 package race_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -299,5 +302,29 @@ func TestInviteAcceptedFromTerminalPhase(t *testing.T) {
 	waitFor(t, func() bool { return guest.State().Phase == race.PhaseLobby && guest.State().LobbyID == id })
 	if r, _ := racer(other, "g1"); r.Status != "pending" {
 		t.Fatalf("status = %q, a guest sitting on a stale result must not auto-decline", r.Status)
+	}
+}
+
+func TestProgressFromAnotherAddressIsIgnored(t *testing.T) {
+	host := engine(t, "h1", 18611)
+	guest := engine(t, "g1", 18612)
+	acceptedLobby(t, host, map[string]int{"g1": 18612}, guest)
+	if err := host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	spoof := &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{
+		LocalAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.2")},
+	}).DialContext}}
+	body, _ := json.Marshal(lobby.Progress{LobbyID: host.State().LobbyID, PeerID: "g1", Payload: json.RawMessage(`{"typedChars":9999}`)})
+	resp, err := spoof.Post("http://127.0.0.1:18611/progress", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 for progress claiming another peer's id", resp.StatusCode)
+	}
+	if r, _ := racer(host, "g1"); r.Progress != 0 {
+		t.Fatal("spoofed progress must not move the racer")
 	}
 }
