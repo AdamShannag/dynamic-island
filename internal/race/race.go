@@ -48,6 +48,7 @@ type State struct {
 	Phase   Phase   `json:"phase"`
 	Passage string  `json:"passage"`
 	Racers  []Racer `json:"racers"`
+	SelfID  string  `json:"selfId"`
 }
 
 type progressPayload struct {
@@ -177,7 +178,9 @@ func (e *Engine) OnChange(fn func(State)) {
 func (e *Engine) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return cloneState(e.state)
+	s := cloneState(e.state)
+	s.SelfID = e.selfID
+	return s
 }
 
 func (e *Engine) notify() {
@@ -194,6 +197,7 @@ func (e *Engine) notify() {
 		e.mu.Lock()
 		fn := e.onChange
 		snap := cloneState(e.state)
+		snap.SelfID = e.selfID
 		e.mu.Unlock()
 		if fn != nil {
 			fn(snap)
