@@ -63,7 +63,9 @@ type Engine struct {
 	disc   *discovery.Discovery
 	server *lobby.Server
 
-	notifyMu sync.Mutex
+	notifyMu    sync.Mutex
+	notifying   bool
+	notifyQueue []State
 }
 
 func NewEngine(selfID, selfName, selfAddr string, port int) *Engine {
@@ -78,11 +80,11 @@ func NewEngine(selfID, selfName, selfAddr string, port int) *Engine {
 
 func (e *Engine) Enable() error {
 	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if e.enabled {
-		e.mu.Unlock()
 		return nil
 	}
-	e.mu.Unlock()
 
 	disc, err := discovery.Start(e.selfID, e.selfName, e.port)
 	if err != nil {
@@ -102,11 +104,9 @@ func (e *Engine) Enable() error {
 		return fmt.Errorf("race: lobby server did not start listening on port %d", e.port)
 	}
 
-	e.mu.Lock()
 	e.disc = disc
 	e.server = server
 	e.enabled = true
-	e.mu.Unlock()
 	return nil
 }
 
@@ -162,6 +162,20 @@ func (e *Engine) State() State {
 	return cloneState(e.state)
 }
 
+// notify delivers the current State to the registered OnChange callback.
+//
+// Callbacks must never run concurrently (two goroutines calling the same
+// user callback at once is a data race on whatever the callback touches)
+// and must never deadlock on reentrancy (a callback that calls back into
+// the Engine, e.g. Leave(), triggers another notify() from the same
+// goroutine before the first call has returned).
+//
+// To satisfy both, notify() is a single-flight queue: the first caller to
+// find nothing in progress becomes the sole "notifier" for as long as there
+// is work queued, invoking fn with no lock held; every other caller -
+// whether a genuinely concurrent goroutine or the same goroutine calling
+// back in reentrantly - just appends its snapshot and returns immediately,
+// to be delivered by the in-progress notifier's next loop iteration.
 func (e *Engine) notify() {
 	e.mu.Lock()
 	fn := e.onChange
@@ -170,9 +184,29 @@ func (e *Engine) notify() {
 	if fn == nil {
 		return
 	}
+
 	e.notifyMu.Lock()
-	defer e.notifyMu.Unlock()
-	fn(snap)
+	if e.notifying {
+		e.notifyQueue = append(e.notifyQueue, snap)
+		e.notifyMu.Unlock()
+		return
+	}
+	e.notifying = true
+	e.notifyMu.Unlock()
+
+	for {
+		fn(snap)
+
+		e.notifyMu.Lock()
+		if len(e.notifyQueue) == 0 {
+			e.notifying = false
+			e.notifyMu.Unlock()
+			return
+		}
+		snap = e.notifyQueue[0]
+		e.notifyQueue = e.notifyQueue[1:]
+		e.notifyMu.Unlock()
+	}
 }
 
 func (e *Engine) CreateLobby() string {
@@ -378,7 +412,11 @@ func (e *Engine) makeOnClosed(lobbyID string) func(error) {
 			e.mu.Unlock()
 			return
 		}
-		e.state.Phase = PhaseHostLeft
+		if allRacersFinished(e.state.Racers) {
+			e.state.Phase = PhaseFinished
+		} else {
+			e.state.Phase = PhaseHostLeft
+		}
 		e.mu.Unlock()
 		e.notify()
 	}
@@ -449,13 +487,7 @@ func (e *Engine) applyProgress(peerID string, typedChars int) {
 		}
 	}
 
-	allFinished := true
-	for _, r := range e.state.Racers {
-		if r.FinishedAtMs == 0 {
-			allFinished = false
-			break
-		}
-	}
+	allFinished := allRacersFinished(e.state.Racers)
 	if allFinished {
 		e.state.Phase = PhaseFinished
 	}
@@ -530,6 +562,18 @@ func mustMarshal(v any) json.RawMessage {
 		panic(err)
 	}
 	return b
+}
+
+func allRacersFinished(racers []Racer) bool {
+	if len(racers) == 0 {
+		return false
+	}
+	for _, r := range racers {
+		if r.FinishedAtMs == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func clamp(v, lo, hi float64) float64 {

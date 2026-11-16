@@ -2,6 +2,7 @@ package race_test
 
 import (
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,4 +132,111 @@ func TestEnableDisableIdempotent(t *testing.T) {
 	}
 	e.Disable()
 	e.Disable()
+}
+
+func TestGuestPhaseFinishedOnCleanRaceEnd(t *testing.T) {
+	host := race.NewEngine("h1", "Host", "127.0.0.1", 18581)
+	if err := host.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	defer host.Disable()
+	guest := race.NewEngine("g1", "Guest", "127.0.0.1", 18582)
+	if err := guest.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	defer guest.Disable()
+
+	host.CreateLobby()
+	if err := host.Invite(discovery.Peer{ID: "g1", Name: "Guest", Addr: "127.0.0.1:18582"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return guest.State().Phase == race.PhaseLobby })
+
+	if err := guest.Respond(true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		for _, r := range host.State().Racers {
+			if r.PeerID == "g1" && r.Status == "accepted" {
+				return true
+			}
+		}
+		return false
+	})
+
+	if err := host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return guest.State().Phase == race.PhaseRacing && guest.State().Passage != "" })
+
+	passage := guest.State().Passage
+	if err := host.SubmitProgress(len(passage)); err != nil {
+		t.Fatal(err)
+	}
+	if err := guest.SubmitProgress(len(passage)); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, func() bool { return guest.State().Phase == race.PhaseFinished })
+
+	for _, r := range guest.State().Racers {
+		if r.FinishedAtMs == 0 {
+			t.Fatalf("expected racer %s to be finished in the guest's view, got %+v", r.PeerID, r)
+		}
+	}
+}
+
+func TestEnableConcurrentIsSafe(t *testing.T) {
+	e := race.NewEngine("h1", "Host", "127.0.0.1", 18583)
+	defer e.Disable()
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 5)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := e.Enable(); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent Enable() returned an error: %v", err)
+	}
+
+	if !e.Enabled() {
+		t.Fatal("engine should be enabled after concurrent Enable() calls")
+	}
+	if id := e.CreateLobby(); id == "" {
+		t.Fatal("CreateLobby should work after concurrent Enable() calls settle")
+	}
+}
+
+func TestOnChangeReentrantLeaveDoesNotDeadlock(t *testing.T) {
+	e := race.NewEngine("h1", "Host", "127.0.0.1", 18584)
+	if err := e.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	defer e.Disable()
+
+	done := make(chan struct{})
+	e.OnChange(func(s race.State) {
+		if s.Phase == race.PhaseLobby {
+			e.Leave()
+			close(done)
+		}
+	})
+
+	e.CreateLobby()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("reentrant Leave() call from inside OnChange appears to have deadlocked")
+	}
+
+	waitFor(t, func() bool { return e.State().Phase == race.PhaseIdle })
 }
