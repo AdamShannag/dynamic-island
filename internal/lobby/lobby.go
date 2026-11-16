@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,11 @@ import (
 )
 
 const DefaultPort = 54372
+
+var (
+	ErrClosed   = errors.New("lobby: closed")
+	ErrRejected = errors.New("lobby: rejected")
+)
 
 type Invite struct {
 	LobbyID, Kind, HostID, HostName, HostAddr string
@@ -34,10 +40,10 @@ type Progress struct {
 }
 
 type Callbacks struct {
-	OnInvite   func(Invite)
-	OnRespond  func(Response)
-	OnStart    func(Start)
-	OnProgress func(Progress)
+	OnInvite   func(Invite) error
+	OnRespond  func(Response) error
+	OnStart    func(Start) error
+	OnProgress func(Progress) error
 }
 
 type Server struct {
@@ -85,41 +91,46 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 
 func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	v, ok := decodeBody[Invite](w, r)
-	if !ok {
-		return
-	}
-	if s.cb.OnInvite != nil {
-		s.cb.OnInvite(v)
+	if ok {
+		reply(w, call(s.cb.OnInvite, v))
 	}
 }
 
 func (s *Server) handleRespond(w http.ResponseWriter, r *http.Request) {
 	v, ok := decodeBody[Response](w, r)
-	if !ok {
-		return
-	}
-	if s.cb.OnRespond != nil {
-		s.cb.OnRespond(v)
+	if ok {
+		reply(w, call(s.cb.OnRespond, v))
 	}
 }
 
 func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	v, ok := decodeBody[Start](w, r)
-	if !ok {
-		return
-	}
-	if s.cb.OnStart != nil {
-		s.cb.OnStart(v)
+	if ok {
+		reply(w, call(s.cb.OnStart, v))
 	}
 }
 
 func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 	v, ok := decodeBody[Progress](w, r)
-	if !ok {
-		return
+	if ok {
+		reply(w, call(s.cb.OnProgress, v))
 	}
-	if s.cb.OnProgress != nil {
-		s.cb.OnProgress(v)
+}
+
+func call[T any](fn func(T) error, v T) error {
+	if fn == nil {
+		return nil
+	}
+	return fn(v)
+}
+
+func reply(w http.ResponseWriter, err error) {
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrClosed):
+		http.Error(w, "lobby closed", http.StatusConflict)
+	default:
+		http.Error(w, "bad request", http.StatusBadRequest)
 	}
 }
 
@@ -132,7 +143,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ch := make(chan json.RawMessage, 8)
-	s.addSub(lobbyID, ch)
+	if !s.addSub(lobbyID, ch) {
+		http.Error(w, "no such lobby", http.StatusNotFound)
+		return
+	}
 	defer s.removeSub(lobbyID, ch)
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -164,24 +178,37 @@ func sseLine(payload json.RawMessage) string {
 	return fmt.Sprintf("data: %s\n\n", payload)
 }
 
-func (s *Server) addSub(lobbyID string, ch chan json.RawMessage) {
+func (s *Server) OpenLobby(lobbyID string) {
 	s.mu.Lock()
-	s.subs[lobbyID] = append(s.subs[lobbyID], ch)
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	if _, ok := s.subs[lobbyID]; !ok {
+		s.subs[lobbyID] = nil
+	}
+}
+
+func (s *Server) addSub(lobbyID string, ch chan json.RawMessage) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chans, open := s.subs[lobbyID]
+	if !open {
+		return false
+	}
+	s.subs[lobbyID] = append(chans, ch)
+	return true
 }
 
 func (s *Server) removeSub(lobbyID string, ch chan json.RawMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chans := s.subs[lobbyID]
+	chans, open := s.subs[lobbyID]
+	if !open {
+		return
+	}
 	for i, c := range chans {
 		if c == ch {
 			s.subs[lobbyID] = append(chans[:i], chans[i+1:]...)
-			break
+			return
 		}
-	}
-	if len(s.subs[lobbyID]) == 0 {
-		delete(s.subs, lobbyID)
 	}
 }
 
@@ -220,10 +247,14 @@ func post(addr, path string, v any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusConflict:
+		return fmt.Errorf("lobby: %s: %w", path, ErrClosed)
+	default:
 		return fmt.Errorf("lobby: %s returned status %d", path, resp.StatusCode)
 	}
-	return nil
 }
 
 func SendInvite(addr string, inv Invite) error {
@@ -245,7 +276,10 @@ func SendProgress(addr string, p Progress) error {
 func Subscribe(addr, lobbyID string, onEvent func(json.RawMessage), onClosed func(error)) (cancel func()) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	go func() {
-		onClosed(subscribeLoop(ctx, addr, lobbyID, onEvent))
+		err := subscribeLoop(ctx, addr, lobbyID, onEvent)
+		if ctx.Err() == nil {
+			onClosed(err)
+		}
 	}()
 	return cancelFn
 }
@@ -261,6 +295,9 @@ func subscribeLoop(ctx context.Context, addr, lobbyID string, onEvent func(json.
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("lobby: /events returned status %d", resp.StatusCode)
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {

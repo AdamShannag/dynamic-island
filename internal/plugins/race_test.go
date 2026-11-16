@@ -70,6 +70,7 @@ func TestRaceSummary(t *testing.T) {
 		{race.State{Phase: race.PhaseRacing, Racers: []race.Racer{{Progress: 1}, {Progress: 0.4}}}, "Racing — 70%"},
 		{race.State{Phase: race.PhaseHostLeft}, "Race ended: host left"},
 		{race.State{Phase: race.PhaseFinished}, "Race finished"},
+		{race.State{Phase: race.PhaseMissed}, "Race already started"},
 	}
 	for _, c := range cases {
 		if got := raceSummary(c.s); got != c.want {

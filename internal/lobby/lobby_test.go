@@ -2,6 +2,7 @@ package lobby_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,7 +17,7 @@ func TestInviteRespondRoundTrip(t *testing.T) {
 	var got lobby.Invite
 	invited := make(chan struct{})
 	invitee := lobby.NewServer(48561, lobby.Callbacks{
-		OnInvite: func(inv lobby.Invite) { got = inv; close(invited) },
+		OnInvite: func(inv lobby.Invite) error { got = inv; close(invited); return nil },
 	})
 	go invitee.ListenAndServe()
 	defer invitee.Close()
@@ -40,7 +41,7 @@ func TestInviteRespondRoundTrip(t *testing.T) {
 
 func TestServerRejectsBadBody(t *testing.T) {
 	called := false
-	s := lobby.NewServer(48562, lobby.Callbacks{OnInvite: func(lobby.Invite) { called = true }})
+	s := lobby.NewServer(48562, lobby.Callbacks{OnInvite: func(lobby.Invite) error { called = true; return nil }})
 	go s.ListenAndServe()
 	defer s.Close()
 	time.Sleep(50 * time.Millisecond)
@@ -71,6 +72,7 @@ func TestSubscribeReceivesBroadcastAndClose(t *testing.T) {
 	go s.ListenAndServe()
 	defer s.Close()
 	time.Sleep(50 * time.Millisecond)
+	s.OpenLobby("l1")
 
 	events := make(chan json.RawMessage, 4)
 	closedErr := make(chan error, 1)
@@ -103,6 +105,7 @@ func TestBroadcastDuringEndLobbyDoesNotPanic(t *testing.T) {
 	go s.ListenAndServe()
 	defer s.Close()
 	time.Sleep(50 * time.Millisecond)
+	s.OpenLobby("l1")
 
 	cancel := lobby.Subscribe("127.0.0.1:48564", "l1",
 		func(json.RawMessage) {},
@@ -145,5 +148,59 @@ func TestBroadcastDuringEndLobbyDoesNotPanic(t *testing.T) {
 
 	if panicked.Load() {
 		t.Fatal("Broadcast panicked racing EndLobby")
+	}
+}
+
+func TestSubscribeToUnknownLobbyCloses(t *testing.T) {
+	s := lobby.NewServer(48565, lobby.Callbacks{})
+	go s.ListenAndServe()
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	closedErr := make(chan error, 1)
+	cancel := lobby.Subscribe("127.0.0.1:48565", "missing", func(json.RawMessage) {}, func(err error) { closedErr <- err })
+	defer cancel()
+	select {
+	case err := <-closedErr:
+		if err == nil {
+			t.Fatal("expected an error for a lobby that is not open")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscribing to a lobby that is not open must close at once")
+	}
+}
+
+func TestCallbackErrorsMapToStatus(t *testing.T) {
+	s := lobby.NewServer(48566, lobby.Callbacks{
+		OnRespond: func(lobby.Response) error { return lobby.ErrClosed },
+		OnStart:   func(lobby.Start) error { return lobby.ErrRejected },
+	})
+	go s.ListenAndServe()
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	err := lobby.SendRespond("127.0.0.1:48566", lobby.Response{LobbyID: "l1", PeerID: "p1", Accept: true})
+	if !errors.Is(err, lobby.ErrClosed) {
+		t.Fatalf("respond err = %v, want ErrClosed", err)
+	}
+	if err := lobby.SendStart("127.0.0.1:48566", lobby.Start{LobbyID: "l1"}); err == nil || errors.Is(err, lobby.ErrClosed) {
+		t.Fatalf("start err = %v, want a plain rejection", err)
+	}
+}
+
+func TestNoOnClosedAfterCancel(t *testing.T) {
+	s := lobby.NewServer(48567, lobby.Callbacks{})
+	go s.ListenAndServe()
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+	s.OpenLobby("l1")
+
+	var closed atomic.Bool
+	cancel := lobby.Subscribe("127.0.0.1:48567", "l1", func(json.RawMessage) {}, func(error) { closed.Store(true) })
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+	if closed.Load() {
+		t.Fatal("onClosed must not fire for a subscription the caller cancelled")
 	}
 }

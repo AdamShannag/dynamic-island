@@ -58,7 +58,7 @@ func (r *Race) Run(ctx context.Context, h island.Host) error {
 				View: island.View{Kind: "race", Title: "Racing", Subtitle: raceSummary(s),
 					Icon: "input-keyboard-symbolic"},
 			})
-		case race.PhaseFinished, race.PhaseHostLeft:
+		case race.PhaseFinished, race.PhaseHostLeft, race.PhaseMissed:
 			h.Set(island.Activity{
 				ID: raceActivityID, Priority: island.PriorityNotify, TTL: 10 * time.Second,
 				View: island.View{Kind: "race", Title: "Race", Subtitle: raceSummary(s),
@@ -120,6 +120,8 @@ func raceSummary(s race.State) string {
 		return "Race ended: host left"
 	case race.PhaseFinished:
 		return "Race finished"
+	case race.PhaseMissed:
+		return "Race already started"
 	default:
 		return ""
 	}

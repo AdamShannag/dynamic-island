@@ -72,6 +72,7 @@ export class RacePage extends Page {
         view.add_child(scrollView(groups));
         const toolbar = new St.BoxLayout({style_class: 'island-toolbar'});
         toolbar.add_child(pillButton('Start race', () => this.call('RaceStart', [], () => this.refresh()), 'primary'));
+        toolbar.add_child(this._leaveButton('Cancel'));
         view.add_child(toolbar);
         return view;
     }
@@ -84,8 +85,11 @@ export class RacePage extends Page {
         this._respondBar = new St.BoxLayout({style_class: 'island-toolbar'});
         this._respondBar.add_child(this._acceptBtn);
         this._respondBar.add_child(this._declineBtn);
+        this._guestLeaveBar = new St.BoxLayout({style_class: 'island-toolbar'});
+        this._guestLeaveBar.add_child(this._leaveButton('Leave'));
         view.add_child(this._guestEmpty.actor);
         view.add_child(this._respondBar);
+        view.add_child(this._guestLeaveBar);
         return view;
     }
 
@@ -103,9 +107,16 @@ export class RacePage extends Page {
         this._raceRefs = new Map();
         const groups = column({style_class: 'island-groups'});
         groups.add_child(raceGroup.actor);
+        const toolbar = new St.BoxLayout({style_class: 'island-toolbar'});
+        toolbar.add_child(this._leaveButton('Leave'));
         view.add_child(card);
         view.add_child(scrollView(groups));
+        view.add_child(toolbar);
         return view;
+    }
+
+    _leaveButton(text, kind) {
+        return pillButton(text, () => this.call('RaceLeave', [], () => this.refresh()), kind);
     }
 
     _buildResult() {
@@ -116,7 +127,7 @@ export class RacePage extends Page {
         this._resultGroupActor = resultGroup.actor;
         this._resultList = resultGroup.list;
         const toolbar = new St.BoxLayout({style_class: 'island-toolbar'});
-        toolbar.add_child(pillButton('Done', () => this.call('RaceLeave', [], () => this.refresh()), 'primary'));
+        toolbar.add_child(this._leaveButton('Done', 'primary'));
         view.add_child(this._resultTitle);
         view.add_child(this._resultHint);
         view.add_child(scrollView(resultGroup.actor));
@@ -315,6 +326,7 @@ export class RacePage extends Page {
             hint: host ? `Invited by ${host.name}` : '',
         });
         this._respondBar.visible = !this._guestResponded;
+        this._guestLeaveBar.visible = !!this._guestResponded;
     }
 
     _respond(accept) {
@@ -362,8 +374,9 @@ export class RacePage extends Page {
 
     _renderResult(state) {
         const finished = state.phase === 'finished';
-        setText(this._resultTitle, finished ? 'Race finished!' : 'The host left the race');
-        setText(this._resultHint, finished ? '' : 'Your progress was not saved.');
+        const missed = state.phase === 'missed';
+        setText(this._resultTitle, finished ? 'Race finished!' : missed ? 'That race already started' : 'The host left the race');
+        setText(this._resultHint, finished ? '' : missed ? 'The host started before you joined.' : 'Your progress was not saved.');
         this._resultHint.visible = !finished;
         this._resultGroupActor.visible = finished;
         if (!finished)
