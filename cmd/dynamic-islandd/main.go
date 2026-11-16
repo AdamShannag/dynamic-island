@@ -4,9 +4,12 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net"
+	"os"
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,7 +20,9 @@ import (
 	"github.com/AdamShannag/dynamic-island/internal/clipboard"
 	"github.com/AdamShannag/dynamic-island/internal/config"
 	"github.com/AdamShannag/dynamic-island/internal/dbusapi"
+	"github.com/AdamShannag/dynamic-island/internal/identity"
 	"github.com/AdamShannag/dynamic-island/internal/island"
+	"github.com/AdamShannag/dynamic-island/internal/lobby"
 	"github.com/AdamShannag/dynamic-island/internal/paths"
 	"github.com/AdamShannag/dynamic-island/internal/plugins"
 	"github.com/AdamShannag/dynamic-island/internal/settings"
@@ -61,12 +66,25 @@ func main() {
 	}
 	m := island.NewManager()
 	ctxw := plugins.NewContext()
+	peerID, err := identity.ID()
+	if err != nil {
+		log.Printf("peer identity: %v (using a temporary one)", err)
+		peerID = identity.Ephemeral()
+	}
+	racePort := lobby.DefaultPort
+	if v := os.Getenv("ISLAND_RACE_PORT"); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil {
+			racePort = n
+		}
+	}
+	racePlugin := plugins.NewRace(peerID, identity.Name(), lanAddr(), racePort)
 	if err := dbusapi.Serve(dbusapi.Deps{
 		Conn:      conn,
 		Manager:   m,
 		Clipboard: clip,
 		Sites:     st,
 		Activity:  ctxw,
+		Race:      racePlugin,
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -95,6 +113,7 @@ func main() {
 		plugins.NewDocker(),
 		ctxw,
 		plugins.NewUSB(),
+		racePlugin,
 	}
 
 	var wg sync.WaitGroup
@@ -111,6 +130,23 @@ func main() {
 	}
 	<-ctx.Done()
 	wg.Wait()
+}
+
+func lanAddr() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP.IsLoopback() {
+			continue
+		}
+		if ip4 := ipNet.IP.To4(); ip4 != nil {
+			return ip4.String()
+		}
+	}
+	return "127.0.0.1"
 }
 
 func supervise(ctx context.Context, p island.Plugin, h island.Host) {
