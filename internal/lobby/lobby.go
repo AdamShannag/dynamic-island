@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -28,6 +29,10 @@ const (
 )
 
 var (
+	heartbeatEvery = newInterval(5 * time.Second)
+	silenceLimit   = newInterval(15 * time.Second)
+	errSilent      = errors.New("lobby: host went silent")
+
 	client       = &http.Client{Timeout: callTimeout}
 	streamClient = &http.Client{Transport: &http.Transport{
 		DialContext:           (&net.Dialer{Timeout: callTimeout}).DialContext,
@@ -61,6 +66,17 @@ type Progress struct {
 	Payload         json.RawMessage
 	RemoteIP        string `json:"-"`
 }
+
+type interval struct{ ns atomic.Int64 }
+
+func newInterval(d time.Duration) *interval {
+	i := &interval{}
+	i.set(d)
+	return i
+}
+
+func (i *interval) get() time.Duration  { return time.Duration(i.ns.Load()) }
+func (i *interval) set(d time.Duration) { i.ns.Store(int64(d)) }
 
 func (v Invite) valid() bool {
 	return id(v.LobbyID) && text(v.Kind, maxKindLen) && v.Kind != "" && id(v.HostID) && text(v.HostName, maxNameLen)
@@ -246,11 +262,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	heartbeat := time.NewTicker(heartbeatEvery.get())
+	defer heartbeat.Stop()
 	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
 		case payload, open := <-ch:
 			if !open {
 				return
@@ -378,7 +399,9 @@ func Subscribe(addr, lobbyID string, onEvent func(json.RawMessage), onClosed fun
 	return cancelFn
 }
 
-func subscribeLoop(ctx context.Context, addr, lobbyID string, onEvent func(json.RawMessage)) error {
+func subscribeLoop(parent context.Context, addr, lobbyID string, onEvent func(json.RawMessage)) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
 	u := fmt.Sprintf("http://%s/events?lobby=%s", addr, url.QueryEscape(lobbyID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -393,13 +416,25 @@ func subscribeLoop(ctx context.Context, addr, lobbyID string, onEvent func(json.
 		return fmt.Errorf("lobby: /events returned status %d", resp.StatusCode)
 	}
 
+	limit := silenceLimit.get()
+	var silent atomic.Bool
+	watchdog := time.AfterFunc(limit, func() {
+		silent.Store(true)
+		cancel()
+	})
+	defer watchdog.Stop()
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
+		watchdog.Reset(limit)
 		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
 		if !ok {
 			continue
 		}
 		onEvent(json.RawMessage(data))
+	}
+	if silent.Load() {
+		return errSilent
 	}
 	return scanner.Err()
 }

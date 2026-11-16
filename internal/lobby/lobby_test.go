@@ -344,3 +344,56 @@ func TestListenReportsATakenPort(t *testing.T) {
 		t.Fatal("Listen must fail when another process holds the port")
 	}
 }
+
+func TestSilentHostIsTreatedAsClosed(t *testing.T) {
+	t.Cleanup(lobby.SetHeartbeat(time.Hour, 300*time.Millisecond))
+	release := make(chan struct{})
+	defer close(release)
+	silent := &http.Server{Addr: "127.0.0.1:18638", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})}
+	go silent.ListenAndServe()
+	defer silent.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	closedErr := make(chan error, 1)
+	cancel := lobby.Subscribe("127.0.0.1:18638", "l1", func(json.RawMessage) {}, func(err error) { closedErr <- err })
+	defer cancel()
+	select {
+	case err := <-closedErr:
+		if err == nil {
+			t.Fatal("a silent host must close with an error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a host that sends nothing must be treated as gone")
+	}
+}
+
+func TestHeartbeatKeepsAnIdleStreamOpen(t *testing.T) {
+	t.Cleanup(lobby.SetHeartbeat(50*time.Millisecond, 300*time.Millisecond))
+	s := lobby.NewServer(18639, lobby.Callbacks{})
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.OpenLobby("l1")
+
+	var closed atomic.Bool
+	events := make(chan json.RawMessage, 1)
+	cancel := lobby.Subscribe("127.0.0.1:18639", "l1", func(p json.RawMessage) { events <- p }, func(error) { closed.Store(true) })
+	defer cancel()
+	time.Sleep(time.Second)
+	if closed.Load() {
+		t.Fatal("heartbeats must keep a quiet but healthy stream open")
+	}
+	select {
+	case p := <-events:
+		t.Fatalf("heartbeats must not surface as events, got %s", p)
+	default:
+	}
+}
