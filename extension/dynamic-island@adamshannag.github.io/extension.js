@@ -152,8 +152,6 @@ export default class DynamicIslandExtension extends Extension {
         const primary = Main.layoutManager.primaryMonitor;
         if (!island || island.dashOpen || !primary || primary.inFullscreen)
             return false;
-        if (monitorIndex !== -1 && monitorIndex !== Main.layoutManager.primaryIndex)
-            return false;
         island.showOsd(icon, label, level, maxLevel);
         return true;
     }
