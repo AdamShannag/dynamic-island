@@ -54,6 +54,14 @@ export const INTERFACE_XML = `
     <method name="PickColor"/>
     <method name="SetPresenting"><arg name="on" type="b" direction="in"/></method>
     <signal name="ColorPicked"><arg name="hex" type="s"/></signal>
+    <method name="RacePeers"><arg name="peers" type="s" direction="out"/></method>
+    <method name="RaceState"><arg name="state" type="s" direction="out"/></method>
+    <method name="RaceCreate"/>
+    <method name="RaceInvite"><arg name="peer_id" type="s" direction="in"/></method>
+    <method name="RaceRespond"><arg name="accept" type="b" direction="in"/></method>
+    <method name="RaceStart"/>
+    <method name="RaceProgress"><arg name="typed_chars" type="i" direction="in"/></method>
+    <method name="RaceLeave"/>
     <signal name="StateChanged"><arg name="state" type="s"/></signal>
     <signal name="OpenDashboard"><arg name="tab" type="s"/></signal>
   </interface>

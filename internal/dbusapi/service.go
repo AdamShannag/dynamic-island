@@ -40,6 +40,7 @@ type Deps struct {
 	Notes     *notes.Store
 	Agents    *agents.Tracker
 	System    *sysmon.Monitor
+	Race      *plugins.Race
 }
 
 type api struct {
@@ -51,6 +52,7 @@ type api struct {
 	notes  *notes.Store
 	agents *agents.Tracker
 	sys    *sysmon.Monitor
+	race   *plugins.Race
 
 	nextID atomic.Uint32
 	mu     sync.Mutex
@@ -67,6 +69,7 @@ func newAPI(d Deps) *api {
 		notes:  d.Notes,
 		agents: d.Agents,
 		sys:    d.System,
+		race:   d.Race,
 		tasks:  map[uint32]task{},
 	}
 	if a.notes == nil {
