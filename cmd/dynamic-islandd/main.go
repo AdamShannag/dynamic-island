@@ -66,6 +66,9 @@ func main() {
 	}
 	m := island.NewManager()
 	ctxw := plugins.NewContext()
+	if err := settings.Load(); err != nil {
+		log.Printf("settings: %v (using defaults)", err)
+	}
 	peerID, err := identity.ID()
 	if err != nil {
 		log.Printf("peer identity: %v (using a temporary one)", err)
@@ -90,9 +93,6 @@ func main() {
 	}
 	log.Printf("serving %s", dbusapi.BusName)
 
-	if err := settings.Load(); err != nil {
-		log.Printf("settings: %v (using defaults)", err)
-	}
 	cfg, err := config.Load()
 	if err != nil {
 		log.Printf("config %s: %v (using defaults)", config.Path(), err)
