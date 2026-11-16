@@ -19,7 +19,13 @@ type Settings struct {
 	DisplayName string          `json:"displayName"`
 	Tabs        map[string]bool `json:"tabs"`
 	Features    map[string]bool `json:"features"`
+	Bar         []string        `json:"bar"`
 }
+
+const (
+	HomeTab = "home"
+	BarMax  = 4
+)
 
 var (
 	Accents      = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
@@ -27,10 +33,11 @@ var (
 	TabIDs       = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "race"}
 	FeatureIDs   = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "race"}
 	offByDefault = map[string]bool{"race": true}
+	DefaultBar   = []string{HomeTab, "inbox", "notes"}
 )
 
 func Defaults() Settings {
-	s := Settings{Accent: "blue", Surface: "black", Tabs: map[string]bool{}, Features: map[string]bool{}}
+	s := Settings{Accent: "blue", Surface: "black", Tabs: map[string]bool{}, Features: map[string]bool{}, Bar: NormalizeBar(DefaultBar)}
 	for _, t := range TabIDs {
 		s.Tabs[t] = true
 	}
@@ -113,6 +120,7 @@ func merge(base Settings, patch []byte) (Settings, error) {
 		DisplayName *string         `json:"displayName"`
 		Tabs        map[string]bool `json:"tabs"`
 		Features    map[string]bool `json:"features"`
+		Bar         []string        `json:"bar"`
 	}
 	if err := json.Unmarshal(patch, &p); err != nil {
 		return base, fmt.Errorf("invalid settings: %w", err)
@@ -146,7 +154,23 @@ func merge(base Settings, patch []byte) (Settings, error) {
 			base.Features[k] = v
 		}
 	}
+	if p.Bar != nil {
+		base.Bar = NormalizeBar(p.Bar)
+	}
 	return base, nil
+}
+
+func NormalizeBar(ids []string) []string {
+	out := []string{HomeTab}
+	for _, id := range ids {
+		if len(out) == BarMax {
+			break
+		}
+		if contains(TabIDs, id) && !contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func save(s Settings) error {
@@ -167,6 +191,7 @@ func save(s Settings) error {
 func clone(s Settings) Settings {
 	c := s
 	c.Tabs, c.Features = map[string]bool{}, map[string]bool{}
+	c.Bar = append([]string(nil), s.Bar...)
 	for k, v := range s.Tabs {
 		c.Tabs[k] = v
 	}

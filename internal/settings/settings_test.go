@@ -69,3 +69,49 @@ func TestRaceFeatureOffByDefault(t *testing.T) {
 		t.Fatalf("opting in must turn race on: %v", err)
 	}
 }
+
+func TestNormalizeBar(t *testing.T) {
+	cases := []struct {
+		in, want []string
+	}{
+		{nil, []string{"home"}},
+		{[]string{"docker"}, []string{"home", "docker"}},
+		{[]string{"notes", "home", "bogus", "notes", "inbox"}, []string{"home", "notes", "inbox"}},
+		{[]string{"inbox", "docker", "ports", "notes", "race"}, []string{"home", "inbox", "docker", "ports"}},
+	}
+	for _, c := range cases {
+		if got := NormalizeBar(c.in); strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("NormalizeBar(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestUpdateBar(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	mu.Lock()
+	cur = Defaults()
+	mu.Unlock()
+	if got := strings.Join(Get().Bar, ","); got != "home,inbox,notes" {
+		t.Fatalf("default bar = %s", got)
+	}
+	s, err := Update([]byte(`{"bar":["docker","docker","nope","ports","agents","race"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(s.Bar, ","); got != "home,docker,ports,agents" {
+		t.Fatalf("bar = %s", got)
+	}
+	if s, err = Update([]byte(`{"accent":"green"}`)); err != nil || strings.Join(s.Bar, ",") != "home,docker,ports,agents" {
+		t.Fatalf("an unrelated patch must keep the bar: %v %v", s.Bar, err)
+	}
+	s.Bar[1] = "mutated"
+	if Get().Bar[1] != "docker" {
+		t.Fatal("Get must return a copy of the bar")
+	}
+	mu.Lock()
+	cur = Defaults()
+	mu.Unlock()
+	if err := Load(); err != nil || strings.Join(Get().Bar, ",") != "home,docker,ports,agents" {
+		t.Fatalf("reload failed: %v %v", err, Get().Bar)
+	}
+}
