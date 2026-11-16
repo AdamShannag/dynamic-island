@@ -856,6 +856,28 @@
   background-color: #ff453a;
 }
 
+.island-race-card { spacing: 10px; }
+.island-race-passage {
+  font-family: monospace;
+  font-size: 10.5pt;
+  line-height: 1.5;
+  color: rgba(245, 245, 247, 0.85);
+  padding: 2px 4px;
+}
+.island-race-entry {
+  background-color: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  color: #f5f5f7;
+  caret-color: #0a84ff;
+  font-family: monospace;
+  font-size: 10.5pt;
+  padding: 8px 10px;
+  min-height: 70px;
+}
+.island-race-entry:focus { border-color: rgba(10, 132, 255, 0.5); box-shadow: none; }
+.island-race-entry StLabel.hint-text { color: rgba(245, 245, 247, 0.3); }
+
 .island.theme-blue .island-xf-mini.accent { background-color: #0a84ff; }
 .island.theme-blue .island-xf-text { caret-color: #0a84ff; }
 .island.theme-purple .island-xf-mini.accent { background-color: #bf5af2; }

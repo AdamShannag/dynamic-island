@@ -7,11 +7,12 @@ import {InboxPage} from './inbox.js';
 import {NotesPage} from './notes.js';
 import {PortsPage} from './ports.js';
 import {QRPage} from './qr.js';
+import {RacePage} from './race.js';
 import {SearchPage} from './search.js';
 import {SettingsPage} from './settings.js';
 import {TransformPage} from './transform.js';
 
 export const PAGES = [
     HomePage, ActivityPage, AgentsPage, DockerPage, LogsPage, PortsPage, ClipboardPage,
-    TransformPage, NotesPage, InboxPage, QRPage, SearchPage, SettingsPage,
+    TransformPage, NotesPage, InboxPage, QRPage, SearchPage, RacePage, SettingsPage,
 ];
