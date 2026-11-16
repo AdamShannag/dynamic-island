@@ -3,6 +3,7 @@ package lobby_test
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -234,5 +235,31 @@ func TestNoOnClosedAfterCancel(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if closed.Load() {
 		t.Fatal("onClosed must not fire for a subscription the caller cancelled")
+	}
+}
+
+func TestSendTimesOutOnASilentPeer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:48569")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+
+	start := time.Now()
+	err = lobby.SendInvite("127.0.0.1:48569", lobby.Invite{LobbyID: "l1", Kind: "race", HostID: "h1", HostAddr: "127.0.0.1:1"})
+	if err == nil {
+		t.Fatal("a peer that never answers must produce an error")
+	}
+	if d := time.Since(start); d > 6*time.Second {
+		t.Fatalf("send took %s, want a short timeout", d)
 	}
 }

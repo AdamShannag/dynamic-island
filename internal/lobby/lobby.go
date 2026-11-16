@@ -13,9 +13,21 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
-const DefaultPort = 54372
+const (
+	DefaultPort = 54372
+	callTimeout = 4 * time.Second
+)
+
+var (
+	client       = &http.Client{Timeout: callTimeout}
+	streamClient = &http.Client{Transport: &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: callTimeout}).DialContext,
+		ResponseHeaderTimeout: callTimeout,
+	}}
+)
 
 var (
 	ErrClosed   = errors.New("lobby: closed")
@@ -289,7 +301,7 @@ func post(addr, path string, v any) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(fmt.Sprintf("http://%s%s", addr, path), "application/json", bytes.NewReader(b))
+	resp, err := client.Post(fmt.Sprintf("http://%s%s", addr, path), "application/json", bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -337,7 +349,7 @@ func subscribeLoop(ctx context.Context, addr, lobbyID string, onEvent func(json.
 	if err != nil {
 		return err
 	}
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		return err
 	}

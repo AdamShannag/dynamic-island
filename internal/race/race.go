@@ -467,10 +467,16 @@ func (e *Engine) Start() error {
 	e.mu.Unlock()
 	e.notify()
 
-	payload := mustMarshal(passage)
+	start := lobby.Start{LobbyID: lobbyID, Payload: mustMarshal(passage)}
+	var wg sync.WaitGroup
 	for _, addr := range targets {
-		_ = lobby.SendStart(addr, lobby.Start{LobbyID: lobbyID, Payload: payload})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = lobby.SendStart(addr, start)
+		}()
 	}
+	wg.Wait()
 
 	e.mu.Lock()
 	if e.host && e.state.LobbyID == lobbyID {

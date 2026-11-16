@@ -328,3 +328,44 @@ func TestProgressFromAnotherAddressIsIgnored(t *testing.T) {
 		t.Fatal("spoofed progress must not move the racer")
 	}
 }
+
+func TestStartDoesNotWaitOnASlowGuest(t *testing.T) {
+	host := engine(t, "h1", 18613)
+	fast := engine(t, "g1", 18614)
+
+	release := make(chan struct{})
+	defer close(release)
+	slow := &http.Server{Addr: "127.0.0.1:18615", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			<-release
+		}
+	})}
+	go slow.ListenAndServe()
+	defer slow.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	id := host.CreateLobby()
+	if err := host.Invite(peer("slow", 18615)); err != nil {
+		t.Fatal(err)
+	}
+	if err := lobby.SendRespond("127.0.0.1:18613", lobby.Response{LobbyID: id, PeerID: "slow", Accept: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Invite(peer("g1", 18614)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return fast.State().Phase == race.PhaseLobby })
+	if err := fast.Respond(true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, statusIs(host, "g1", "accepted"))
+
+	go host.Start()
+	deadline := time.Now().Add(time.Second)
+	for fast.State().Phase != race.PhaseRacing {
+		if time.Now().After(deadline) {
+			t.Fatal("a guest that answers quickly must not wait behind a slow one")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
