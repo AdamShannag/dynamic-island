@@ -65,9 +65,9 @@ extension/
     extension.js        Extension entry: lifecycle, wiring, settings, clipboard, presenting
     island.js           Island actor: pill, dashboard shell, morph, state → widgets, input
     lib/                constants, dbus (interface XML + DaemonClient), widgets, motion,
-                        format (pure helpers), tools (pure Transform tools), shell (GNOME
+                        format (pure helpers), tools (pure Transform tools), bar (pinned tabs), shell (GNOME
                         helpers), gnome (OSD/banner patches), clipboard, personality, tabbar, face
-    pages/              one Page subclass per dashboard tab; index.js registers them
+    pages/              one Page subclass per dashboard tab (more.js: the tile grid behind More); index.js registers them
   scripts/check.mjs     static checks (imports, undefined names, D-Bus calls, collisions)
   test/                 node:test unit tests for the pure modules
 packaging/              nfpm.yaml, maintainer scripts, apt-repo.sh
@@ -104,6 +104,8 @@ export class FooPage extends Page {
 Helpers on `Page`: `this.ext` (the Extension), `this.island`, `this.active`, `this.call(method, args, cb)`, `this.fetch(method, args, (value, err) => ...)` (JSON-decoded, **dropped if the tab is no longer active**), `this.refit()`, `this.close()`.
 
 To add a tab: create the page, add it to `PAGES` in `pages/index.js`, add `[id, name, icon]` to `TABS` in `lib/constants.js` (and a badge colour in `SETTING_COLORS`), add styles to `stylesheet.css`. Sub-pages (Logs, QR) aren't in `TABS`. Open them with `island.page('logs').open(...)`.
+
+The header bar shows only the pinned tabs plus a **More** button. The pinned list is the daemon-owned `bar` setting (`internal/settings`: default `home, inbox, notes`, `home` always first, at most 4, unknown ids dropped). `lib/bar.js` holds the pure pin logic (`barTabs`, `togglePin`). `pages/more.js` shows every enabled tab except Home as a grid of tiles; its Edit mode wiggles the tiles and pins with ★, saving through `ext.updateSettings({bar})`. A tab that isn't pinned highlights More while it's open. A new tab shows up in More automatically; add its id to `settings.TabIDs` in Go so it can be pinned.
 
 ### Reusable widgets (`lib/widgets.js`)
 

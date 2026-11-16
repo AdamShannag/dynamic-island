@@ -15,6 +15,7 @@ export class TabBar {
         });
         this._indicator = new St.Widget({style_class: 'island-tab-indicator', x: 0, y: 0});
         const row = new St.BoxLayout({style_class: 'island-tabs-row', x: 0, y: 0});
+        this._row = row;
         this.actor.add_child(this._indicator);
         this.actor.add_child(row);
         this._buttons = {};
@@ -42,6 +43,20 @@ export class TabBar {
     setVisible(id, visible) {
         if (this._buttons[id])
             this._buttons[id].visible = visible;
+    }
+
+    shows(id) {
+        return !!this._buttons[id]?.visible;
+    }
+
+    setOrder(ids) {
+        for (const [id, btn] of Object.entries(this._buttons))
+            btn.visible = ids.includes(id);
+        ids.forEach((id, i) => {
+            const btn = this._buttons[id];
+            if (btn && this._row.get_child_at_index(i) !== btn)
+                this._row.set_child_at_index(btn, i);
+        });
     }
 
     setDot(id, on) {

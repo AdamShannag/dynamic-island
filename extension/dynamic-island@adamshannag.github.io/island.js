@@ -10,8 +10,9 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {
     ACCENTS, AUTO_MIN_HEIGHT, DASH_WIDTH, FADE_IN_MS, FADE_OUT_MS, HOVER_IN_MS, HOVER_OUT_MS, IDLE, LIVE_KINDS, MODES,
-    MORPH_MS, OSD_MS, REVEAL_DELAY_MS, TABS, TAB_ALIASES, VERTICAL, featureOn, scale, tabOn,
+    MORE_TAB, MORPH_MS, OSD_MS, REVEAL_DELAY_MS, TABS, TAB_ALIASES, TAB_IDS, VERTICAL, featureOn, scale, tabOn,
 } from './lib/constants.js';
+import {barTabs} from './lib/bar.js';
 import {fmtClock} from './lib/format.js';
 import {eachFrame, springTo} from './lib/motion.js';
 import {Personality} from './lib/personality.js';
@@ -25,6 +26,8 @@ const OPEN_RETRY_MS = 150;
 const RELEASE_SWALLOW_MS = 1500;
 const PRIVATE_TABS = new Set(['clipboard', 'notes', 'inbox']);
 const KIND_TABS = {agent: 'agents', task: 'activity', service: 'activity', race: 'race'};
+const MORE = MORE_TAB[0];
+const EXTRA_TABS = new Set(['settings', MORE]);
 
 export const Island = GObject.registerClass(
 class Island extends St.BoxLayout {
@@ -56,6 +59,7 @@ class Island extends St.BoxLayout {
         this._morphGen = 0;
         this._osd = null;
         this._osdTimer = 0;
+        this._unread = false;
         this.set_pivot_point(0.5, 0);
 
         this._wallClock = new GnomeDesktop.WallClock();
@@ -125,7 +129,8 @@ class Island extends St.BoxLayout {
 
     _buildHeader() {
         const header = new St.BoxLayout({style_class: 'island-header'});
-        this._tabs = new TabBar(TABS, id => this.showTab(id));
+        this._tabs = new TabBar([...TABS, MORE_TAB], id => this.showTab(id));
+        this._tabs.setOrder([...barTabs(null, TAB_IDS), MORE]);
         header.add_child(this._tabs.actor);
         this._tabName = label('island-tab-name', {x_expand: true});
         header.add_child(this._tabName);
@@ -181,21 +186,36 @@ class Island extends St.BoxLayout {
         this.add_style_class_name(`theme-${st.accent ?? 'blue'}`);
         this.add_style_class_name(`surface-${st.surface ?? 'black'}`);
 
-        for (const [id] of TABS)
-            this._tabs.setVisible(id, tabOn(st, id));
-        const selected = this._tabs.selected;
-        if (this.dashOpen && selected && !tabOn(st, selected))
+        this._tabs.setOrder([...this.barTabs().filter(id => tabOn(st, id)), MORE]);
+        const parent = this._current?.parentTab;
+        if (this.dashOpen && parent && !tabOn(st, parent))
             this.showTab('home');
-        else if (selected)
-            this._tabs.follow();
+        else if (this._current)
+            this._tabs.select(this._barSelection(this._current));
+        this.setUnread(this._unread);
 
         for (const page of this._pages.values())
             page.onSettings(st);
         this.setState(this._raw);
     }
 
+    barTabs() {
+        return barTabs(this.settings, TAB_IDS);
+    }
+
+    _barSelection(page) {
+        const tab = page.parentTab;
+        if (!tab || tab === MORE || this._tabs.shows(tab))
+            return tab;
+        return MORE;
+    }
+
     setUnread(on) {
-        this._tabs.setDot('inbox', on && !(this.dashOpen && this.tab === 'inbox'));
+        this._unread = on;
+        const dot = on && !(this.dashOpen && this.tab === 'inbox');
+        const pinned = this._tabs.shows('inbox');
+        this._tabs.setDot('inbox', dot && pinned);
+        this._tabs.setDot(MORE, dot && !pinned);
     }
 
     setPresenting(on) {
@@ -239,7 +259,7 @@ class Island extends St.BoxLayout {
 
     toggleDash(tab) {
         tab = TAB_ALIASES[tab] ?? tab;
-        const valid = TABS.some(([id]) => id === tab) || tab === 'settings';
+        const valid = TAB_IDS.includes(tab) || EXTRA_TABS.has(tab);
         if (this.dashOpen) {
             if (valid && tab !== this.tab)
                 this.showTab(tab);
@@ -306,7 +326,7 @@ class Island extends St.BoxLayout {
         for (const p of this._pages.values())
             p.actor.visible = p === page;
         this._tabName.text = page.heading;
-        this._tabs.select(page.parentTab);
+        this._tabs.select(this._barSelection(page));
         if (id === 'inbox')
             this.setUnread(false);
 

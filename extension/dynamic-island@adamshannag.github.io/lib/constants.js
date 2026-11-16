@@ -2,6 +2,10 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 
+import {BAR_MAX, DEFAULT_BAR} from './bar.js';
+
+export {BAR_MAX, DEFAULT_BAR};
+
 export const SHELL_MAJOR = parseInt(Config.PACKAGE_VERSION, 10);
 export const VERTICAL = SHELL_MAJOR >= 48 ? {orientation: Clutter.Orientation.VERTICAL} : {vertical: true};
 
@@ -32,6 +36,8 @@ export const TABS = [
     ['race', 'Race', 'input-keyboard-symbolic'],
 ];
 export const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
+export const TAB_IDS = TABS.map(([id]) => id);
+export const MORE_TAB = ['more', 'More', 'view-more-horizontal-symbolic'];
 
 export const DASH_WIDTH = 760;
 export const DASH_DEFAULT_HEIGHT = 500;
@@ -80,6 +86,6 @@ export const SETTING_COLORS = {
     'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
     'input-keyboard-symbolic': '#ff9f0a',
 };
-export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {race: false}};
+export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {race: false}, bar: [...DEFAULT_BAR]};
 export const featureOn = (st, key) => st?.features?.[key] !== false;
 export const tabOn = (st, id) => id === 'home' || st?.tabs?.[id] !== false;
