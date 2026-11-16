@@ -254,21 +254,30 @@ class Island extends St.BoxLayout {
         if (this.dashOpen)
             return;
         this._grab = Main.pushModal(this, {actionMode: Shell.ActionMode.POPUP});
-        if (this._grab.get_seat_state() !== Clutter.GrabState.ALL) {
-            Main.popModal(this._grab);
-            this._grab = null;
-            if (!retried) {
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, OPEN_RETRY_MS, () => {
-                    this.openDash(tab, true);
-                    return GLib.SOURCE_REMOVE;
-                });
+        try {
+            const seatState = this._grab.get_seat_state?.();
+            if (seatState !== undefined && seatState !== Clutter.GrabState.ALL) {
+                Main.popModal(this._grab);
+                this._grab = null;
+                if (!retried) {
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, OPEN_RETRY_MS, () => {
+                        this.openDash(tab, true);
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
+                return;
             }
-            return;
+            this.dashOpen = true;
+            this.tab = tab;
+            this._render(this._state);
+            this.showTab(tab);
+        } catch (e) {
+            if (this._grab) {
+                Main.popModal(this._grab);
+                this._grab = null;
+            }
+            throw e;
         }
-        this.dashOpen = true;
-        this.tab = tab;
-        this._render(this._state);
-        this.showTab(tab);
     }
 
     closeDash(render = true) {
