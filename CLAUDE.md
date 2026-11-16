@@ -66,7 +66,8 @@ extension/
     island.js           Island actor: pill, dashboard shell, morph, state → widgets, input
     lib/                constants, dbus (interface XML + DaemonClient), widgets, motion,
                         format (pure helpers), tools (pure Transform tools), bar (pinned tabs), shell (GNOME
-                        helpers), gnome (OSD/banner patches), clipboard, personality, tabbar, face
+                        helpers), gnome (OSD/banner/panel patches), shoulders (notch fillets),
+                        clipboard, personality, tabbar, face
     pages/              one Page subclass per dashboard tab (more.js: the tile grid behind More); index.js registers them
   scripts/check.mjs     static checks (imports, undefined names, D-Bus calls, collisions)
   test/                 node:test unit tests for the pure modules
@@ -125,7 +126,8 @@ Use these rather than building the same actors by hand: `label`, `setText` (no-o
 - **`Clutter.Text.position_to_coords(index)`** (used by `pages/race.js` to place a caret at a character position) returns stale, unwrapped coordinates until the actor has actually gone through a layout/allocation pass — setting `width`/`line_wrap` alone isn't enough. Call `label.get_allocation_box()` first (it forces a synchronous allocate) or the returned `x`/`y` assume one long unwrapped line.
 - **GNOME version differences** go in `lib/constants.js` (see `VERTICAL`, which uses `orientation` on GNOME 48+ and `vertical` before; `SHELL_MAJOR` is exported for this). `lib/gnome.js`'s `OsdTakeover` branches on it too: GNOME 50 changed `Main.osdWindowManager.show()` from `(monitorIndex, icon, label, level, maxLevel)` to `(icon, label, levels)`, where `levels` is `{[monitorIndex]: {level, maxLevel}}`. GNOME 50's `showAll()` (what the volume/brightness OSD actually calls) bypasses `show()` entirely, so it's patched separately too. `extension.js`'s `_showOsd` intercepts every monitor index, not just the primary one: on multi-monitor setups GNOME can attribute an OSD event (volume or brightness) to a non-primary monitor, and since the pill only exists on one screen, the fix is to always show it there rather than let the real popup appear on whichever monitor GNOME picked.
 - **Every D-Bus method** the extension calls must be declared in `INTERFACE_XML` in `lib/dbus.js`. A missing one fails silently at runtime. Both `npm run check` and the Go test `TestExtensionInterfaceMatchesDaemon` enforce this.
-- **Patching GNOME** (the OSD popup, `MessageTray.bannerBlocked`) lives in `lib/gnome.js` and must be fully undone in `disable()`.
+- **Patching GNOME** (the OSD popup, `MessageTray.bannerBlocked`, the `island-transparent-panel` class on `Main.panel` behind the `transparentPanel` feature) lives in `lib/gnome.js` and must be fully undone in `disable()`.
+- **Shoulders:** `lib/shoulders.js` adds two `St.DrawingArea` children to the island and places them outside its box in `Island.vfunc_allocate` (left at `-r`, right at `width`), so they follow every morph frame, scale, opacity and fullscreen hiding with no extra sync. Their colour is the island's theme-node background, repainted on `style-changed`; the radius comes from the island height (`shoulderRadius` in `lib/format.js`).
 
 ## The daemon
 

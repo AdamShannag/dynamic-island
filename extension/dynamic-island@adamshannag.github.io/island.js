@@ -19,6 +19,7 @@ import {Personality} from './lib/personality.js';
 import {focusPids, openUri} from './lib/shell.js';
 import {TabBar} from './lib/tabbar.js';
 import {Pill} from './lib/pill.js';
+import {Shoulders} from './lib/shoulders.js';
 import {iconButton, label} from './lib/widgets.js';
 import {PAGES} from './pages/index.js';
 
@@ -73,6 +74,7 @@ class Island extends St.BoxLayout {
             y_expand: true,
         });
         this.add_child(this._clip);
+        this._shoulders = new Shoulders(this);
 
         this._pill = new Pill({spyIcon: ext.spyIcon, agentIcon: ext.agentIcon, faceTarget: () => this._faceTarget()});
         this._content = this._pill.actor;
@@ -86,8 +88,15 @@ class Island extends St.BoxLayout {
         this.connect('destroy', () => this._onDestroy());
     }
 
+    vfunc_allocate(box) {
+        super.vfunc_allocate(box);
+        this._shoulders?.allocate(box, scale());
+    }
+
     _onDestroy() {
         this._personality.destroy();
+        this._shoulders.destroy();
+        this._shoulders = null;
         for (const id of [this._osdTimer, this._hoverId]) {
             if (id)
                 GLib.source_remove(id);

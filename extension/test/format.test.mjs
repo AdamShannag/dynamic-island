@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    ago, clipKind, correctPrefix, dockerProblem, fmtBytes, fmtClock, hashColor, hexToRgb, searchUri, stripMarkup,
+    SHOULDER_MAX, SHOULDER_MIN, ago, clipKind, correctPrefix, dockerProblem, fmtBytes, fmtClock, hashColor, hexToRgb,
+    searchUri, shoulderRadius, stripMarkup,
 } from '../dynamic-island@adamshannag.github.io/lib/format.js';
 
 test('fmtClock', () => {
@@ -65,4 +66,12 @@ test('correctPrefix', () => {
     assert.equal(correctPrefix('xxxxxxxxxx', 'hello'), 0);
     assert.equal(correctPrefix('café', 'café au lait'), 4);
     assert.equal(correctPrefix(null, 'a'), 0);
+});
+
+test('shoulderRadius grows with the island and stays in range', () => {
+    assert.equal(shoulderRadius(32), SHOULDER_MIN);
+    assert.equal(shoulderRadius(10), SHOULDER_MIN);
+    assert.equal(shoulderRadius(72), 12);
+    assert.equal(shoulderRadius(500), SHOULDER_MAX);
+    assert.ok(shoulderRadius(50) < shoulderRadius(60));
 });
