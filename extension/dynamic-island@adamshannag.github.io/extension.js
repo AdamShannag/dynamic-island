@@ -23,7 +23,7 @@ export default class DynamicIslandExtension extends Extension {
         this._autoPresent = false;
 
         this._island = new Island(this);
-        Main.layoutManager.addTopChrome(this._island, {affectsInputRegion: true, trackFullscreen: true});
+        Main.layoutManager.addTopChrome(this._island, {trackFullscreen: true});
         this._dateMenu = Main.panel.statusArea.dateMenu;
         this._dateMenu?.container.set_opacity(0);
 
