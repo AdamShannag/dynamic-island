@@ -69,12 +69,26 @@ func TestIDUniquePerDataDir(t *testing.T) {
         t.Fatal("expected different IDs for different data dirs")
     }
 }
+
+func TestEphemeralNeverPersists(t *testing.T) {
+    dir := t.TempDir()
+    t.Setenv("XDG_DATA_HOME", dir)
+    a := identity.Ephemeral()
+    b := identity.Ephemeral()
+    if a == "" || a == b {
+        t.Fatalf("Ephemeral() should return fresh non-empty ids, got %q and %q", a, b)
+    }
+    entries, _ := os.ReadDir(dir)
+    if len(entries) != 0 {
+        t.Fatalf("Ephemeral() must not write to disk, found: %v", entries)
+    }
+}
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `go test ./internal/identity/... -run TestID -v`
-Expected: FAIL (package/function does not exist)
+Run: `go test ./internal/identity/... -v`
+Expected: FAIL (package does not exist)
 
 - [ ] **Step 3: Implement `internal/identity/identity.go`**
 
@@ -541,8 +555,8 @@ Expected: FAIL (package does not exist)
 - The host's `Callbacks.OnRespond` handler: finds the matching `Racer` by `PeerID` in `State.Racers` and sets its `Status` to `"accepted"` or `"declined"`, fires `OnChange`.
 - `Start()`: host-only, valid in `PhaseLobby`; picks `randomPassage()`, sets `State.Phase = PhaseRacing`, `State.Passage = passage`, fires `OnChange`, then for every accepted racer (excluding self) calls `lobby.SendStart(<that racer's addr — the host must have recorded it from the Invite call, so add an `addr` field alongside each `Racer`, not part of the exported struct: keep a parallel `map[string]string` of `peerID -> addr` on `Engine`>, lobby.Start{LobbyID, Payload: json.RawMessage(mustMarshal(passage))})`.
 - The guest's `Callbacks.OnStart` handler: ignores a `Start` whose `LobbyID` doesn't match the current `State.LobbyID` (Review Focus: stale/unknown lobby id); otherwise unmarshals `Payload` into the passage string, sets `Phase = PhaseRacing`, `Passage = passage`, fires `OnChange`, and opens `unsubscribe = lobby.Subscribe(hostAddr, LobbyID, onEvent, onClosed)` where `onEvent` unmarshals a `State` snapshot JSON and replaces local `State.Racers` with it (keeping local `IsHost`/`LobbyID`/`Phase`/`Passage` — the host is the source of truth for everyone's progress) and fires `OnChange`; `onClosed` sets `Phase = PhaseHostLeft` and fires `OnChange` (Review Focus: clean host-left failure), unless the engine already left/reset (guard with a generation counter or the current `LobbyID` still matching, to avoid a late callback from a stale subscription clobbering a newer lobby's state).
-- `SubmitProgress(typedChars)`: computes `progress = float64(typedChars) / float64(len(State.Passage))` (clamped to `[0,1]`) and, if `host`, updates its own `Racer` entry directly and calls `Broadcast`; if guest, calls `lobby.SendProgress(hostAddr, lobby.Progress{LobbyID, PeerID: selfID, Payload: json.RawMessage(mustMarshal(progressAndMaybeFinishedAt))})`.
-- The host's `Callbacks.OnProgress` handler: updates the matching `Racer`'s `Progress`/`FinishedAtMs`/`WPM` (WPM = `(typedChars/5) / minutesSinceStart`, computed from the time `Start()` was called), fires `OnChange`, then `Broadcast`s the full current `State` (JSON-encoded) to every subscriber of that lobby so every guest's `onEvent` above receives the up-to-date racer list. When every racer's `FinishedAtMs != 0`, set `Phase = PhaseFinished` first, then `Broadcast`, then `EndLobby` (closing everyone's subscription cleanly rather than leaving it open with nothing left to send).
+- `SubmitProgress(typedChars)`: the wire/local payload is always just the raw `typedChars` count — define `type progressPayload struct { TypedChars int \`json:"typedChars"\` }` (unexported, used only between a guest and its host, never reaches `dbusapi` or the extension) so the *host* is the only side that ever turns a char count into progress/WPM/finished-at, using its own clock. Concretely: if `host`, call a shared unexported `applyProgress(peerID string, typedChars int)` method directly as `applyProgress(selfID, typedChars)`; if guest, call `lobby.SendProgress(hostAddr, lobby.Progress{LobbyID: State.LobbyID, PeerID: selfID, Payload: json.RawMessage(mustMarshal(progressPayload{typedChars}))})` (`mustMarshal` is a one-line unexported helper: `json.Marshal` and panic on error, since marshaling these small, local, always-valid structs cannot realistically fail).
+- The host's `Callbacks.OnProgress` handler: unmarshals `Progress.Payload` into `progressPayload`, then calls the same `applyProgress(Progress.PeerID, payload.TypedChars)` the host's own `SubmitProgress` call above uses — this is the single place the math happens, on whichever machine is hosting. `applyProgress` finds the matching `Racer` by `PeerID`, sets `Progress = clamp(float64(typedChars)/float64(len(State.Passage)), 0, 1)`; if `Progress >= 1` and `FinishedAtMs == 0`, sets `FinishedAtMs = time.Now().UnixMilli()` and `WPM = (float64(typedChars)/5) / time.Since(raceStartedAt).Minutes()` (`raceStartedAt` is a `time.Time` field on `Engine`, set when `Start()` is called); fires `OnChange`, then `Broadcast`s the full current `State` (JSON-encoded) to every subscriber of that lobby so every guest's `onEvent` above receives the up-to-date racer list. When every racer's `FinishedAtMs != 0`, set `Phase = PhaseFinished` first, then `Broadcast`, then `EndLobby` (closing everyone's subscription cleanly rather than leaving it open with nothing left to send). A guest's own `SubmitProgress` call never touches `State.Racers` directly — only `applyProgress` on whichever machine is host does, keeping the host the single source of truth exactly as the design calls for.
 - `Leave()`: no-op if already `PhaseIdle`. Otherwise resets to `PhaseIdle`, calls `unsubscribe()` if set, and if hosting, `EndLobby`s the current lobby first so joined peers get a clean end rather than silently timing out (this only governs the *local* "I'm done" case, distinct from the *host crashed* case the SSE-close path already handles). Safe to call whether or not the engine is `enabled` (it's also the first step `Disable()` takes).
 
 - [ ] **Step 5: Run test to verify it passes**
@@ -735,7 +749,9 @@ Expected: PASS
 ```go
 func TestRunTracksRaceSetting(t *testing.T) {
     t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-    mu.Lock(); cur = Defaults(); cur.Features["race"] = false; mu.Unlock() // settings package's own lock/cur, imported for this test
+    if _, err := settings.Update([]byte(`{"features":{"race":false}}`)); err != nil {
+        t.Fatal(err)
+    }
     r := plugins.NewRace("h1", "Host", "127.0.0.1", 48582)
     h := &fakeHost{}
     ctx, cancel := context.WithCancel(context.Background())
@@ -755,7 +771,7 @@ func TestRunTracksRaceSetting(t *testing.T) {
 }
 ```
 
-(This test reaches into `settings`'s exported `Update` rather than its unexported `mu`/`cur` where possible — only use the direct `cur.Features["race"] = false` line if `Defaults()` already defaults `"race"` to `true` per Task 7, since `Update`'s `merge` only ever turns known features on/off, never seeds a new one from nothing; adjust the setup line to whatever actually compiles once Task 7 lands, but the behavior under test — `Run` following `settings.Enabled("race")` live — does not change.)
+(`internal/plugins` is a different package from `internal/settings`, so this test only ever calls `settings`'s exported `Update` — never its unexported `mu`/`cur` — exactly like `usb_test.go`-style tests in this codebase already would. `race` already defaults to enabled per Task 1's `FeatureIDs` change, so the test starts by explicitly turning it off via `Update`, then flips it on and off again to prove `Run` tracks the live setting both ways.)
 
 - [ ] **Step 6c: Run test, fix the implementation until it passes**
 
