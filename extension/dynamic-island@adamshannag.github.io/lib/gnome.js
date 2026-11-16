@@ -8,14 +8,15 @@ export class OsdTakeover {
     constructor(handler) {
         this._handler = handler;
         this._orig = null;
+        this._origAll = null;
     }
 
     set enabled(on) {
         const osd = Main.osdWindowManager;
+        const handler = this._handler;
         if (on && !this._orig) {
-            const orig = osd.show;
-            const handler = this._handler;
-            this._orig = orig;
+            const origShow = osd.show;
+            this._orig = origShow;
             osd.show = SHELL_MAJOR >= 50 ? function (icon, label, levels) {
                 const rest = {};
                 for (const [idx, lv] of Object.entries(levels)) {
@@ -23,14 +24,26 @@ export class OsdTakeover {
                         rest[idx] = lv;
                 }
                 if (Object.keys(rest).length)
-                    orig.call(this, icon, label, rest);
+                    origShow.call(this, icon, label, rest);
             } : function (monitorIndex, icon, label, level, maxLevel) {
                 if (!handler(monitorIndex, icon, label, level, maxLevel))
-                    orig.call(this, monitorIndex, icon, label, level, maxLevel);
+                    origShow.call(this, monitorIndex, icon, label, level, maxLevel);
             };
+            if (SHELL_MAJOR >= 50) {
+                const origAll = osd.showAll;
+                this._origAll = origAll;
+                osd.showAll = function (icon, label, level, maxLevel) {
+                    if (!handler(-1, icon, label, level, maxLevel))
+                        origAll.call(this, icon, label, level, maxLevel);
+                };
+            }
         } else if (!on && this._orig) {
             osd.show = this._orig;
             this._orig = null;
+            if (this._origAll) {
+                osd.showAll = this._origAll;
+                this._origAll = null;
+            }
         }
     }
 }
