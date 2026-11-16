@@ -500,10 +500,6 @@ class Island extends St.BoxLayout {
         return GLib.DateTime.new_now_local().format(fmt).trim();
     }
 
-    syncTicker() {
-        this._syncTicker();
-    }
-
     _syncTicker() {
         const s = this._state;
         const needed = !!(s.endsAt || s.startedAt || (this.dashOpen && this._current?.ticking));

@@ -215,6 +215,15 @@ export class RacePage extends Page {
     _applyTyped() {
         this._passageLabel.clutter_text.set_markup(this._passageMarkup(this._typed));
         this._moveCaret(this._selfCaret, Math.min(Array.from(this._typed).length, Array.from(this._passage).length), SELF_CARET_MS);
+        this._submitProgress();
+    }
+
+    _submitProgress() {
+        const len = correctPrefix(this._typed, this._passage ?? '');
+        if (len === this._lastSubmittedLen)
+            return;
+        this._lastSubmittedLen = len;
+        this.call('RaceProgress', [len]);
     }
 
     _syncRaceMarkers(state) {
@@ -260,10 +269,6 @@ export class RacePage extends Page {
         return view;
     }
 
-    get ticking() {
-        return this._phase === 'racing';
-    }
-
     onShow() {
         this.refresh();
         if (this._phase === 'racing')
@@ -275,16 +280,6 @@ export class RacePage extends Page {
         this.fetch('RaceState', [], (state, err) => this._render(err ? null : state));
         if (this._phase === 'idle' || this._phase === undefined)
             this.fetch('RacePeers', [], (peers, err) => this._renderIdle(err ? [] : (peers ?? [])));
-    }
-
-    tick() {
-        if (this._phase !== 'racing')
-            return;
-        const len = correctPrefix(this._typed, this._passage);
-        if (len === this._lastSubmittedLen)
-            return;
-        this._lastSubmittedLen = len;
-        this.call('RaceProgress', [len]);
     }
 
     _render(state) {
@@ -316,7 +311,6 @@ export class RacePage extends Page {
         }
         const prevPhase = this._phase;
         this._phase = state.phase;
-        this.island.syncTicker();
         if (state.phase === 'idle') {
             this._showView('idle');
         } else if (state.phase === 'lobby' && state.isHost) {
