@@ -64,3 +64,25 @@ Description: A Dynamic Island for the GNOME desktop
  developer tools, notes and quick web search, driven by a small Go
  daemon over D-Bus. Run `island setup` after installing.
 
+Package: dynamic-island
+Architecture: arm64
+Version: 0.2.3
+Priority: optional
+Section: gnome
+Maintainer: Adam Shannag <noreply@github.com>
+Installed-Size: 10767
+Depends: gnome-shell (>= 46), dbus-user-session
+Suggests: docker.io
+Filename: pool/main/d/dynamic-island/dynamic-island_0.2.3_arm64.deb
+Size: 4512440
+MD5sum: 15cea077670f5e4a17ba1776107ee1c8
+SHA1: 3b6486b8d54b11f11caefef48e7b122eb6908e7e
+SHA256: 18e66cc8ce4302fc5821fe62c7c0badb11f079528f2c37ebcbdc0c38118946ae
+SHA512: 7ed5c570f680654ef4dbc00db0575c05a6d69d93703767b505dd65e1a61fa541dd92362e29574bb24df6f3b4097148dc0f0ff0d58c37812748e5678018ed70ad
+Homepage: https://github.com/AdamShannag/dynamic-island
+Description: A Dynamic Island for the GNOME desktop
+ Live activities (music, timers, notifications, builds, coding agents),
+ a dashboard with system monitor, Docker, ports, clipboard history,
+ developer tools, notes and quick web search, driven by a small Go
+ daemon over D-Bus. Run `island setup` after installing.
+
