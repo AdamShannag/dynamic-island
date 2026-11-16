@@ -263,3 +263,63 @@ func TestSendTimesOutOnASilentPeer(t *testing.T) {
 		t.Fatalf("send took %s, want a short timeout", d)
 	}
 }
+
+func TestServerRejectsBadShapes(t *testing.T) {
+	var calls atomic.Int32
+	s := lobby.NewServer(48570, lobby.Callbacks{
+		OnInvite:  func(lobby.Invite) error { calls.Add(1); return nil },
+		OnRespond: func(lobby.Response) error { calls.Add(1); return nil },
+	})
+	go s.ListenAndServe()
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	ok := lobby.Invite{LobbyID: "l1", Kind: "race", HostID: "h1", HostName: "Host", HostAddr: "127.0.0.1:1"}
+	bad := []lobby.Invite{
+		{LobbyID: "", Kind: "race", HostID: "h1", HostAddr: "127.0.0.1:1"},
+		{LobbyID: "l1", Kind: "", HostID: "h1", HostAddr: "127.0.0.1:1"},
+		{LobbyID: "l1", Kind: "race", HostID: "", HostAddr: "127.0.0.1:1"},
+		{LobbyID: "l1", Kind: "race", HostID: "h1", HostName: strings.Repeat("x", 101), HostAddr: "127.0.0.1:1"},
+		{LobbyID: strings.Repeat("x", 65), Kind: "race", HostID: "h1", HostAddr: "127.0.0.1:1"},
+	}
+	for _, inv := range bad {
+		if err := lobby.SendInvite("127.0.0.1:48570", inv); err == nil {
+			t.Errorf("invite %+v was accepted", inv)
+		}
+	}
+	if err := lobby.SendRespond("127.0.0.1:48570", lobby.Response{LobbyID: "l1", PeerID: "p1", PeerName: strings.Repeat("x", 101)}); err == nil {
+		t.Error("an over-long peer name was accepted")
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("callbacks ran %d times for invalid input", calls.Load())
+	}
+	if err := lobby.SendInvite("127.0.0.1:48570", ok); err != nil || calls.Load() != 1 {
+		t.Fatalf("a valid invite failed: %v", err)
+	}
+}
+
+func TestSubscriberCap(t *testing.T) {
+	s := lobby.NewServer(48559, lobby.Callbacks{})
+	go s.ListenAndServe()
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+	s.OpenLobby("l1")
+
+	var closed atomic.Int32
+	for i := 0; i < 32; i++ {
+		cancel := lobby.Subscribe("127.0.0.1:48559", "l1", func(json.RawMessage) {}, func(error) { closed.Add(1) })
+		defer cancel()
+	}
+	time.Sleep(200 * time.Millisecond)
+	if closed.Load() != 0 {
+		t.Fatalf("%d of the first 32 subscribers were refused", closed.Load())
+	}
+	extra := make(chan error, 1)
+	cancel := lobby.Subscribe("127.0.0.1:48559", "l1", func(json.RawMessage) {}, func(err error) { extra <- err })
+	defer cancel()
+	select {
+	case <-extra:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the 33rd subscriber must be refused")
+	}
+}

@@ -14,11 +14,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
 	DefaultPort = 54372
 	callTimeout = 4 * time.Second
+
+	maxIDLen       = 64
+	maxKindLen     = 32
+	maxNameLen     = 100
+	maxSubscribers = 32
 )
 
 var (
@@ -56,6 +62,22 @@ type Progress struct {
 	RemoteIP        string `json:"-"`
 }
 
+func (v Invite) valid() bool {
+	return id(v.LobbyID) && text(v.Kind, maxKindLen) && v.Kind != "" && id(v.HostID) && text(v.HostName, maxNameLen)
+}
+
+func (v Response) valid() bool {
+	return id(v.LobbyID) && id(v.PeerID) && text(v.PeerName, maxNameLen)
+}
+
+func (v Start) valid() bool { return id(v.LobbyID) }
+
+func (v Progress) valid() bool { return id(v.LobbyID) && id(v.PeerID) }
+
+func id(s string) bool { return s != "" && text(s, maxIDLen) }
+
+func text(s string, max int) bool { return len(s) <= max && utf8.ValidString(s) }
+
 type Callbacks struct {
 	OnInvite   func(Invite) error
 	OnRespond  func(Response) error
@@ -83,8 +105,9 @@ func NewServer(port int, cb Callbacks) *Server {
 	mux.HandleFunc("/progress", s.handleProgress)
 	mux.HandleFunc("/events", s.handleEvents)
 	s.httpSrv = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return s
 }
@@ -97,9 +120,9 @@ func (s *Server) Close() error {
 	return s.httpSrv.Close()
 }
 
-func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
+func decodeBody[T interface{ valid() bool }](w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&v); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&v); err != nil || !v.valid() {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return v, false
 	}
@@ -195,6 +218,10 @@ func reply(w http.ResponseWriter, err error) {
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	lobbyID := r.URL.Query().Get("lobby")
+	if !id(lobbyID) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -202,8 +229,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ch := make(chan json.RawMessage, 8)
-	if !s.addSub(lobbyID, ch) {
-		http.Error(w, "no such lobby", http.StatusNotFound)
+	if status := s.addSub(lobbyID, ch); status != http.StatusOK {
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 	defer s.removeSub(lobbyID, ch)
@@ -245,15 +272,18 @@ func (s *Server) OpenLobby(lobbyID string) {
 	}
 }
 
-func (s *Server) addSub(lobbyID string, ch chan json.RawMessage) bool {
+func (s *Server) addSub(lobbyID string, ch chan json.RawMessage) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	chans, open := s.subs[lobbyID]
-	if !open {
-		return false
+	switch {
+	case !open:
+		return http.StatusNotFound
+	case len(chans) >= maxSubscribers:
+		return http.StatusServiceUnavailable
 	}
 	s.subs[lobbyID] = append(chans, ch)
-	return true
+	return http.StatusOK
 }
 
 func (s *Server) removeSub(lobbyID string, ch chan json.RawMessage) {
