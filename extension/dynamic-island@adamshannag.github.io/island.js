@@ -24,7 +24,7 @@ import {PAGES} from './pages/index.js';
 const OPEN_RETRY_MS = 150;
 const RELEASE_SWALLOW_MS = 1500;
 const PRIVATE_TABS = new Set(['clipboard', 'notes', 'inbox']);
-const KIND_TABS = {agent: 'agents', task: 'activity', service: 'activity'};
+const KIND_TABS = {agent: 'agents', task: 'activity', service: 'activity', race: 'race'};
 
 export const Island = GObject.registerClass(
 class Island extends St.BoxLayout {

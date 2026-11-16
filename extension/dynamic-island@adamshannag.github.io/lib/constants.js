@@ -29,6 +29,7 @@ export const TABS = [
     ['transform', 'Transform', 'edit-find-replace-symbolic'],
     ['notes', 'Notes', 'document-edit-symbolic'],
     ['search', 'Web', 'web-browser-symbolic'],
+    ['race', 'Race', 'input-keyboard-symbolic'],
 ];
 export const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
 
@@ -67,6 +68,7 @@ export const FEATURES = [
     ['clipboardHistory', 'Clipboard history', 'Remember what you copy', 'edit-paste-symbolic'],
     ['usb', 'USB devices', 'Pop up when a device is plugged in', 'media-removable-symbolic'],
     ['battery', 'Battery', 'Charging and low-battery popups', 'battery-good-symbolic'],
+    ['race', 'LAN typing race', 'Race other Dynamic Island users on your network', 'input-keyboard-symbolic'],
 ];
 export const SETTING_COLORS = {
     'user-home-symbolic': '#0a84ff', 'preferences-system-notifications-symbolic': '#ff453a',
@@ -76,6 +78,7 @@ export const SETTING_COLORS = {
     'face-smile-symbolic': '#ff9f0a', 'audio-x-generic-symbolic': '#ff375f', 'audio-volume-high-symbolic': '#0a84ff',
     'notification-disabled-symbolic': '#ff453a', 'media-removable-symbolic': '#40c8e0', 'battery-good-symbolic': '#30d158',
     'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
+    'input-keyboard-symbolic': '#ff9f0a',
 };
 export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {}};
 export const featureOn = (st, key) => st?.features?.[key] !== false;
