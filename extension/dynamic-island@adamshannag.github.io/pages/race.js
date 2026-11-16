@@ -284,6 +284,7 @@ export class RacePage extends Page {
         }
         const prevPhase = this._phase;
         this._phase = state.phase;
+        this.island.syncTicker();
         if (state.phase === 'idle') {
             this._showView('idle');
         } else if (state.phase === 'lobby' && state.isHost) {
