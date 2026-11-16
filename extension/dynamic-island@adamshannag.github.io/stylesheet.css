@@ -861,22 +861,26 @@
   font-family: monospace;
   font-size: 10.5pt;
   line-height: 1.5;
-  color: rgba(245, 245, 247, 0.85);
-  padding: 2px 4px;
+  color: #6e6e73;
+  padding: 0;
+  min-height: 80px;
 }
-.island-race-entry {
-  background-color: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 10px;
-  color: #f5f5f7;
-  caret-color: #0a84ff;
+.island-race-entry-hidden {
+  background-color: transparent;
+  border: none;
+  color: transparent;
+  caret-color: transparent;
   font-family: monospace;
   font-size: 10.5pt;
-  padding: 8px 10px;
-  min-height: 70px;
+  line-height: 1.5;
+  padding: 0;
+  min-height: 0;
 }
-.island-race-entry:focus { border-color: rgba(10, 132, 255, 0.5); box-shadow: none; }
-.island-race-entry StLabel.hint-text { color: rgba(245, 245, 247, 0.3); }
+.island-race-entry-hidden StLabel.hint-text { color: transparent; }
+.island-race-caret {
+  width: 2px;
+  border-radius: 1px;
+}
 
 .island.theme-blue .island-xf-mini.accent { background-color: #0a84ff; }
 .island.theme-blue .island-xf-text { caret-color: #0a84ff; }

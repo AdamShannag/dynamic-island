@@ -1,13 +1,19 @@
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 
-import {featureOn} from '../lib/constants.js';
-import {correctPrefix} from '../lib/format.js';
+import {TILE_COLORS, featureOn} from '../lib/constants.js';
+import {correctPrefix, hashColor} from '../lib/format.js';
+import {springTo} from '../lib/motion.js';
 import {
     EmptyState, badge, column, fillList, group, label, multilineEntry, page, pillButton, rowText, scrollView,
-    setText, wrappingLabel,
+    setText,
 } from '../lib/widgets.js';
 import {Page} from './page.js';
+
+const SELF_CARET_COLOR = '#0a84ff';
+const SELF_CARET_MS = 110;
+const PEER_CARET_MS = 350;
 
 function statusSpec(status) {
     if (status === 'accepted')
@@ -98,10 +104,22 @@ export class RacePage extends Page {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
         const card = new St.BoxLayout({style_class: 'island-card island-race-card', x_expand: true, y_align: Clutter.ActorAlign.START});
         const cardCol = column({x_expand: true});
-        this._passageLabel = wrappingLabel('island-race-passage');
-        this._entry = multilineEntry('island-race-entry', 'Type the passage above…');
-        cardCol.add_child(this._passageLabel);
-        cardCol.add_child(this._entry);
+
+        this._passageStack = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
+        this._entry = multilineEntry('island-race-entry-hidden', '', {x_expand: true, y_expand: true});
+        this._passageLabel = new St.Label({style_class: 'island-race-passage', x_expand: true, y_expand: true});
+        this._passageLabel.clutter_text.line_wrap = true;
+        this._passageLabel.reactive = false;
+        this._markerLayer = new St.Widget({x_expand: true, y_expand: true, clip_to_allocation: true, reactive: false});
+        this._passageStack.add_child(this._entry);
+        this._passageStack.add_child(this._passageLabel);
+        this._passageStack.add_child(this._markerLayer);
+        this._selfCaret = this._makeCaret(SELF_CARET_COLOR);
+        this._markerLayer.add_child(this._selfCaret);
+        this._raceMarkers = new Map();
+        this._entry.clutter_text.connect('text-changed', () => this._onTyped());
+
+        cardCol.add_child(this._passageStack);
         card.add_child(cardCol);
         const raceGroup = group('RACERS');
         this._raceList = raceGroup.list;
@@ -114,6 +132,87 @@ export class RacePage extends Page {
         view.add_child(scrollView(groups));
         view.add_child(toolbar);
         return view;
+    }
+
+    _makeCaret(color) {
+        const caret = new St.Widget({style_class: 'island-race-caret', visible: false});
+        caret.set_style(`background-color: ${color}; box-shadow: 0 0 6px 1px ${color};`);
+        return caret;
+    }
+
+    _racerColor(peerId) {
+        return hashColor(peerId, TILE_COLORS);
+    }
+
+    _passageMarkup(typed) {
+        const chars = Array.from(this._passage ?? '');
+        const correctLen = correctPrefix(typed, this._passage ?? '');
+        const typedLen = Math.min(Array.from(typed ?? '').length, chars.length);
+        let out = '', i = 0;
+        const flush = (end, color) => {
+            if (i >= end)
+                return;
+            out += `<span foreground="${color}">${GLib.markup_escape_text(chars.slice(i, end).join(''), -1)}</span>`;
+            i = end;
+        };
+        flush(correctLen, '#f5f5f7');
+        flush(typedLen, '#ff453a');
+        flush(chars.length, '#6e6e73');
+        return out;
+    }
+
+    _moveCaret(caret, index, duration) {
+        if (caret._lastIndex === index)
+            return;
+        this._passageLabel.get_allocation_box();
+        const [found, x, y, lineHeight] = this._passageLabel.clutter_text.position_to_coords(index);
+        if (!found)
+            return;
+        caret.height = lineHeight;
+        caret.visible = true;
+        if (caret._lastIndex === undefined || duration === 0) {
+            caret.x = x;
+            caret.y = y;
+        } else {
+            springTo(caret, {x, y}, duration);
+        }
+        caret._lastIndex = index;
+    }
+
+    _charIndexForProgress(progress) {
+        const len = Array.from(this._passage ?? '').length;
+        return Math.max(0, Math.min(len, Math.round((progress ?? 0) * len)));
+    }
+
+    _onTyped() {
+        if (this._phase !== 'racing' || !this._passage)
+            return;
+        const typed = this._entry.text;
+        this._passageLabel.clutter_text.set_markup(this._passageMarkup(typed));
+        this._moveCaret(this._selfCaret, Math.min(Array.from(typed).length, Array.from(this._passage).length), SELF_CARET_MS);
+    }
+
+    _syncRaceMarkers(state) {
+        const seen = new Set();
+        for (const r of state.racers ?? []) {
+            if (r.peerId === state.selfId)
+                continue;
+            seen.add(r.peerId);
+            let caret = this._raceMarkers.get(r.peerId);
+            if (!caret) {
+                caret = this._makeCaret(this._racerColor(r.peerId));
+                this._markerLayer.add_child(caret);
+                this._raceMarkers.set(r.peerId, caret);
+            }
+            const index = r.finishedAtMs ? Array.from(this._passage ?? '').length : this._charIndexForProgress(r.progress);
+            this._moveCaret(caret, index, PEER_CARET_MS);
+        }
+        for (const [peerId, caret] of this._raceMarkers) {
+            if (!seen.has(peerId)) {
+                caret.destroy();
+                this._raceMarkers.delete(peerId);
+            }
+        }
     }
 
     _leaveButton(text, kind) {
@@ -176,6 +275,12 @@ export class RacePage extends Page {
             this._raceSig = null;
             this._resultSig = null;
             this._peerSig = null;
+            this._passage = null;
+            this._selfCaret.visible = false;
+            this._selfCaret._lastIndex = undefined;
+            for (const caret of this._raceMarkers.values())
+                caret.destroy();
+            this._raceMarkers.clear();
         }
         const prevPhase = this._phase;
         this._phase = state.phase;
@@ -348,12 +453,18 @@ export class RacePage extends Page {
     }
 
     _renderRacing(state) {
-        this._passage = state.passage ?? '';
-        setText(this._passageLabel, this._passage);
-        this._syncRaceRows(state.racers ?? []);
+        const incoming = state.passage ?? '';
+        if (this._passage !== incoming) {
+            this._passage = incoming;
+            this._selfCaret._lastIndex = undefined;
+            this._passageLabel.clutter_text.set_markup(this._passageMarkup(this._entry.text));
+            this._moveCaret(this._selfCaret, Math.min(Array.from(this._entry.text).length, Array.from(this._passage).length), 0);
+        }
+        this._syncRaceMarkers(state);
+        this._syncRaceRows(state.racers ?? [], state.selfId);
     }
 
-    _syncRaceRows(racers) {
+    _syncRaceRows(racers, selfId) {
         const sig = racers.map(r => r.peerId).join('|');
         if (sig !== this._raceSig) {
             this._raceSig = sig;
@@ -361,8 +472,10 @@ export class RacePage extends Page {
             this._raceRefs.clear();
             for (const r of racers) {
                 const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
+                const dot = badge({color: r.peerId === selfId ? SELF_CARET_COLOR : this._racerColor(r.peerId), glyph: ''});
                 const name = label('island-irow-title', {text: r.name, x_expand: true});
                 const value = label('island-irow-sub', {x_align: Clutter.ActorAlign.END});
+                row.add_child(dot);
                 row.add_child(name);
                 row.add_child(value);
                 this._raceList.add_child(row);
