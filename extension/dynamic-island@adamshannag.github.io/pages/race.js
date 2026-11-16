@@ -175,7 +175,9 @@ export class RacePage extends Page {
             this._hostSig = null;
             this._raceSig = null;
             this._resultSig = null;
+            this._peerSig = null;
         }
+        const prevPhase = this._phase;
         this._phase = state.phase;
         if (state.phase === 'idle') {
             this._showView('idle');
@@ -188,6 +190,8 @@ export class RacePage extends Page {
         } else if (state.phase === 'racing') {
             this._showView('racing');
             this._renderRacing(state);
+            if (prevPhase !== 'racing')
+                this._entry.grab_key_focus();
         } else {
             this._showView('result');
             this._renderResult(state);
