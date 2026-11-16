@@ -6,7 +6,7 @@ import {TILE_COLORS, featureOn} from '../lib/constants.js';
 import {correctPrefix, hashColor} from '../lib/format.js';
 import {springTo} from '../lib/motion.js';
 import {
-    EmptyState, badge, column, fillList, group, label, multilineEntry, page, pillButton, rowText, scrollView,
+    EmptyState, badge, column, fillList, group, label, page, pillButton, rowText, scrollView,
     setText,
 } from '../lib/widgets.js';
 import {Page} from './page.js';
@@ -105,19 +105,21 @@ export class RacePage extends Page {
         const card = new St.BoxLayout({style_class: 'island-card island-race-card', x_expand: true, y_align: Clutter.ActorAlign.START});
         const cardCol = column({x_expand: true});
 
-        this._passageStack = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
-        this._entry = multilineEntry('island-race-entry-hidden', '', {x_expand: true, y_expand: true});
+        this._passageStack = new St.Widget({
+            layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true,
+            reactive: true, can_focus: true,
+        });
         this._passageLabel = new St.Label({style_class: 'island-race-passage', x_expand: true, y_expand: true});
         this._passageLabel.clutter_text.line_wrap = true;
         this._passageLabel.reactive = false;
         this._markerLayer = new St.Widget({x_expand: true, y_expand: true, clip_to_allocation: true, reactive: false});
-        this._passageStack.add_child(this._entry);
         this._passageStack.add_child(this._passageLabel);
         this._passageStack.add_child(this._markerLayer);
         this._selfCaret = this._makeCaret(SELF_CARET_COLOR);
         this._markerLayer.add_child(this._selfCaret);
         this._raceMarkers = new Map();
-        this._entry.clutter_text.connect('text-changed', () => this._onTyped());
+        this._typed = '';
+        this._passageStack.connect('key-press-event', (actor, event) => this._onKeyPress(event));
 
         cardCol.add_child(this._passageStack);
         card.add_child(cardCol);
@@ -184,12 +186,35 @@ export class RacePage extends Page {
         return Math.max(0, Math.min(len, Math.round((progress ?? 0) * len)));
     }
 
-    _onTyped() {
+    _onKeyPress(event) {
         if (this._phase !== 'racing' || !this._passage)
-            return;
-        const typed = this._entry.text;
-        this._passageLabel.clutter_text.set_markup(this._passageMarkup(typed));
-        this._moveCaret(this._selfCaret, Math.min(Array.from(typed).length, Array.from(this._passage).length), SELF_CARET_MS);
+            return Clutter.EVENT_PROPAGATE;
+        const passageLen = Array.from(this._passage).length;
+        if (event.get_key_symbol() === Clutter.KEY_BackSpace) {
+            const chars = Array.from(this._typed);
+            chars.pop();
+            this._typed = chars.join('');
+            this._applyTyped();
+            return Clutter.EVENT_STOP;
+        }
+        if (event.get_state() & (Clutter.ModifierType.CONTROL_MASK | Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.SUPER_MASK))
+            return Clutter.EVENT_PROPAGATE;
+        const unicode = event.get_key_unicode();
+        if (!unicode || Array.from(unicode).length !== 1)
+            return Clutter.EVENT_PROPAGATE;
+        const code = unicode.codePointAt(0);
+        if (code < 0x20 || code === 0x7f)
+            return Clutter.EVENT_PROPAGATE;
+        if (Array.from(this._typed).length >= passageLen)
+            return Clutter.EVENT_STOP;
+        this._typed += unicode;
+        this._applyTyped();
+        return Clutter.EVENT_STOP;
+    }
+
+    _applyTyped() {
+        this._passageLabel.clutter_text.set_markup(this._passageMarkup(this._typed));
+        this._moveCaret(this._selfCaret, Math.min(Array.from(this._typed).length, Array.from(this._passage).length), SELF_CARET_MS);
     }
 
     _syncRaceMarkers(state) {
@@ -239,6 +264,13 @@ export class RacePage extends Page {
         return this._phase === 'racing';
     }
 
+    onShow() {
+        this.refresh();
+        if (this._phase === 'racing')
+            this._passageStack.grab_key_focus();
+        return null;
+    }
+
     refresh() {
         this.fetch('RaceState', [], (state, err) => this._render(err ? null : state));
         if (this._phase === 'idle' || this._phase === undefined)
@@ -248,7 +280,7 @@ export class RacePage extends Page {
     tick() {
         if (this._phase !== 'racing')
             return;
-        const len = correctPrefix(this._entry.text, this._passage);
+        const len = correctPrefix(this._typed, this._passage);
         if (len === this._lastSubmittedLen)
             return;
         this._lastSubmittedLen = len;
@@ -270,7 +302,7 @@ export class RacePage extends Page {
             this._invitePickerActor.hide();
             this._inviteToggleBtn.label = 'Invite more';
             this._lastSubmittedLen = 0;
-            this._entry.text = '';
+            this._typed = '';
             this._hostSig = null;
             this._raceSig = null;
             this._resultSig = null;
@@ -297,7 +329,7 @@ export class RacePage extends Page {
             this._showView('racing');
             this._renderRacing(state);
             if (prevPhase !== 'racing')
-                this._entry.grab_key_focus();
+                this._passageStack.grab_key_focus();
         } else {
             this._showView('result');
             this._renderResult(state);
@@ -458,8 +490,7 @@ export class RacePage extends Page {
         if (this._passage !== incoming) {
             this._passage = incoming;
             this._selfCaret._lastIndex = undefined;
-            this._passageLabel.clutter_text.set_markup(this._passageMarkup(this._entry.text));
-            this._moveCaret(this._selfCaret, Math.min(Array.from(this._entry.text).length, Array.from(this._passage).length), 0);
+            this._applyTyped();
         }
         this._syncRaceMarkers(state);
         this._syncRaceRows(state.racers ?? [], state.selfId);
