@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -27,5 +28,22 @@ func TestUpdate(t *testing.T) {
 	mu.Unlock()
 	if err := Load(); err != nil || Get().Accent != "purple" || Get().Tabs["docker"] {
 		t.Fatalf("reload failed: %v %+v", err, Get())
+	}
+}
+
+func TestUpdateDisplayName(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	mu.Lock()
+	cur = Defaults()
+	mu.Unlock()
+	s, err := Update([]byte(`{"displayName":"Adam"}`))
+	if err != nil || s.DisplayName != "Adam" {
+		t.Fatalf("got %+v, %v", s, err)
+	}
+	if _, err := Update([]byte(`{"displayName":"` + strings.Repeat("x", 41) + `"}`)); err == nil {
+		t.Fatal("expected error for an over-long display name")
+	}
+	if !Enabled("race") || !TabOn("race") {
+		t.Fatal("race feature/tab ids must be registered and default on, like every other feature")
 	}
 }

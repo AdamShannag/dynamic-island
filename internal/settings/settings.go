@@ -6,23 +6,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/AdamShannag/dynamic-island/internal/paths"
 )
 
 type Settings struct {
-	Accent   string          `json:"accent"`
-	Surface  string          `json:"surface"`
-	Tabs     map[string]bool `json:"tabs"`
-	Features map[string]bool `json:"features"`
+	Accent      string          `json:"accent"`
+	Surface     string          `json:"surface"`
+	DisplayName string          `json:"displayName"`
+	Tabs        map[string]bool `json:"tabs"`
+	Features    map[string]bool `json:"features"`
 }
 
 var (
 	Accents    = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
 	Surfaces   = []string{"black", "graphite"}
-	TabIDs     = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search"}
-	FeatureIDs = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery"}
+	TabIDs     = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "race"}
+	FeatureIDs = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "race"}
 )
 
 func Defaults() Settings {
@@ -35,6 +38,8 @@ func Defaults() Settings {
 	}
 	return s
 }
+
+const maxDisplayName = 40
 
 var (
 	mu  sync.RWMutex
@@ -99,10 +104,11 @@ func Update(patch []byte) (Settings, error) {
 
 func merge(base Settings, patch []byte) (Settings, error) {
 	var p struct {
-		Accent   *string         `json:"accent"`
-		Surface  *string         `json:"surface"`
-		Tabs     map[string]bool `json:"tabs"`
-		Features map[string]bool `json:"features"`
+		Accent      *string         `json:"accent"`
+		Surface     *string         `json:"surface"`
+		DisplayName *string         `json:"displayName"`
+		Tabs        map[string]bool `json:"tabs"`
+		Features    map[string]bool `json:"features"`
 	}
 	if err := json.Unmarshal(patch, &p); err != nil {
 		return base, fmt.Errorf("invalid settings: %w", err)
@@ -118,6 +124,13 @@ func merge(base Settings, patch []byte) (Settings, error) {
 			return base, fmt.Errorf("unknown surface %q", *p.Surface)
 		}
 		base.Surface = *p.Surface
+	}
+	if p.DisplayName != nil {
+		name := strings.TrimSpace(*p.DisplayName)
+		if utf8.RuneCountInString(name) > maxDisplayName {
+			return base, fmt.Errorf("display name longer than %d characters", maxDisplayName)
+		}
+		base.DisplayName = name
 	}
 	for k, v := range p.Tabs {
 		if contains(TabIDs, k) {
