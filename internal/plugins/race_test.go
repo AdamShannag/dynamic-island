@@ -82,7 +82,7 @@ func TestRaceSummary(t *testing.T) {
 func TestNoActivityWhilePresenting(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	h := &fakeHost{presenting: true}
-	r := NewRace("h1", "Host", "127.0.0.1", 48581)
+	r := NewRace("h1", "Host", "127.0.0.1", 18620)
 	r.Engine().Enable() // simulate a race already active before presenting started
 	defer r.Engine().Disable()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -100,7 +100,7 @@ func TestRunTracksRaceSetting(t *testing.T) {
 	if _, err := settings.Update([]byte(`{"features":{"race":false}}`)); err != nil {
 		t.Fatal(err)
 	}
-	r := NewRace("h1", "Host", "127.0.0.1", 48582)
+	r := NewRace("h1", "Host", "127.0.0.1", 18621)
 	h := &fakeHost{}
 	ctx, cancel := context.WithCancel(context.Background())
 	go r.Run(ctx, h)

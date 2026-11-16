@@ -20,9 +20,10 @@ func TestInviteRespondRoundTrip(t *testing.T) {
 	invitee := lobby.NewServer(48561, lobby.Callbacks{
 		OnInvite: func(inv lobby.Invite) error { got = inv; close(invited); return nil },
 	})
-	go invitee.ListenAndServe()
+	if err := invitee.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer invitee.Close()
-	time.Sleep(50 * time.Millisecond)
 
 	err := lobby.SendInvite("127.0.0.1:48561", lobby.Invite{
 		LobbyID: "l1", Kind: "race", HostID: "h1", HostName: "Host", HostAddr: "127.0.0.1:48560",
@@ -43,15 +44,16 @@ func TestInviteRespondRoundTrip(t *testing.T) {
 func TestInboundAddressesComeFromTheConnection(t *testing.T) {
 	invites := make(chan lobby.Invite, 1)
 	responses := make(chan lobby.Response, 1)
-	s := lobby.NewServer(48568, lobby.Callbacks{
+	s := lobby.NewServer(18633, lobby.Callbacks{
 		OnInvite:  func(inv lobby.Invite) error { invites <- inv; return nil },
 		OnRespond: func(r lobby.Response) error { responses <- r; return nil },
 	})
-	go s.ListenAndServe()
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 
-	if err := lobby.SendInvite("127.0.0.1:48568", lobby.Invite{
+	if err := lobby.SendInvite("127.0.0.1:18633", lobby.Invite{
 		LobbyID: "l1", Kind: "race", HostID: "h1", HostAddr: "10.9.9.9:4000",
 	}); err != nil {
 		t.Fatal(err)
@@ -59,13 +61,13 @@ func TestInboundAddressesComeFromTheConnection(t *testing.T) {
 	if inv := <-invites; inv.HostAddr != "127.0.0.1:4000" {
 		t.Fatalf("HostAddr = %q, want the connection's IP with the claimed port", inv.HostAddr)
 	}
-	if err := lobby.SendRespond("127.0.0.1:48568", lobby.Response{LobbyID: "l1", PeerID: "p1"}); err != nil {
+	if err := lobby.SendRespond("127.0.0.1:18633", lobby.Response{LobbyID: "l1", PeerID: "p1"}); err != nil {
 		t.Fatal(err)
 	}
 	if r := <-responses; r.RemoteIP != "127.0.0.1" {
 		t.Fatalf("RemoteIP = %q", r.RemoteIP)
 	}
-	if err := lobby.SendInvite("127.0.0.1:48568", lobby.Invite{
+	if err := lobby.SendInvite("127.0.0.1:18633", lobby.Invite{
 		LobbyID: "l1", Kind: "race", HostID: "h1", HostAddr: "no-port",
 	}); err == nil {
 		t.Fatal("an invite without a usable host port must be rejected")
@@ -75,9 +77,10 @@ func TestInboundAddressesComeFromTheConnection(t *testing.T) {
 func TestServerRejectsBadBody(t *testing.T) {
 	called := false
 	s := lobby.NewServer(48562, lobby.Callbacks{OnInvite: func(lobby.Invite) error { called = true; return nil }})
-	go s.ListenAndServe()
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 
 	resp, err := http.Post("http://127.0.0.1:48562/invite", "application/json", strings.NewReader("not json"))
 	if err != nil {
@@ -102,9 +105,10 @@ func TestServerRejectsBadBody(t *testing.T) {
 
 func TestSubscribeReceivesBroadcastAndClose(t *testing.T) {
 	s := lobby.NewServer(48563, lobby.Callbacks{})
-	go s.ListenAndServe()
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 	s.OpenLobby("l1")
 
 	events := make(chan json.RawMessage, 4)
@@ -135,9 +139,10 @@ func TestSubscribeReceivesBroadcastAndClose(t *testing.T) {
 
 func TestBroadcastDuringEndLobbyDoesNotPanic(t *testing.T) {
 	s := lobby.NewServer(48564, lobby.Callbacks{})
-	go s.ListenAndServe()
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 	s.OpenLobby("l1")
 
 	cancel := lobby.Subscribe("127.0.0.1:48564", "l1",
@@ -185,13 +190,14 @@ func TestBroadcastDuringEndLobbyDoesNotPanic(t *testing.T) {
 }
 
 func TestSubscribeToUnknownLobbyCloses(t *testing.T) {
-	s := lobby.NewServer(48565, lobby.Callbacks{})
-	go s.ListenAndServe()
+	s := lobby.NewServer(18630, lobby.Callbacks{})
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 
 	closedErr := make(chan error, 1)
-	cancel := lobby.Subscribe("127.0.0.1:48565", "missing", func(json.RawMessage) {}, func(err error) { closedErr <- err })
+	cancel := lobby.Subscribe("127.0.0.1:18630", "missing", func(json.RawMessage) {}, func(err error) { closedErr <- err })
 	defer cancel()
 	select {
 	case err := <-closedErr:
@@ -204,32 +210,34 @@ func TestSubscribeToUnknownLobbyCloses(t *testing.T) {
 }
 
 func TestCallbackErrorsMapToStatus(t *testing.T) {
-	s := lobby.NewServer(48566, lobby.Callbacks{
+	s := lobby.NewServer(18631, lobby.Callbacks{
 		OnRespond: func(lobby.Response) error { return lobby.ErrClosed },
 		OnStart:   func(lobby.Start) error { return lobby.ErrRejected },
 	})
-	go s.ListenAndServe()
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 
-	err := lobby.SendRespond("127.0.0.1:48566", lobby.Response{LobbyID: "l1", PeerID: "p1", Accept: true})
+	err := lobby.SendRespond("127.0.0.1:18631", lobby.Response{LobbyID: "l1", PeerID: "p1", Accept: true})
 	if !errors.Is(err, lobby.ErrClosed) {
 		t.Fatalf("respond err = %v, want ErrClosed", err)
 	}
-	if err := lobby.SendStart("127.0.0.1:48566", lobby.Start{LobbyID: "l1"}); err == nil || errors.Is(err, lobby.ErrClosed) {
+	if err := lobby.SendStart("127.0.0.1:18631", lobby.Start{LobbyID: "l1"}); err == nil || errors.Is(err, lobby.ErrClosed) {
 		t.Fatalf("start err = %v, want a plain rejection", err)
 	}
 }
 
 func TestNoOnClosedAfterCancel(t *testing.T) {
-	s := lobby.NewServer(48567, lobby.Callbacks{})
-	go s.ListenAndServe()
+	s := lobby.NewServer(18632, lobby.Callbacks{})
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 	s.OpenLobby("l1")
 
 	var closed atomic.Bool
-	cancel := lobby.Subscribe("127.0.0.1:48567", "l1", func(json.RawMessage) {}, func(error) { closed.Store(true) })
+	cancel := lobby.Subscribe("127.0.0.1:18632", "l1", func(json.RawMessage) {}, func(error) { closed.Store(true) })
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 	time.Sleep(100 * time.Millisecond)
@@ -239,7 +247,7 @@ func TestNoOnClosedAfterCancel(t *testing.T) {
 }
 
 func TestSendTimesOutOnASilentPeer(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:48569")
+	ln, err := net.Listen("tcp", "127.0.0.1:18634")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +263,7 @@ func TestSendTimesOutOnASilentPeer(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err = lobby.SendInvite("127.0.0.1:48569", lobby.Invite{LobbyID: "l1", Kind: "race", HostID: "h1", HostAddr: "127.0.0.1:1"})
+	err = lobby.SendInvite("127.0.0.1:18634", lobby.Invite{LobbyID: "l1", Kind: "race", HostID: "h1", HostAddr: "127.0.0.1:1"})
 	if err == nil {
 		t.Fatal("a peer that never answers must produce an error")
 	}
@@ -266,13 +274,14 @@ func TestSendTimesOutOnASilentPeer(t *testing.T) {
 
 func TestServerRejectsBadShapes(t *testing.T) {
 	var calls atomic.Int32
-	s := lobby.NewServer(48570, lobby.Callbacks{
+	s := lobby.NewServer(18635, lobby.Callbacks{
 		OnInvite:  func(lobby.Invite) error { calls.Add(1); return nil },
 		OnRespond: func(lobby.Response) error { calls.Add(1); return nil },
 	})
-	go s.ListenAndServe()
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 
 	ok := lobby.Invite{LobbyID: "l1", Kind: "race", HostID: "h1", HostName: "Host", HostAddr: "127.0.0.1:1"}
 	bad := []lobby.Invite{
@@ -283,31 +292,32 @@ func TestServerRejectsBadShapes(t *testing.T) {
 		{LobbyID: strings.Repeat("x", 65), Kind: "race", HostID: "h1", HostAddr: "127.0.0.1:1"},
 	}
 	for _, inv := range bad {
-		if err := lobby.SendInvite("127.0.0.1:48570", inv); err == nil {
+		if err := lobby.SendInvite("127.0.0.1:18635", inv); err == nil {
 			t.Errorf("invite %+v was accepted", inv)
 		}
 	}
-	if err := lobby.SendRespond("127.0.0.1:48570", lobby.Response{LobbyID: "l1", PeerID: "p1", PeerName: strings.Repeat("x", 101)}); err == nil {
+	if err := lobby.SendRespond("127.0.0.1:18635", lobby.Response{LobbyID: "l1", PeerID: "p1", PeerName: strings.Repeat("x", 101)}); err == nil {
 		t.Error("an over-long peer name was accepted")
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("callbacks ran %d times for invalid input", calls.Load())
 	}
-	if err := lobby.SendInvite("127.0.0.1:48570", ok); err != nil || calls.Load() != 1 {
+	if err := lobby.SendInvite("127.0.0.1:18635", ok); err != nil || calls.Load() != 1 {
 		t.Fatalf("a valid invite failed: %v", err)
 	}
 }
 
 func TestSubscriberCap(t *testing.T) {
-	s := lobby.NewServer(48559, lobby.Callbacks{})
-	go s.ListenAndServe()
+	s := lobby.NewServer(18637, lobby.Callbacks{})
+	if err := s.Listen(); err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
-	time.Sleep(50 * time.Millisecond)
 	s.OpenLobby("l1")
 
 	var closed atomic.Int32
 	for i := 0; i < 32; i++ {
-		cancel := lobby.Subscribe("127.0.0.1:48559", "l1", func(json.RawMessage) {}, func(error) { closed.Add(1) })
+		cancel := lobby.Subscribe("127.0.0.1:18637", "l1", func(json.RawMessage) {}, func(error) { closed.Add(1) })
 		defer cancel()
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -315,11 +325,22 @@ func TestSubscriberCap(t *testing.T) {
 		t.Fatalf("%d of the first 32 subscribers were refused", closed.Load())
 	}
 	extra := make(chan error, 1)
-	cancel := lobby.Subscribe("127.0.0.1:48559", "l1", func(json.RawMessage) {}, func(err error) { extra <- err })
+	cancel := lobby.Subscribe("127.0.0.1:18637", "l1", func(json.RawMessage) {}, func(err error) { extra <- err })
 	defer cancel()
 	select {
 	case <-extra:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the 33rd subscriber must be refused")
+	}
+}
+
+func TestListenReportsATakenPort(t *testing.T) {
+	ln, err := net.Listen("tcp", ":18636")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if err := lobby.NewServer(18636, lobby.Callbacks{}).Listen(); err == nil {
+		t.Fatal("Listen must fail when another process holds the port")
 	}
 }

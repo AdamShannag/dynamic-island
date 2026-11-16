@@ -369,3 +369,19 @@ func TestStartDoesNotWaitOnASlowGuest(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+func TestEnableFailsWhenThePortIsTaken(t *testing.T) {
+	ln, err := net.Listen("tcp", ":18616")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	e := race.NewEngine("h1", "h1", "127.0.0.1", 18616)
+	if err := e.Enable(); err == nil {
+		e.Disable()
+		t.Fatal("Enable must report a port held by another process")
+	}
+	if e.Enabled() {
+		t.Fatal("a failed Enable must leave the engine disabled")
+	}
+}

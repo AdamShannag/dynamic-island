@@ -105,22 +105,19 @@ func (e *Engine) Enable() error {
 	if addr == "" {
 		addr = discovery.LocalIP()
 	}
-	disc, err := discovery.Start(e.selfID, e.selfName, addr, e.port)
-	if err != nil {
-		return err
-	}
-
 	server := lobby.NewServer(e.port, lobby.Callbacks{
 		OnInvite:   e.handleInvite,
 		OnRespond:  e.handleRespond,
 		OnStart:    e.handleStart,
 		OnProgress: e.handleProgress,
 	})
-	go server.ListenAndServe()
-	if !waitListening(e.port, 2*time.Second) {
-		_ = disc.Close()
+	if err := server.Listen(); err != nil {
+		return fmt.Errorf("race: %w", err)
+	}
+	disc, err := discovery.Start(e.selfID, e.selfName, addr, e.port)
+	if err != nil {
 		_ = server.Close()
-		return fmt.Errorf("race: lobby server did not start listening on port %d", e.port)
+		return err
 	}
 
 	e.addr = addr
@@ -709,20 +706,6 @@ func (e *Engine) racerIndexLocked(peerID string) int {
 func (e *Engine) removeRacerLocked(i int) {
 	delete(e.peerAddrs, e.state.Racers[i].PeerID)
 	e.state.Racers = append(e.state.Racers[:i:i], e.state.Racers[i+1:]...)
-}
-
-func waitListening(port int, timeout time.Duration) bool {
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
 }
 
 func randomLobbyID() string {

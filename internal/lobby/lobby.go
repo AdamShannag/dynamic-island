@@ -112,8 +112,13 @@ func NewServer(port int, cb Callbacks) *Server {
 	return s
 }
 
-func (s *Server) ListenAndServe() error {
-	return s.httpSrv.ListenAndServe()
+func (s *Server) Listen() error {
+	ln, err := net.Listen("tcp", s.httpSrv.Addr)
+	if err != nil {
+		return fmt.Errorf("lobby: listen on %s: %w", s.httpSrv.Addr, err)
+	}
+	go func() { _ = s.httpSrv.Serve(ln) }()
+	return nil
 }
 
 func (s *Server) Close() error {
