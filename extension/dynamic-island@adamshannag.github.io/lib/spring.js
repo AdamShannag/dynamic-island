@@ -1,7 +1,7 @@
 export const SIZE_SPRING = {k: 320, c: 30};
 export const OPACITY_SPRING = {k: 260, c: 30};
 export const MAX_SUBSTEP = 1 / 240;
-export const MAX_FRAME = 1 / 15;
+export const MAX_FRAME = 0.05;
 export const REST_VELOCITY = 0.02;
 export const REST_DISTANCE = 0.02;
 

@@ -168,6 +168,7 @@ export class MorePage extends Page {
         actor.add_child(label('island-more-label island-more-all', {text: 'All tabs'}));
         this._grid = column({style_class: 'island-more-grid', x_expand: true});
         actor.add_child(this._grid);
+        this._layout();
         return actor;
     }
 

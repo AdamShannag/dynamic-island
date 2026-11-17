@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    MAX_SUBSTEP, OPACITY_SPRING, SIZE_SPRING, Spring, SpringSet, dashReveal, pillReveal,
+    MAX_FRAME, MAX_SUBSTEP, OPACITY_SPRING, SIZE_SPRING, Spring, SpringSet, dashReveal, pillReveal,
 } from '../dynamic-island@adamshannag.github.io/lib/spring.js';
 
 const FRAME = 1 / 60;
@@ -83,6 +83,15 @@ test('settles only when both speed and distance are under 0.02', () => {
     assert.equal(s.settled, true);
     s.x = 0.9;
     assert.equal(s.settled, false);
+});
+
+test('a frame is capped at 50 ms', () => {
+    assert.equal(MAX_FRAME, 0.05);
+    const a = new Spring(SIZE_SPRING, 0), b = new Spring(SIZE_SPRING, 0);
+    a.target = b.target = 100;
+    a.step(0.4);
+    b.step(0.05);
+    assert.equal(a.x, b.x);
 });
 
 test('a huge frame after a stall is clamped instead of exploding', () => {

@@ -1,9 +1,12 @@
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 
 import {ALL_TABS, MORE_TAB, VERTICAL, tabOn} from './constants.js';
 import {actionItems, firstLine, flatten, moveSelection, searchResults} from './find.js';
 import {column, label, scrollView, setText} from './widgets.js';
+
+const READY_MS = 180;
 
 class ResultRow {
     constructor(item, onHover, onRun) {
@@ -49,6 +52,8 @@ export class Finder {
         this._rows = [];
         this._sel = 0;
         this._data = {ports: [], containers: [], clips: [], notes: []};
+        this._ready = false;
+        this._readyId = 0;
         this.settings = null;
 
         this.actor = column({style_class: 'island-find', x_expand: true, visible: false});
@@ -65,6 +70,7 @@ export class Finder {
 
     open(query) {
         this._open = true;
+        this._ready = false;
         this._query = query;
         this._sel = 0;
         this._sig = null;
@@ -75,7 +81,30 @@ export class Finder {
     close() {
         this._open = false;
         this._gen++;
+        this._clearReady();
         this._data = {ports: [], containers: [], clips: [], notes: []};
+    }
+
+    prewarm() {
+        this._open = true;
+        this._render();
+        this._open = false;
+        this._sig = null;
+    }
+
+    _clearReady() {
+        if (this._readyId)
+            GLib.source_remove(this._readyId);
+        this._readyId = 0;
+    }
+
+    _markReady() {
+        this._clearReady();
+        if (this._ready || !this._open)
+            return;
+        this._ready = true;
+        this._sig = null;
+        this._render();
     }
 
     setQuery(query) {
@@ -98,21 +127,35 @@ export class Finder {
 
     _load() {
         const gen = ++this._gen;
+        let pending = 0;
         const load = (method, key, ok = true) => {
             if (!ok)
                 return;
+            pending++;
             this._ext.callJson(method, [], (value, err) => {
-                if (gen !== this._gen || err || !Array.isArray(value))
+                if (gen !== this._gen)
                     return;
-                this._data[key] = value;
-                this._render();
+                if (!err && Array.isArray(value))
+                    this._data[key] = value;
+                if (--pending === 0)
+                    this._markReady();
+                else if (this._ready)
+                    this._render();
             });
         };
+        this._clearReady();
+        this._readyId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, READY_MS, () => {
+            this._readyId = 0;
+            this._markReady();
+            return GLib.SOURCE_REMOVE;
+        });
         const priv = !this._ext.presenting;
         load('PortsList', 'ports', tabOn(this.settings, 'ports'));
         load('DockerList', 'containers', tabOn(this.settings, 'docker'));
         load('ClipboardList', 'clips', priv);
         load('NotesList', 'notes', priv);
+        if (!pending)
+            this._markReady();
     }
 
     _groups() {
@@ -157,7 +200,8 @@ export class Finder {
             this._empty.visible = !this._rows.length;
             setText(this._empty, this._query.trim() ? `No results for “${this._query.trim()}”` : 'No results');
             this._scroll.visible = this._rows.length > 0;
-            this._onResize();
+            if (this._ready)
+                this._onResize();
         }
         this._select(Math.min(this._sel, this._rows.length - 1));
     }

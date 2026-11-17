@@ -16,9 +16,13 @@ export const SHAPES = {
     compact: {width: 214, radius: 16, shoulder: 8},
     osd: {width: 300, radius: 16, shoulder: 8},
     notify: {width: 440, height: 72, radius: 28, shoulder: 12},
+    glance: {width: 480, height: 104, radius: 28, shoulder: 12},
     dashboard: {width: 640, radius: 26, shoulder: 14},
 };
 export const DASH_RISE = 8;
+export const GLANCE_GRACE_MS = 200;
+export const GLANCE_DEFAULTS = {mode: 'hover', delay: 400};
+export const HEIGHT_HOLD_MS = 250;
 export const PAGE_OUT_MS = 170;
 export const PAGE_IN_MS = 380;
 export const PAGE_IN_DELAY_MS = 60;
@@ -30,7 +34,7 @@ export const REVEAL_RISE = 10;
 export const FIND_HEIGHT = 520;
 
 export const IDLE = {kind: 'idle'};
-export const MODES = ['idle', 'compact', 'notify', 'dashboard', 'osd'];
+export const MODES = ['idle', 'compact', 'notify', 'dashboard', 'osd', 'glance'];
 export const ACCENTS = ['ok', 'warn', 'error'];
 export const LIVE_KINDS = new Set(['agent', 'task', 'service']);
 
@@ -103,6 +107,6 @@ export const SETTING_COLORS = {
     'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
     'input-keyboard-symbolic': '#ff9f0a', 'video-display-symbolic': '#5e5ce6',
 };
-export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {play: false}, home: {favorites: [...DEFAULT_FAVORITES]}};
+export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {play: false}, home: {favorites: [...DEFAULT_FAVORITES]}, glance: {...GLANCE_DEFAULTS}};
 export const featureOn = (st, key) => st?.features?.[key] !== false;
 export const tabOn = (st, id) => id === 'home' || st?.tabs?.[id] !== false;

@@ -9,13 +9,15 @@ import GnomeDesktop from 'gi://GnomeDesktop';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {
-    ACCENTS, AUTO_MIN_HEIGHT, DASH_RISE, DASH_WIDTH, FIND_HEIGHT, FIND_SHIFT, HOME_TAB, HOVER_IN_MS, HOVER_OUT_MS, IDLE,
+    ACCENTS, AUTO_MIN_HEIGHT, DASH_RISE, DASH_WIDTH, FIND_HEIGHT, FIND_SHIFT, GLANCE_DEFAULTS, GLANCE_GRACE_MS,
+    HEIGHT_HOLD_MS, HOME_TAB, HOVER_IN_MS, HOVER_OUT_MS, IDLE,
     LIVE_KINDS, MODES, OSD_MS, PAGE_IN_DELAY_MS, PAGE_IN_MS, PAGE_OUT_MS, PAGE_SHIFT, SHAPES, TAB_ALIASES, VERTICAL,
     featureOn, scale, tabInfo, tabOn,
 } from './lib/constants.js';
 import {firstLine} from './lib/find.js';
 import {Finder} from './lib/finder.js';
 import {fmtClock} from './lib/format.js';
+import {GlanceView} from './lib/glanceview.js';
 import {eachFrame, frameLoop} from './lib/motion.js';
 import {Personality} from './lib/personality.js';
 import {focusPids, openUri} from './lib/shell.js';
@@ -26,6 +28,7 @@ import {iconButton, label, tactile} from './lib/widgets.js';
 import {PAGES} from './pages/index.js';
 
 const OPEN_RETRY_MS = 150;
+const PREWARM_STEP_MS = 60;
 const RELEASE_SWALLOW_MS = 1500;
 const PRIVATE_TABS = new Set(['clipboard', 'notes', 'inbox']);
 const KIND_TABS = {agent: 'agents', task: 'activity', service: 'activity', party: 'play'};
@@ -44,7 +47,7 @@ export const Island = GObject.registerClass(
 class Island extends St.BoxLayout {
     _init(ext) {
         super._init({
-            style_class: 'island idle',
+            style_class: 'island',
             reactive: true,
             track_hover: true,
             can_focus: true,
@@ -59,7 +62,6 @@ class Island extends St.BoxLayout {
         this.settings = null;
         this._state = IDLE;
         this._raw = IDLE;
-        this._pillMode = 'idle';
         this._grab = null;
         this._tickId = 0;
         this._refreshId = 0;
@@ -75,10 +77,15 @@ class Island extends St.BoxLayout {
         this._lastFrame = 0;
         this._radius = -1;
         this._shoulderPx = 0;
+        this._paintedScale = 1;
+        this._glancing = false;
+        this._glanceId = 0;
+        this._graceId = 0;
+        this._holdId = 0;
         this._motion = new SpringSet({
             width: [SIZE_SPRING, 0], height: [SIZE_SPRING, 0], radius: [SIZE_SPRING, SHAPES.idle.radius],
             shoulder: [SIZE_SPRING, SHAPES.idle.shoulder], scale: [SIZE_SPRING, 1],
-            op: [OPACITY_SPRING, 0], fade: [OPACITY_SPRING, 1],
+            op: [OPACITY_SPRING, 0], gl: [OPACITY_SPRING, 0], fade: [OPACITY_SPRING, 1],
         });
         this.set_pivot_point(0.5, 0);
 
@@ -100,6 +107,8 @@ class Island extends St.BoxLayout {
         this._pill = new Pill({spyIcon: ext.spyIcon, agentIcon: ext.agentIcon, faceTarget: () => this._faceTarget()});
         this._content = this._pill.actor;
         this._clip.add_child(this._content);
+        this._glance = new GlanceView({ext, agentIcon: ext.agentIcon});
+        this._clip.add_child(this._glance.actor);
         this._buildDash();
         this._personality = new Personality(this, this._pill.face);
 
@@ -118,7 +127,8 @@ class Island extends St.BoxLayout {
         this._personality.destroy();
         this._shoulders.destroy();
         this._shoulders = null;
-        for (const id of [this._osdTimer, this._hoverId]) {
+        this._glance.destroy();
+        for (const id of [this._osdTimer, this._hoverId, this._glanceId, this._graceId, this._holdId]) {
             if (id)
                 GLib.source_remove(id);
         }
@@ -364,7 +374,8 @@ class Island extends St.BoxLayout {
             this.dashOpen = true;
             this.tab = tab;
             this._dash.visible = true;
-            this._render(this._state);
+            this._stopGlance();
+            this._apply();
             this.showTab(tab);
             if (this._pendingFind) {
                 this._pendingFind = false;
@@ -383,6 +394,7 @@ class Island extends St.BoxLayout {
         if (!this.dashOpen)
             return;
         this._pendingFind = false;
+        this._releaseHold();
         this._endFind();
         this._current?.onHide();
         this.dashOpen = false;
@@ -420,13 +432,36 @@ class Island extends St.BoxLayout {
             });
         }
         focus.grab_key_focus();
+        if (page.autoHeight && this._sheetHeight(DASH_WIDTH * scale(), page.actor, page.height * scale(), scale()) <= AUTO_MIN_HEIGHT * scale())
+            this._holdHeight();
         this.relayout(true);
         this._tick();
         this._syncTicker();
     }
 
+    _holdHeight() {
+        if (this._holdId)
+            GLib.source_remove(this._holdId);
+        this._holdId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, HEIGHT_HOLD_MS * St.Settings.get().slow_down_factor, () => {
+            this._holdId = 0;
+            if (this.dashOpen)
+                this.relayout(true);
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _releaseHold() {
+        if (!this._holdId)
+            return;
+        GLib.source_remove(this._holdId);
+        this._holdId = 0;
+    }
+
     refit() {
-        if (!this.dashOpen || !(this._finding || this._current?.autoHeight) || this._refitQueued)
+        if (!this.dashOpen || !(this._finding || this._current?.autoHeight))
+            return;
+        this._releaseHold();
+        if (this._refitQueued)
             return;
         this._refitQueued = true;
         eachFrame(() => {
@@ -441,17 +476,32 @@ class Island extends St.BoxLayout {
         if (this._prewarmed)
             return;
         this._prewarmed = true;
-        const actors = [...this._pages.values()].map(p => p.actor);
+        this._finder.prewarm();
+        const layers = [this._header, this._nav, ...[...this._pages.values()].map(p => p.actor), this._finder.actor];
+        const items = [...layers.map(a => [a, this._dash]), [this._glance.actor, null]];
         const width = this._innerWidth(DASH_WIDTH * scale());
         let k = 0;
-        GLib.idle_add(GLib.PRIORITY_LOW, () => {
-            const actor = actors[k++];
-            if (!actor || !this._wallClock)
+        GLib.timeout_add(GLib.PRIORITY_LOW, PREWARM_STEP_MS, () => {
+            if (!this._wallClock || k >= items.length)
                 return GLib.SOURCE_REMOVE;
-            actor.get_preferred_width(-1);
-            actor.get_preferred_height(width);
+            if (this.dashOpen || this.mode === 'glance')
+                return GLib.SOURCE_CONTINUE;
+            const [actor, parent] = items[k++];
+            this._measureHidden(actor, parent, width);
             return GLib.SOURCE_CONTINUE;
         });
+    }
+
+    _measureHidden(actor, parent, width) {
+        const restore = [actor, parent].filter(Boolean).map(a => [a, a.visible, a.opacity]);
+        for (const [a] of restore) {
+            if (!a.visible)
+                a.set({opacity: 0, visible: true});
+        }
+        actor.get_preferred_width(-1);
+        actor.get_preferred_height(width);
+        for (const [a, visible, opacity] of restore.reverse())
+            a.set({visible, opacity});
     }
 
     _toggleMore() {
@@ -501,6 +551,7 @@ class Island extends St.BoxLayout {
         if (this._finding || !this.dashOpen)
             return;
         this._finding = true;
+        this._holdHeight();
         this._finder.open(this._search.text);
         this._syncHeader();
         this._swap(this._current?.actor, this._finder.actor, {dy: 1});
@@ -625,7 +676,44 @@ class Island extends St.BoxLayout {
         }
     }
 
+    _glanceSettings() {
+        return {...GLANCE_DEFAULTS, ...this.settings?.glance};
+    }
+
+    _clearGlanceTimers() {
+        for (const id of [this._glanceId, this._graceId]) {
+            if (id)
+                GLib.source_remove(id);
+        }
+        this._glanceId = this._graceId = 0;
+    }
+
+    _setGlance(on) {
+        this._clearGlanceTimers();
+        if (on === this._glancing || (on && this.dashOpen))
+            return;
+        this._glancing = on;
+        if (on)
+            this._glance.refresh(this.settings, this.timer);
+        this._render(this._state);
+        if (!on)
+            this._glance.stop();
+    }
+
+    _stopGlance() {
+        this._clearGlanceTimers();
+        if (this._glancing) {
+            this._glancing = false;
+            this._glance.stop();
+        }
+    }
+
     _onHover() {
+        const glance = this._glanceSettings();
+        if (glance.mode === 'hover') {
+            this._onGlanceHover(glance.delay);
+            return;
+        }
         if (this._hoverId)
             GLib.source_remove(this._hoverId);
         this._hoverId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this.hover ? HOVER_IN_MS : HOVER_OUT_MS, () => {
@@ -639,12 +727,48 @@ class Island extends St.BoxLayout {
         });
     }
 
+    _onGlanceHover(delay) {
+        if (this.dashOpen)
+            return;
+        if (this.hover) {
+            if (this._graceId) {
+                GLib.source_remove(this._graceId);
+                this._graceId = 0;
+            }
+            if (this._glancing || this._glanceId)
+                return;
+            this._glanceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                this._glanceId = 0;
+                if (this.hover && !this.dashOpen)
+                    this._setGlance(true);
+                return GLib.SOURCE_REMOVE;
+            });
+            return;
+        }
+        if (this._glanceId) {
+            GLib.source_remove(this._glanceId);
+            this._glanceId = 0;
+        }
+        if (this._glancing && !this._graceId) {
+            this._graceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, GLANCE_GRACE_MS, () => {
+                this._graceId = 0;
+                this._setGlance(false);
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+    }
+
     _targetMode() {
         const s = this._state;
         if (this.dashOpen)
             return 'dashboard';
         if (this._osd)
             return 'osd';
+        const base = this._pillTarget(s);
+        return this._glancing && base !== 'notify' ? 'glance' : base;
+    }
+
+    _pillTarget(s) {
         if (s.kind === 'idle')
             return 'idle';
         if (s.kind === 'media')
@@ -662,7 +786,8 @@ class Island extends St.BoxLayout {
             return;
         }
         const mode = this._targetMode();
-        const swap = mode !== 'dashboard' && this.mode !== 'dashboard' &&
+        const layer = m => m === 'dashboard' || m === 'glance';
+        const swap = !layer(mode) && !layer(this.mode) &&
             (mode !== this.mode || prev.kind !== s.kind || prev.title !== s.title || prev.art !== s.art);
         this._apply();
         if (swap && animationsOn())
@@ -674,22 +799,13 @@ class Island extends St.BoxLayout {
         const s = this._state;
         const mode = this._targetMode();
         this.mode = mode;
-        if (mode !== 'dashboard')
-            this._pillMode = mode;
-        for (const m of MODES)
-            this.remove_style_class_name(m);
-        this.add_style_class_name(this._pillMode);
-        if (mode === 'dashboard')
-            this.add_style_class_name('dashboard');
-        if (mode !== 'dashboard') {
-            for (const a of ACCENTS)
-                this.remove_style_class_name(`accent-${a}`);
-            if (ACCENTS.includes(s.accent))
-                this.add_style_class_name(`accent-${s.accent}`);
-        }
-        this.ensure_style();
+        const pill = mode !== 'dashboard' && mode !== 'glance';
+        if (mode === 'glance')
+            this._glance.update(this.media, this.ext.presenting);
+        if (pill)
+            this._stylePill(mode, s.accent);
 
-        if (mode !== 'dashboard') {
+        if (pill) {
             this._pill.apply(s, mode, {
                 presenting: this.ext.presenting,
                 showFace: featureOn(this.settings, 'face'),
@@ -704,6 +820,18 @@ class Island extends St.BoxLayout {
             page.onState();
         this._tick();
         this._syncTicker();
+    }
+
+    _stylePill(mode, accent) {
+        const c = this._content;
+        for (const m of MODES)
+            c.remove_style_class_name(m);
+        c.add_style_class_name(mode);
+        for (const a of ACCENTS)
+            c.remove_style_class_name(`accent-${a}`);
+        if (ACCENTS.includes(accent))
+            c.add_style_class_name(`accent-${accent}`);
+        c.ensure_style();
     }
 
     _trailingText(now) {
@@ -729,7 +857,9 @@ class Island extends St.BoxLayout {
         if (!this._wallClock)
             return;
         const now = Date.now();
-        if (this.mode !== 'dashboard')
+        if (this.mode === 'glance')
+            this._glance.tick(this._shortTime(), this.timer, now);
+        else if (this.mode !== 'dashboard')
             this._pill.setTrailing(this._trailingText(now));
         if (!this.dashOpen)
             return;
@@ -744,7 +874,7 @@ class Island extends St.BoxLayout {
 
     _syncTicker() {
         const s = this._state;
-        const needed = !!(s.endsAt || s.startedAt || (this.dashOpen && this._current?.ticking));
+        const needed = !!(s.endsAt || s.startedAt || this.mode === 'glance' || (this.dashOpen && this._current?.ticking));
         if (needed && !this._tickId) {
             this._tickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
                 this._tick();
@@ -770,9 +900,17 @@ class Island extends St.BoxLayout {
         this._swallowRelease = 0;
         if (this.dashOpen)
             return Clutter.EVENT_STOP;
-        switch (event.get_button()) {
+        const button = event.get_button();
+        if (this.mode === 'glance' && button === Clutter.BUTTON_PRIMARY) {
+            this.openDash(HOME_TAB);
+            return Clutter.EVENT_STOP;
+        }
+        switch (button) {
         case Clutter.BUTTON_SECONDARY:
-            Main.panel.statusArea.dateMenu?.menu.toggle();
+            if (this._glanceSettings().mode === 'right-click')
+                this._setGlance(!this._glancing);
+            else
+                Main.panel.statusArea.dateMenu?.menu.toggle();
             return Clutter.EVENT_STOP;
         case Clutter.BUTTON_MIDDLE:
             this.wobble();
@@ -863,6 +1001,7 @@ class Island extends St.BoxLayout {
             return [Math.max(shape.width * k, Math.ceil(natural)), barH];
         }
         case 'notify':
+        case 'glance':
             return [shape.width * k, shape.height * k];
         case 'dashboard':
             return this._dashSize(k);
@@ -899,11 +1038,14 @@ class Island extends St.BoxLayout {
         if (!Main.layoutManager.primaryMonitor)
             return;
         const [width, height] = this._size();
-        const layer = this.mode === 'dashboard' ? this._dash : this._content;
-        layer.set_size(Math.round(width), Math.round(height));
+        const layer = {dashboard: this._dash, glance: this._glance.actor}[this.mode] ?? this._content;
+        const held = this.mode === 'dashboard' && this._holdId && this._motion.springs.op.target === 1;
+        const h = held ? this._motion.springs.height.target : height;
+        layer.set_size(Math.round(width), Math.round(held ? Math.max(h, height) : height));
         const shape = SHAPES[this.mode];
         const targets = {
-            width, height, radius: shape.radius, shoulder: shape.shoulder, op: this.mode === 'dashboard' ? 1 : 0,
+            width, height: h, radius: shape.radius, shoulder: shape.shoulder,
+            op: this.mode === 'dashboard' ? 1 : 0, gl: this.mode === 'glance' ? 1 : 0,
         };
         if (!animate || !animationsOn()) {
             this._motion.jump({...targets, fade: 1, scale: 1});
@@ -917,13 +1059,15 @@ class Island extends St.BoxLayout {
     _kick() {
         if (this._loop)
             return;
+        for (const prop of ['x', 'y', 'width', 'height', 'scale-x', 'scale-y'])
+            this.remove_transition(prop);
         this._lastFrame = 0;
         this._loop = frameLoop(this, () => this._frame());
     }
 
     _frame() {
         const now = GLib.get_monotonic_time() / 1e6;
-        const dt = this._lastFrame ? now - this._lastFrame : 1 / 60;
+        const dt = (this._lastFrame ? now - this._lastFrame : 1 / 60) / St.Settings.get().slow_down_factor;
         this._lastFrame = now;
         const moving = this._motion.step(dt);
         this._paint();
@@ -959,13 +1103,20 @@ class Island extends St.BoxLayout {
         this._dash.visible = this.dashOpen || dash > 0;
         this._dash.opacity = Math.round(dash * 255);
         this._dash.translation_y = Math.round(-DASH_RISE * (1 - dash) * k);
-        const pill = pillReveal(op) * clamp01(m.value('fade'));
-        this._content.visible = !this.dashOpen || pill > 0;
+        const gl = m.value('gl');
+        const glance = dashReveal(gl);
+        this._glance.actor.visible = this.mode === 'glance' || glance > 0;
+        this._glance.actor.opacity = Math.round(glance * 255);
+        this._glance.actor.translation_y = Math.round(-DASH_RISE * (1 - glance) * k);
+        const pill = pillReveal(op) * pillReveal(gl) * clamp01(m.value('fade'));
+        this._content.visible = !(this.dashOpen || this.mode === 'glance') || pill > 0;
         this._content.opacity = Math.round(pill * 255);
 
         const s = m.value('scale');
-        if (this.scale_x !== s)
+        if (s !== this._paintedScale) {
+            this._paintedScale = s;
             this.set_scale(s, s);
+        }
     }
 
     _show() {
