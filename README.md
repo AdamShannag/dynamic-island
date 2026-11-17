@@ -74,7 +74,7 @@ To remove the package: `island setup --remove`, then `sudo apt remove dynamic-is
 | Notes | A small notes app with search, pinning and autosave |
 | Web | Search or open a URL, a calculator (`150*1.16` ⏎ copies `174`), saved sites, and QR codes |
 
-The header also has a colour picker and a **presentation mode**. Presentation mode hides track names, notifications, clipboard history and notes, and it turns on automatically while you share your screen. Tabs, features, the accent colour and the background are all set in **Settings**.
+The header has a grid button that opens **More** (every tab, plus your five favourites for Home: tap **Edit** to change them), a search field, a bell for notifications and a **presentation mode** button. Search (<kbd>Ctrl</kbd>+<kbd>K</kbd> inside the dashboard) finds tabs, clipboard items and notes, and runs actions such as killing a port, restarting a container, starting a focus session, picking a colour or copying your LAN address. Presentation mode hides track names, notifications, clipboard history and notes, and it turns on automatically while you share your screen. Tabs, features, the accent colour and the background are all set in **Settings**.
 
 <p align="center">
   <img src="docs/screenshots/dashboard-transform.png" width="49%" alt="The Transform tab formatting JSON">
@@ -83,9 +83,9 @@ The header also has a colour picker and a **presentation mode**. Presentation mo
 
 ## Usage
 
-Left-click the pill to open the dashboard. Right-click it for GNOME's calendar menu. Press <kbd>Esc</kbd> or click outside to close.
+Left-click the pill to open the dashboard. Right-click it for GNOME's calendar menu. <kbd>Esc</kbd> goes back to Home, then closes; clicking outside closes too.
 
-To open the dashboard from the keyboard, add a custom shortcut in **Settings → Keyboard** that runs `island open` (or `island open notes`, `island open docker`, and so on).
+<kbd>Super</kbd>+<kbd>K</kbd> opens the dashboard with search focused. Change it with `gsettings --schemadir ~/.local/share/gnome-shell/extensions/dynamic-island@adamshannag.github.io/schemas set org.gnome.shell.extensions.dynamic-island search-shortcut "['<Super>space']"`. To open a specific tab from the keyboard, add a custom shortcut in **Settings → Keyboard** that runs `island open` (or `island open notes`, `island open docker`, and so on).
 
 ```sh
 island notify "Deployed" "prod is live"        # -a ok|warn|error  -i icon-name  -t ms
