@@ -19,6 +19,7 @@ import (
 	"github.com/AdamShannag/dynamic-island/internal/draw"
 	"github.com/AdamShannag/dynamic-island/internal/lobby"
 	"github.com/AdamShannag/dynamic-island/internal/race"
+	"github.com/AdamShannag/dynamic-island/internal/snake"
 )
 
 type Phase string
@@ -39,9 +40,10 @@ func (p Phase) free() bool {
 type Mode string
 
 const (
-	ModeNone Mode = ""
-	ModeRace Mode = "race"
-	ModeDraw Mode = "draw"
+	ModeNone  Mode = ""
+	ModeRace  Mode = "race"
+	ModeDraw  Mode = "draw"
+	ModeSnake Mode = "snake"
 )
 
 type Player struct {
@@ -65,8 +67,9 @@ type State struct {
 	Players []Player `json:"players"`
 	SelfID  string   `json:"selfId"`
 
-	Race *race.State `json:"race,omitempty"`
-	Draw *draw.State `json:"draw,omitempty"`
+	Race  *race.State  `json:"race,omitempty"`
+	Draw  *draw.State  `json:"draw,omitempty"`
+	Snake *snake.State `json:"snake,omitempty"`
 }
 
 func clampRounds(rounds int) int {
@@ -106,8 +109,9 @@ type Engine struct {
 	unsubscribe func()
 	onChange    func(State)
 
-	raceEng *race.Engine
-	drawEng *draw.Engine
+	raceEng  *race.Engine
+	drawEng  *draw.Engine
+	snakeEng *snake.Engine
 
 	disc   *discovery.Discovery
 	server *lobby.Server
@@ -126,6 +130,7 @@ func NewEngine(selfID, selfName, selfAddr string, port int) *Engine {
 		state:    State{Phase: PhaseIdle},
 		raceEng:  race.NewEngine(selfID, selfName),
 		drawEng:  draw.NewEngine(selfID, selfName),
+		snakeEng: snake.NewEngine(selfID, selfName),
 	}
 	e.raceEng.OnChange(func(s race.State) {
 		e.mu.Lock()
@@ -143,11 +148,29 @@ func NewEngine(selfID, selfName, selfAddr string, port int) *Engine {
 		e.mu.Unlock()
 		e.notify()
 	})
+	e.snakeEng.OnChange(func(s snake.State) {
+		e.mu.Lock()
+		if e.state.Mode == ModeSnake && e.state.Phase == PhasePlaying && s.Phase == snake.PhaseFinished {
+			e.state.Phase = PhaseFinished
+		}
+		e.mu.Unlock()
+		e.notify()
+	})
 	return e
 }
 
-func (e *Engine) RaceEngine() *race.Engine { return e.raceEng }
-func (e *Engine) DrawEngine() *draw.Engine { return e.drawEng }
+func (e *Engine) RaceEngine() *race.Engine   { return e.raceEng }
+func (e *Engine) DrawEngine() *draw.Engine   { return e.drawEng }
+func (e *Engine) SnakeEngine() *snake.Engine { return e.snakeEng }
+
+// SnakeInput submits the local player's own desired heading for the active
+// snake match, routed through HandleInput's host/guest logic.
+func (e *Engine) SnakeInput(heading float64) error {
+	e.mu.Lock()
+	selfID := e.selfID
+	e.mu.Unlock()
+	return e.snakeEng.HandleInput(selfID, heading)
+}
 
 func (e *Engine) Enable() error {
 	e.mu.Lock()
@@ -229,15 +252,26 @@ func (e *Engine) OnChange(fn func(State)) {
 	e.mu.Unlock()
 }
 
+// State snapshots party's own fields and then, outside party's lock,
+// attaches the active mode's gameplay state. Each sub-engine guards its own
+// state with its own mutex, and that mutex is also taken while the
+// sub-engine calls back into party (to publish over the shared lobby); if
+// party's own lock were still held here across that call, a sub-engine's
+// own tick loop publishing state could deadlock against this lookup.
 func (e *Engine) State() State {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.snapshotLocked()
+	s := e.snapshotLocked()
+	e.mu.Unlock()
+	return e.attachModeState(s)
 }
 
 func (e *Engine) snapshotLocked() State {
 	s := cloneState(e.state)
 	s.SelfID = e.selfID
+	return s
+}
+
+func (e *Engine) attachModeState(s State) State {
 	switch s.Mode {
 	case ModeRace:
 		rs := e.raceEng.State()
@@ -245,6 +279,9 @@ func (e *Engine) snapshotLocked() State {
 	case ModeDraw:
 		ds := e.drawEng.State()
 		s.Draw = &ds
+	case ModeSnake:
+		ss := e.snakeEng.State()
+		s.Snake = &ss
 	}
 	return s
 }
@@ -264,6 +301,7 @@ func (e *Engine) notify() {
 		fn := e.onChange
 		snap := e.snapshotLocked()
 		e.mu.Unlock()
+		snap = e.attachModeState(snap)
 		if fn != nil {
 			fn(snap)
 		}
@@ -497,7 +535,7 @@ func (e *Engine) SetMode(mode Mode) error {
 		e.mu.Unlock()
 		return fmt.Errorf("party: not hosting a lobby")
 	}
-	if mode != ModeRace && mode != ModeDraw {
+	if mode != ModeRace && mode != ModeDraw && mode != ModeSnake {
 		e.mu.Unlock()
 		return fmt.Errorf("party: unknown mode %q", mode)
 	}
@@ -534,7 +572,7 @@ func (e *Engine) Start() error {
 		return fmt.Errorf("party: cannot start now")
 	}
 	mode := e.state.Mode
-	if mode != ModeRace && mode != ModeDraw {
+	if mode != ModeRace && mode != ModeDraw && mode != ModeSnake {
 		e.mu.Unlock()
 		return fmt.Errorf("party: pick a game before starting")
 	}
@@ -569,6 +607,12 @@ func (e *Engine) Start() error {
 			players[i] = draw.Player{PeerID: p.PeerID, Name: p.Name, Status: "accepted"}
 		}
 		err = e.drawEng.BeginHost(lobbyID, players, peerAddrs, rounds, publish, sendStart)
+	case ModeSnake:
+		players := make([]snake.Player, len(accepted))
+		for i, p := range accepted {
+			players[i] = snake.Player{PeerID: p.PeerID, Name: p.Name}
+		}
+		err = e.snakeEng.BeginHost(lobbyID, players, peerAddrs, publish, sendStart)
 	}
 	if err != nil {
 		return err
@@ -624,7 +668,7 @@ func (e *Engine) handleStart(s lobby.Start) error {
 
 	switch phase {
 	case PhaseLobby:
-		if mode != ModeRace && mode != ModeDraw {
+		if mode != ModeRace && mode != ModeDraw && mode != ModeSnake {
 			return lobby.ErrRejected
 		}
 		var err error
@@ -633,6 +677,8 @@ func (e *Engine) handleStart(s lobby.Start) error {
 			err = e.raceEng.BeginGuest(s.LobbyID, e.hostAddr, env.Payload)
 		case ModeDraw:
 			err = e.drawEng.BeginGuest(s.LobbyID, e.hostAddr, env.Payload)
+		case ModeSnake:
+			err = e.snakeEng.BeginGuest(s.LobbyID, e.hostAddr, env.Payload)
 		}
 		if err != nil {
 			return err
@@ -654,6 +700,8 @@ func (e *Engine) handleStart(s lobby.Start) error {
 			return e.raceEng.HandleStart(env.Payload)
 		case ModeDraw:
 			return e.drawEng.HandleStart(env.Payload)
+		case ModeSnake:
+			return e.snakeEng.HandleStart(env.Payload)
 		}
 		return nil
 	default:
@@ -675,6 +723,14 @@ func (e *Engine) handleProgress(p lobby.Progress) error {
 		return e.raceEng.HandleProgress(p)
 	case ModeDraw:
 		return e.drawEng.HandleProgress(p)
+	case ModeSnake:
+		var payload struct {
+			Heading float64 `json:"heading"`
+		}
+		if err := json.Unmarshal(p.Payload, &payload); err != nil {
+			return lobby.ErrRejected
+		}
+		return e.snakeEng.HandleInput(p.PeerID, payload.Heading)
 	default:
 		return lobby.ErrClosed
 	}
@@ -715,6 +771,8 @@ func (e *Engine) makeOnEvent(lobbyID string) func(json.RawMessage) {
 			e.raceEng.ApplyEvent(env.Payload)
 		case string(ModeDraw):
 			e.drawEng.ApplyEvent(env.Payload)
+		case string(ModeSnake):
+			e.snakeEng.ApplyEvent(env.Payload)
 		}
 	}
 }
@@ -736,6 +794,10 @@ func (e *Engine) makeOnClosed(lobbyID string) func(error) {
 			e.state.Phase = PhaseFinished
 			e.mu.Unlock()
 		case phase == PhasePlaying && mode == ModeDraw && e.drawEng.FinishedIfClosed():
+			e.mu.Lock()
+			e.state.Phase = PhaseFinished
+			e.mu.Unlock()
+		case phase == PhasePlaying && mode == ModeSnake && e.snakeEng.FinishedIfClosed():
 			e.mu.Lock()
 			e.state.Phase = PhaseFinished
 			e.mu.Unlock()
@@ -768,6 +830,8 @@ func (e *Engine) Leave() {
 			e.raceEng.Leave()
 		case ModeDraw:
 			e.drawEng.Leave()
+		case ModeSnake:
+			e.snakeEng.Leave()
 		}
 	}
 

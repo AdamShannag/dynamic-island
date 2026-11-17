@@ -67,6 +67,10 @@ func (a *api) DrawGuess(text string) *dbus.Error {
 	return dbusErr(a.party.Engine().DrawEngine().SubmitGuess(text))
 }
 
+func (a *api) SnakeInput(heading float64) *dbus.Error {
+	return dbusErr(a.party.Engine().SnakeInput(heading))
+}
+
 func findPeer(peers []discovery.Peer, id string) (discovery.Peer, bool) {
 	for _, p := range peers {
 		if p.ID == id {

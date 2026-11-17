@@ -112,6 +112,8 @@ func playingTitle(s party.State) string {
 		return "Racing"
 	case party.ModeDraw:
 		return "Drawing"
+	case party.ModeSnake:
+		return "Snake"
 	default:
 		return "Playing"
 	}
@@ -137,6 +139,17 @@ func playingSummary(s party.State) string {
 			return ""
 		}
 		return fmt.Sprintf("Round %d of %d", s.Draw.Round, s.Draw.TotalRounds)
+	case party.ModeSnake:
+		if s.Snake == nil {
+			return ""
+		}
+		alive := 0
+		for _, p := range s.Snake.Players {
+			if p.Alive {
+				alive++
+			}
+		}
+		return fmt.Sprintf("%d/%d alive", alive, len(s.Snake.Players))
 	default:
 		return ""
 	}
@@ -152,6 +165,8 @@ func endSummary(s party.State) string {
 			return "Race finished"
 		case party.ModeDraw:
 			return "Game finished"
+		case party.ModeSnake:
+			return "Snake finished"
 		default:
 			return "Finished"
 		}

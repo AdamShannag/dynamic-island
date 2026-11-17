@@ -143,6 +143,9 @@ const introXML = `
     <method name="DrawGuess">
       <arg name="text" type="s" direction="in"/>
     </method>
+    <method name="SnakeInput">
+      <arg name="heading" type="d" direction="in"/>
+    </method>
     <method name="SetPresenting">
       <arg name="on" type="b" direction="in"/>
     </method>

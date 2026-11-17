@@ -1,6 +1,7 @@
 package party_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -297,6 +298,77 @@ func TestHostLeavingMidGameStillDisbandsTheLobby(t *testing.T) {
 	// mid-game must still tear the lobby down for the guest.
 	host.Leave()
 	waitFor(t, func() bool { return guest.State().Phase == party.PhaseHostLeft })
+}
+
+func TestSnakeEndToEndOverRealHTTP(t *testing.T) {
+	host := engine(t, "h1", 19019)
+	guest := engine(t, "g1", 19020)
+	host.CreateLobby()
+	if err := host.Invite(peer("g1", 19020)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return guest.State().Phase == party.PhaseLobby })
+	if err := guest.Respond(true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { s, ok := playerStatus(host.State(), "g1"); return ok && s == "accepted" })
+
+	if err := host.SetMode(party.ModeSnake); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return guest.State().Snake != nil && len(guest.State().Snake.Players) == 2 })
+	if host.State().Snake == nil || len(host.State().Snake.Players) != 2 {
+		t.Fatal("expected the host to also see both snake players")
+	}
+
+	guestHead := func(s party.State) (float64, float64, bool) {
+		if s.Snake == nil {
+			return 0, 0, false
+		}
+		for _, p := range s.Snake.Players {
+			if p.PeerID == "g1" && len(p.Body) > 0 {
+				return p.Body[0].X, p.Body[0].Y, true
+			}
+		}
+		return 0, 0, false
+	}
+
+	x0, y0, ok := guestHead(guest.State())
+	if !ok {
+		t.Fatal("expected the guest's own snake to have a body")
+	}
+
+	// The host applies its own input directly, since it is authoritative.
+	if err := host.SnakeEngine().HandleInput("h1", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// The guest steers over its own HTTP progress call to the host; the
+	// resulting movement must come back down the guest's still-open lobby
+	// subscription as a broadcast, not be applied locally.
+	if err := guest.SnakeEngine().HandleInput("g1", math.Pi/4); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		x, y, ok := guestHead(guest.State())
+		return ok && (x != x0 || y != y0)
+	})
+
+	hx0, hy0, ok := guestHead(host.State())
+	if !ok {
+		t.Fatal("expected the host to also track the guest's snake")
+	}
+	waitFor(t, func() bool {
+		x, y, ok := guestHead(host.State())
+		return ok && (x != hx0 || y != hy0)
+	})
+
+	if host.State().Phase != party.PhasePlaying || guest.State().Phase != party.PhasePlaying {
+		t.Fatal("the match must still be playing while snakes are simply moving around")
+	}
 }
 
 func TestLateAcceptIsToldTheGameStarted(t *testing.T) {

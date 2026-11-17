@@ -27,6 +27,14 @@ const MIN_ROUNDS = 1;
 const MAX_ROUNDS = 10;
 const RACER_TRACK_PX = 260;
 
+const SNAKE_INPUT_MS = 70;
+const SNAKE_BG = '#0b0e12';
+const SNAKE_FOOD_COLOR = '#ffd60a';
+const SNAKE_GRID_STEP = 28;
+const SNAKE_BODY_WIDTH = 9;
+const SNAKE_HEAD_RADIUS = 6;
+const SNAKE_FOOD_RADIUS = 3;
+
 function statusSpec(status) {
     if (status === 'accepted')
         return {text: 'Ready', kind: 'ready'};
@@ -39,7 +47,7 @@ export class PlayPage extends Page {
     static id = 'play';
     static title = '';
     static autoHeight = false;
-    static interval = 1000;
+    static interval = 150;
 
     build() {
         const actor = page();
@@ -51,13 +59,14 @@ export class PlayPage extends Page {
         this._drawing = this._buildDrawing();
         this._guessing = this._buildGuessing();
         this._reveal = this._buildReveal();
+        this._snake = this._buildSnake();
         this._result = this._buildResult();
         this._pageEmpty = new EmptyState();
 
         this._views = {
             idle: this._idle, lobbyHost: this._lobbyHost, lobbyGuest: this._lobbyGuest,
             racing: this._racing, drawing: this._drawing, guessing: this._guessing,
-            reveal: this._reveal, result: this._result,
+            reveal: this._reveal, snake: this._snake, result: this._result,
         };
 
         for (const view of Object.values(this._views))
@@ -233,10 +242,13 @@ export class PlayPage extends Page {
         const segmented = new St.BoxLayout({style_class: 'island-segmented'});
         this._modeRaceBtn = pillButton('Race', () => this._pickMode('race'));
         this._modeDrawBtn = pillButton('Draw', () => this._pickMode('draw'));
+        this._modeSnakeBtn = pillButton('Snake', () => this._pickMode('snake'));
         this._modeRaceBtn.x_expand = true;
         this._modeDrawBtn.x_expand = true;
+        this._modeSnakeBtn.x_expand = true;
         segmented.add_child(this._modeRaceBtn);
         segmented.add_child(this._modeDrawBtn);
+        segmented.add_child(this._modeSnakeBtn);
 
         this._roundsRow = new St.BoxLayout({style_class: 'island-rounds-row'});
         this._roundsRow.add_child(label('island-rounds-label', {text: 'Rounds', x_expand: true}));
@@ -346,6 +358,7 @@ export class PlayPage extends Page {
         setText(this._readyLabel, `${ready} of ${players.length} ready to play`);
         this._modeRaceBtn.checked = state.mode === 'race';
         this._modeDrawBtn.checked = state.mode === 'draw';
+        this._modeSnakeBtn.checked = state.mode === 'snake';
         this._startBtn.reactive = !!state.mode;
         this._startBtn.opacity = state.mode ? 255 : 110;
         this._rounds = state.rounds ?? this._rounds ?? 3;
@@ -389,8 +402,11 @@ export class PlayPage extends Page {
             : (host ? `Invited by ${host.name}` : ''));
         const players = state.players ?? [];
         this._guestSig = this._syncPlayerRows(this._guestPlayerList, this._guestPlayerRefs, this._guestSig, players, state.selfId, host?.peerId);
+        const modeText = state.mode === 'race' ? 'a typing race'
+            : state.mode === 'snake' ? 'snake'
+                : state.mode === 'draw' ? 'draw & guess' : '';
         setText(this._guestModeLabel, state.mode
-            ? `Playing ${state.mode === 'race' ? 'a typing race' : 'draw & guess'}${state.mode === 'draw' ? ` · ${state.rounds ?? 3} rounds` : ''}`
+            ? `Playing ${modeText}${state.mode === 'draw' ? ` · ${state.rounds ?? 3} rounds` : ''}`
             : 'Waiting for the host to pick a game');
         this._respondBar.visible = !this._guestResponded;
         this._guestLeaveBar.visible = !!this._guestResponded;
@@ -931,6 +947,172 @@ export class PlayPage extends Page {
         return row;
     }
 
+    // ---- Snake ----------------------------------------------------------
+
+    _buildSnake() {
+        const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
+
+        const top = new St.BoxLayout({x_expand: true});
+        const hudLeft = column();
+        hudLeft.add_child(label('island-snake-hud-label', {text: 'LENGTH'}));
+        this._snakeLengthLabel = label('island-snake-hud-value', {text: '0'});
+        hudLeft.add_child(this._snakeLengthLabel);
+        this._snakeTimer = label('island-race-timer', {text: '', x_align: Clutter.ActorAlign.CENTER, x_expand: true});
+        const hudRight = column({x_align: Clutter.ActorAlign.END});
+        hudRight.add_child(label('island-snake-hud-label', {text: 'SCORE', x_align: Clutter.ActorAlign.END}));
+        this._snakeScoreLabel = label('island-snake-hud-value', {text: '0', x_align: Clutter.ActorAlign.END});
+        hudRight.add_child(this._snakeScoreLabel);
+        top.add_child(hudLeft);
+        top.add_child(this._snakeTimer);
+        top.add_child(hudRight);
+
+        const stack = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
+        this._snakeCanvas = new St.DrawingArea({style_class: 'island-snake-arena', x_expand: true, y_expand: true, reactive: true});
+        this._snakeCanvas.connect('repaint', area => this._paintSnake(area));
+        this._snakeCanvas.connect('motion-event', (actor, event) => this._onSnakeMove(actor, event));
+        stack.add_child(this._snakeCanvas);
+
+        this._snakeLeaderboard = column({
+            style_class: 'island-snake-leaderboard', x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.START,
+        });
+        this._snakeLeaderboard.add_child(label('island-igroup-title', {text: 'LEADERBOARD'}));
+        this._snakeLeaderboardList = column();
+        this._snakeLeaderboard.add_child(this._snakeLeaderboardList);
+        stack.add_child(this._snakeLeaderboard);
+
+        this._snakeDeadOverlay = column({
+            style_class: 'island-snake-dead', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._snakeDeadTitle = label('island-race-finish-title', {text: 'You died', x_align: Clutter.ActorAlign.CENTER});
+        this._snakeDeadScore = label('island-race-subtitle', {x_align: Clutter.ActorAlign.CENTER});
+        this._snakeDeadOverlay.add_child(this._snakeDeadTitle);
+        this._snakeDeadOverlay.add_child(this._snakeDeadScore);
+        this._snakeDeadOverlay.hide();
+        stack.add_child(this._snakeDeadOverlay);
+
+        const leaveRow = new St.BoxLayout({x_expand: true});
+        const leaveSpacer = new St.Widget({x_expand: true});
+        leaveRow.add_child(leaveSpacer);
+        leaveRow.add_child(this._leaveButton('Leave', 'link'));
+
+        view.add_child(top);
+        view.add_child(stack);
+        view.add_child(leaveRow);
+        return view;
+    }
+
+    _onSnakeMove(actor, event) {
+        if (this._phase !== 'playing' || this._mode !== 'snake')
+            return Clutter.EVENT_PROPAGATE;
+        const [sx, sy] = event.get_coords();
+        const [ok, lx, ly] = actor.transform_stage_point(sx, sy);
+        if (!ok)
+            return Clutter.EVENT_PROPAGATE;
+        const box = actor.get_allocation_box();
+        const cx = box.get_width() / 2, cy = box.get_height() / 2;
+        if (box.get_width() <= 0 || box.get_height() <= 0)
+            return Clutter.EVENT_PROPAGATE;
+        const heading = Math.atan2(ly - cy, lx - cx);
+        const now = GLib.get_monotonic_time() / 1000;
+        if (now - (this._lastHeadingSentAt ?? 0) >= SNAKE_INPUT_MS) {
+            this._lastHeadingSentAt = now;
+            this.call('SnakeInput', [heading]);
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _paintSnake(area) {
+        const cr = area.get_context();
+        try {
+            const [w, h] = area.get_surface_size();
+            const [bgR, bgG, bgB] = hexToRgb(SNAKE_BG);
+            cr.setSourceRGB(bgR, bgG, bgB);
+            cr.rectangle(0, 0, w, h);
+            cr.fill();
+
+            const snake = this._snakeState;
+            if (!snake)
+                return;
+            const players = snake.players ?? [];
+            const self = players.find(p => p.peerId === this._selfId);
+            const head = self?.body?.[0] ?? {x: (snake.worldW ?? w) / 2, y: (snake.worldH ?? h) / 2};
+            const camX = head.x - w / 2, camY = head.y - h / 2;
+
+            cr.setSourceRGBA(1, 1, 1, 0.07);
+            const startX = Math.floor(camX / SNAKE_GRID_STEP) * SNAKE_GRID_STEP;
+            const startY = Math.floor(camY / SNAKE_GRID_STEP) * SNAKE_GRID_STEP;
+            for (let gx = startX; gx < camX + w + SNAKE_GRID_STEP; gx += SNAKE_GRID_STEP) {
+                for (let gy = startY; gy < camY + h + SNAKE_GRID_STEP; gy += SNAKE_GRID_STEP) {
+                    cr.arc(gx - camX, gy - camY, 1.1, 0, 2 * Math.PI);
+                    cr.fill();
+                }
+            }
+
+            const [foodR, foodG, foodB] = hexToRgb(SNAKE_FOOD_COLOR);
+            cr.setSourceRGB(foodR, foodG, foodB);
+            for (const f of snake.food ?? []) {
+                cr.arc(f.x - camX, f.y - camY, SNAKE_FOOD_RADIUS, 0, 2 * Math.PI);
+                cr.fill();
+            }
+
+            for (const p of players) {
+                if (!p.alive)
+                    continue;
+                const pts = p.body ?? [];
+                if (pts.length === 0)
+                    continue;
+                const [r, g, b] = hexToRgb(p.peerId === this._selfId ? SELF_CARET_COLOR : this._playerColor(p.peerId));
+                cr.setSourceRGB(r, g, b);
+                cr.setLineWidth(SNAKE_BODY_WIDTH);
+                cr.setLineCap(Cairo.LineCap.ROUND);
+                cr.setLineJoin(Cairo.LineJoin.ROUND);
+                cr.moveTo(pts[0].x - camX, pts[0].y - camY);
+                for (let i = 1; i < pts.length; i++)
+                    cr.lineTo(pts[i].x - camX, pts[i].y - camY);
+                cr.stroke();
+                cr.arc(pts[0].x - camX, pts[0].y - camY, SNAKE_HEAD_RADIUS, 0, 2 * Math.PI);
+                cr.fill();
+            }
+        } finally {
+            cr.$dispose();
+        }
+    }
+
+    _renderSnake(snake) {
+        this._snakeState = snake;
+        const players = snake.players ?? [];
+        const self = players.find(p => p.peerId === this._selfId);
+        setText(this._snakeLengthLabel, `${self?.body?.length ?? 0}`);
+        setText(this._snakeScoreLabel, `${self?.score ?? 0}`);
+        const secsLeft = Math.max(0, Math.round(((snake.endsAtMs ?? 0) - Date.now()) / 1000));
+        setText(this._snakeTimer, `${Math.floor(secsLeft / 60)}:${String(secsLeft % 60).padStart(2, '0')}`);
+        this._snakeDeadOverlay.visible = !!self && !self.alive;
+        if (self && !self.alive)
+            setText(this._snakeDeadScore, `Final score: ${self.score}`);
+        this._syncSnakeLeaderboard(players);
+        this._snakeCanvas.queue_repaint();
+    }
+
+    _syncSnakeLeaderboard(players) {
+        const ranked = [...players].sort((a, b) => b.score - a.score).slice(0, 5);
+        const sig = ranked.map(p => `${p.peerId}:${p.score}`).join('|');
+        if (sig === this._snakeLbSig)
+            return;
+        this._snakeLbSig = sig;
+        this._snakeLeaderboardList.destroy_all_children();
+        ranked.forEach((p, i) => {
+            const isSelf = p.peerId === this._selfId;
+            const row = new St.BoxLayout({style_class: `island-snake-lb-row${isSelf ? ' self' : ''}`});
+            row.add_child(label('island-snake-lb-rank', {text: `${i + 1}`}));
+            const dot = new St.Widget({style_class: 'island-snake-lb-dot', y_align: Clutter.ActorAlign.CENTER});
+            dot.set_style(`background-color: ${isSelf ? SELF_CARET_COLOR : this._playerColor(p.peerId)};`);
+            row.add_child(dot);
+            row.add_child(label('island-snake-lb-name', {text: isSelf ? 'You' : p.name, x_expand: true}));
+            row.add_child(label('island-snake-lb-score', {text: `${p.score}`}));
+            this._snakeLeaderboardList.add_child(row);
+        });
+    }
+
     // ---- Shared result screen ------------------------------------------
 
     _buildResult() {
@@ -994,6 +1176,8 @@ export class PlayPage extends Page {
         }
         if (state.mode === 'draw')
             this._renderDrawResult(state, finished, missed);
+        else if (state.mode === 'snake')
+            this._renderSnakeResult(state, finished, missed);
         else
             this._renderRaceResult(state, finished, missed);
     }
@@ -1075,6 +1259,43 @@ export class PlayPage extends Page {
         return row;
     }
 
+    _renderSnakeResult(state, finished, missed) {
+        const players = state.snake?.players ?? [];
+        const ranked = [...players].sort((a, b) => b.score - a.score);
+        const winner = ranked[0];
+        setText(this._resultTitle, finished ? 'Game finished' : missed ? 'That game already started' : 'The host left the game');
+        setText(this._resultHint, finished
+            ? (winner ? `${winner.name} had the highest score` : '')
+            : missed ? 'The host started before you joined.' : 'Your progress was not saved.');
+        this._resultHint.visible = !finished || !!winner;
+        this._resultGroupActor.visible = finished && ranked.length > 0;
+        if (!finished)
+            return;
+        const sig = `snake:${ranked.map(p => `${p.peerId}:${p.score}`).join('|')}`;
+        if (sig === this._resultSig)
+            return;
+        this._resultSig = sig;
+        fillList(this._resultList, ranked, (p, i) => this._snakeResultRow(p, i + 1));
+    }
+
+    _snakeResultRow(p, rank) {
+        const isWinner = rank === 1;
+        const row = new St.BoxLayout({style_class: `island-irow island-irow-box${isWinner ? ' winner' : ''}`, x_expand: true});
+        row.add_child(label('island-race-rank', {text: `${rank}`, x_align: Clutter.ActorAlign.CENTER}));
+        const avatar = badge({glyph: (p.name[0] ?? '?').toUpperCase(), color: this._playerColor(p.peerId)});
+        avatar.add_style_class_name(isWinner ? 'island-race-winner-avatar' : 'island-race-list-avatar');
+        row.add_child(avatar);
+        const nameRow = new St.BoxLayout({x_expand: true});
+        nameRow.add_child(label(isWinner ? 'island-irow-title island-race-winner-name' : 'island-irow-title', {text: p.name}));
+        if (isWinner)
+            nameRow.add_child(this._winnerIcon());
+        row.add_child(nameRow);
+        row.add_child(label(isWinner ? 'island-irow-sub island-race-winner-wpm' : 'island-irow-sub', {
+            text: `${p.score} pts`, x_align: Clutter.ActorAlign.END,
+        }));
+        return row;
+    }
+
     // ---- Page lifecycle --------------------------------------------------
 
     onShow() {
@@ -1114,6 +1335,8 @@ export class PlayPage extends Page {
             this._racerRowSig = null;
             this._resultSig = null;
             this._resultRosterSig = null;
+            this._snakeLbSig = null;
+            this._snakeState = null;
             this._peerSig = null;
             this._passage = null;
             this._strokes = [];
@@ -1156,6 +1379,9 @@ export class PlayPage extends Page {
                 if (!(prevPhase === 'playing' && prevMode === 'draw') && !isDrawer)
                     this._guessEntry.grab_key_focus();
             }
+        } else if (state.phase === 'playing' && state.mode === 'snake') {
+            this._showView('snake');
+            this._renderSnake(state.snake ?? {});
         } else {
             this._showView('result');
             this._renderResult(state);
