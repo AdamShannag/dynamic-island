@@ -1,6 +1,7 @@
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
 
 import {TILE_COLORS, featureOn} from '../lib/constants.js';
 import {correctPrefix, hashColor} from '../lib/format.js';
@@ -146,6 +147,7 @@ export class RacePage extends Page {
         });
         this._passageLabel = new St.Label({style_class: 'island-race-passage', width: 620});
         this._passageLabel.clutter_text.line_wrap = true;
+        this._passageLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         this._passageLabel.reactive = false;
         this._markerLayer = new St.Widget({width: 620, clip_to_allocation: true, reactive: false});
         this._passageStack.add_child(this._passageLabel);
