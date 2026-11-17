@@ -34,6 +34,9 @@ const SNAKE_GRID_STEP = 28;
 const SNAKE_BODY_WIDTH = 9;
 const SNAKE_HEAD_RADIUS = 6;
 const SNAKE_FOOD_RADIUS = 3;
+const SNAKE_WALL_COLOR = '#ff453a';
+const SNAKE_WALL_LINE_WIDTH = 3;
+const SNAKE_WALL_STRIPE_STEP = 24;
 
 function statusSpec(status) {
     if (status === 'accepted')
@@ -1001,6 +1004,43 @@ export class PlayPage extends Page {
         });
     }
 
+    // Paints the world edge as a hazard border - a diagonally striped band
+    // over whatever out-of-bounds area is in view, plus a crisp line right
+    // on the boundary - so a player can see a wall coming before they die
+    // on it instead of it being invisible.
+    _paintSnakeWalls(cr, w, h, left, top, right, bottom) {
+        const [r, g, b] = hexToRgb(SNAKE_WALL_COLOR);
+        const strips = [
+            [0, 0, w, Math.min(top, h)],
+            [0, Math.max(bottom, 0), w, h - Math.max(bottom, 0)],
+            [0, 0, Math.min(left, w), h],
+            [Math.max(right, 0), 0, w - Math.max(right, 0), h],
+        ];
+        for (const [sx, sy, sw, sh] of strips) {
+            if (sw <= 0 || sh <= 0)
+                continue;
+            cr.save();
+            cr.rectangle(sx, sy, sw, sh);
+            cr.clip();
+            cr.setSourceRGBA(r, g, b, 0.16);
+            cr.rectangle(0, 0, w, h);
+            cr.fill();
+            cr.setSourceRGBA(r, g, b, 0.3);
+            cr.setLineWidth(10);
+            const diag = w + h;
+            for (let o = -diag; o < diag; o += SNAKE_WALL_STRIPE_STEP) {
+                cr.moveTo(o, 0);
+                cr.lineTo(o + h, h);
+            }
+            cr.stroke();
+            cr.restore();
+        }
+        cr.setSourceRGBA(r, g, b, 0.85);
+        cr.setLineWidth(SNAKE_WALL_LINE_WIDTH);
+        cr.rectangle(left, top, right - left, bottom - top);
+        cr.stroke();
+    }
+
     _paintSnake(area) {
         const cr = area.get_context();
         try {
@@ -1023,6 +1063,8 @@ export class PlayPage extends Page {
             const selfBody = self ? this._interpSnakeBody(self.body ?? [], prevByID.get(this._selfId)?.body, t) : [];
             const head = selfBody[0] ?? {x: (snake.worldW ?? w) / 2, y: (snake.worldH ?? h) / 2};
             const camX = head.x - w / 2, camY = head.y - h / 2;
+            const worldW = snake.worldW ?? w, worldH = snake.worldH ?? h;
+            this._paintSnakeWalls(cr, w, h, -camX, -camY, worldW - camX, worldH - camY);
 
             cr.setSourceRGBA(1, 1, 1, 0.07);
             const startX = Math.floor(camX / SNAKE_GRID_STEP) * SNAKE_GRID_STEP;
