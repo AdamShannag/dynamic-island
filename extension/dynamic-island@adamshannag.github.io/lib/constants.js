@@ -29,10 +29,9 @@ export const TABS = [
     ['transform', 'Transform', 'edit-find-replace-symbolic'],
     ['notes', 'Notes', 'document-edit-symbolic'],
     ['search', 'Web', 'web-browser-symbolic'],
-    ['race', 'Race', 'input-keyboard-symbolic'],
-    ['draw', 'Draw', 'applications-graphics-symbolic'],
+    ['play', 'Play', 'input-keyboard-symbolic'],
 ];
-export const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
+export const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents', race: 'play', draw: 'play'};
 
 export const DASH_WIDTH = 760;
 export const DASH_DEFAULT_HEIGHT = 500;
@@ -69,8 +68,7 @@ export const FEATURES = [
     ['clipboardHistory', 'Clipboard history', 'Remember what you copy', 'edit-paste-symbolic'],
     ['usb', 'USB devices', 'Pop up when a device is plugged in', 'media-removable-symbolic'],
     ['battery', 'Battery', 'Charging and low-battery popups', 'battery-good-symbolic'],
-    ['race', 'LAN typing race', 'Race other Dynamic Island users on your network', 'input-keyboard-symbolic'],
-    ['draw', 'LAN drawing game', 'Draw and guess with other Dynamic Island users on your network', 'applications-graphics-symbolic'],
+    ['play', 'LAN play', 'Race, draw and guess with other Dynamic Island users on your network', 'input-keyboard-symbolic'],
 ];
 export const SETTING_COLORS = {
     'user-home-symbolic': '#0a84ff', 'preferences-system-notifications-symbolic': '#ff453a',
@@ -82,6 +80,6 @@ export const SETTING_COLORS = {
     'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
     'input-keyboard-symbolic': '#ff9f0a',
 };
-export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {race: false, draw: false}};
+export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {play: false}};
 export const featureOn = (st, key) => st?.features?.[key] !== false;
 export const tabOn = (st, id) => id === 'home' || st?.tabs?.[id] !== false;

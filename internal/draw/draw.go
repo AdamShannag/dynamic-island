@@ -1,19 +1,17 @@
+// Package draw is the drawing-and-guessing gameplay engine. It owns no
+// lobby, discovery or transport of its own - internal/party hands it a
+// roster and a shared lobby.Server-backed publish/send pair once a lobby's
+// host picks draw and starts.
 package draw
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	mrand "math/rand/v2"
-	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/AdamShannag/dynamic-island/internal/discovery"
 	"github.com/AdamShannag/dynamic-island/internal/lobby"
 )
 
@@ -21,12 +19,9 @@ type Phase string
 
 const (
 	PhaseIdle     Phase = "idle"
-	PhaseLobby    Phase = "lobby"
 	PhaseDrawing  Phase = "drawing"
 	PhaseReveal   Phase = "reveal"
 	PhaseFinished Phase = "finished"
-	PhaseHostLeft Phase = "host_left"
-	PhaseMissed   Phase = "missed"
 )
 
 const (
@@ -34,10 +29,6 @@ const (
 	revealDuration       = 4 * time.Second
 	maxPointsPerRound    = 4000
 )
-
-func (p Phase) free() bool {
-	return p == PhaseIdle || p == PhaseFinished || p == PhaseHostLeft || p == PhaseMissed
-}
 
 type Player struct {
 	PeerID string `json:"peerId"`
@@ -70,8 +61,6 @@ type RoundResult struct {
 }
 
 type State struct {
-	LobbyID       string       `json:"lobbyId"`
-	IsHost        bool         `json:"isHost"`
 	Phase         Phase        `json:"phase"`
 	Round         int          `json:"round"`
 	TotalRounds   int          `json:"totalRounds"`
@@ -82,7 +71,6 @@ type State struct {
 	Strokes       []Stroke     `json:"strokes"`
 	Guessed       []string     `json:"guessed"`
 	Players       []Player     `json:"players"`
-	SelfID        string       `json:"selfId"`
 	LastRound     *RoundResult `json:"lastRound,omitempty"`
 }
 
@@ -102,27 +90,18 @@ type progressPayload struct {
 	Text   string  `json:"text,omitempty"`
 }
 
-type target struct {
-	PeerID string
-	Addr   string
-}
-
 type Engine struct {
 	selfID   string
 	selfName string
-	selfAddr string
-	port     int
 
 	roundDuration time.Duration
 
 	mu          sync.Mutex
 	state       State
-	enabled     bool
-	addr        string
 	host        bool
 	hostAddr    string
+	lobbyID     string
 	peerAddrs   map[string]string
-	unsubscribe func()
 	roundTimer  *time.Timer
 	revealTimer *time.Timer
 	drawOrder   []string
@@ -130,98 +109,17 @@ type Engine struct {
 	roundDeltas []ScoreDelta
 	onChange    func(State)
 
-	disc   *discovery.Discovery
-	server *lobby.Server
-
-	notifyMu      sync.Mutex
-	notifying     bool
-	notifyPending bool
+	publish   func(end bool, lobbyID string, payload json.RawMessage)
+	sendStart func(addr, lobbyID string, payload json.RawMessage) error
 }
 
-func NewEngine(selfID, selfName, selfAddr string, port int) *Engine {
+func NewEngine(selfID, selfName string) *Engine {
 	return &Engine{
-		selfID:   selfID,
-		selfName: selfName,
-		selfAddr: selfAddr,
-		port:     port,
-
+		selfID:        selfID,
+		selfName:      selfName,
 		roundDuration: defaultRoundDuration,
 		state:         State{Phase: PhaseIdle},
 	}
-}
-
-func (e *Engine) Enable() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if e.enabled {
-		return nil
-	}
-
-	addr := e.selfAddr
-	if addr == "" {
-		addr = discovery.LocalIP()
-	}
-	server := lobby.NewServer(e.port, lobby.Callbacks{
-		OnInvite:   e.handleInvite,
-		OnRespond:  e.handleRespond,
-		OnStart:    e.handleStart,
-		OnProgress: e.handleProgress,
-	})
-	if err := server.Listen(); err != nil {
-		return fmt.Errorf("draw: %w", err)
-	}
-	disc, err := discovery.Start(e.selfID, e.selfName, addr, e.port)
-	if err != nil {
-		_ = server.Close()
-		return err
-	}
-
-	e.addr = addr
-	e.disc = disc
-	e.server = server
-	e.enabled = true
-	return nil
-}
-
-func (e *Engine) Disable() {
-	e.mu.Lock()
-	if !e.enabled {
-		e.mu.Unlock()
-		return
-	}
-	e.mu.Unlock()
-
-	e.Leave()
-
-	e.mu.Lock()
-	disc := e.disc
-	server := e.server
-	e.disc = nil
-	e.server = nil
-	e.enabled = false
-	e.mu.Unlock()
-
-	if disc != nil {
-		_ = disc.Close()
-	}
-	if server != nil {
-		_ = server.Close()
-	}
-
-	e.notify()
-}
-
-func (e *Engine) Enabled() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.enabled
-}
-
-func (e *Engine) Discovery() *discovery.Discovery {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.disc
 }
 
 func (e *Engine) OnChange(fn func(State)) {
@@ -234,7 +132,6 @@ func (e *Engine) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	s := cloneState(e.state)
-	s.SelfID = e.selfID
 	if s.DrawerID != e.selfID {
 		s.Word = ""
 	}
@@ -242,280 +139,38 @@ func (e *Engine) State() State {
 }
 
 func (e *Engine) notify() {
-	e.notifyMu.Lock()
-	if e.notifying {
-		e.notifyPending = true
-		e.notifyMu.Unlock()
-		return
-	}
-	e.notifying = true
-	e.notifyMu.Unlock()
-
-	for {
-		e.mu.Lock()
-		fn := e.onChange
-		snap := cloneState(e.state)
-		snap.SelfID = e.selfID
-		if snap.DrawerID != e.selfID {
-			snap.Word = ""
-		}
-		e.mu.Unlock()
-		if fn != nil {
-			fn(snap)
-		}
-
-		e.notifyMu.Lock()
-		if !e.notifyPending {
-			e.notifying = false
-			e.notifyMu.Unlock()
-			return
-		}
-		e.notifyPending = false
-		e.notifyMu.Unlock()
-	}
-}
-
-func (e *Engine) CreateLobby() string {
 	e.mu.Lock()
-	if !e.enabled || !e.state.Phase.free() {
-		e.mu.Unlock()
-		return ""
-	}
-	unsub := e.resetLocked()
-	id := randomLobbyID()
-	e.host = true
-	e.peerAddrs = make(map[string]string)
-	e.state = State{
-		LobbyID: id,
-		IsHost:  true,
-		Phase:   PhaseLobby,
-		Players: []Player{
-			{PeerID: e.selfID, Name: e.selfName, Status: "accepted"},
-		},
-	}
-	e.server.OpenLobby(id)
-	e.mu.Unlock()
-	if unsub != nil {
-		unsub()
-	}
-	e.notify()
-	return id
-}
-
-func (e *Engine) Invite(peer discovery.Peer) error {
-	e.mu.Lock()
-	if !e.enabled {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: not enabled")
-	}
-	if !e.host || e.state.Phase != PhaseLobby {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: not hosting a lobby")
-	}
-	if e.playerIndexLocked(peer.ID) >= 0 {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: %s is already in this lobby", peer.Name)
-	}
-	e.state.Players = append(e.state.Players, Player{PeerID: peer.ID, Name: peer.Name, Status: "pending"})
-	e.peerAddrs[peer.ID] = peer.Addr
-	lobbyID := e.state.LobbyID
-	hostAddr := net.JoinHostPort(e.addr, strconv.Itoa(e.port))
-	e.publishLocked()
-	e.mu.Unlock()
-	e.notify()
-
-	err := lobby.SendInvite(peer.Addr, lobby.Invite{
-		LobbyID:  lobbyID,
-		Kind:     "draw",
-		HostID:   e.selfID,
-		HostName: e.selfName,
-		HostAddr: hostAddr,
-	})
-	if err != nil {
-		e.mu.Lock()
-		if e.host && e.state.LobbyID == lobbyID && e.state.Phase == PhaseLobby {
-			if i := e.playerIndexLocked(peer.ID); i >= 0 && e.state.Players[i].Status == "pending" {
-				e.removePlayerLocked(i)
-				e.publishLocked()
-			}
-		}
-		e.mu.Unlock()
-		e.notify()
-	}
-	return err
-}
-
-func (e *Engine) handleInvite(inv lobby.Invite) error {
-	if inv.Kind != "draw" {
-		return lobby.ErrRejected
-	}
-	e.mu.Lock()
-	if inv.HostID == e.selfID {
-		e.mu.Unlock()
-		return lobby.ErrRejected
-	}
-	if !e.state.Phase.free() {
-		e.mu.Unlock()
-		go func() {
-			_ = lobby.SendRespond(inv.HostAddr, lobby.Response{
-				LobbyID: inv.LobbyID, PeerID: e.selfID, PeerName: e.selfName, Accept: false,
-			})
-		}()
-		return nil
-	}
-	unsub := e.resetLocked()
-	e.hostAddr = inv.HostAddr
-	e.state = State{
-		LobbyID: inv.LobbyID,
-		IsHost:  false,
-		Phase:   PhaseLobby,
-		Players: []Player{
-			{PeerID: inv.HostID, Name: inv.HostName, Status: "accepted"},
-		},
+	fn := e.onChange
+	snap := cloneState(e.state)
+	if snap.DrawerID != e.selfID {
+		snap.Word = ""
 	}
 	e.mu.Unlock()
-	if unsub != nil {
-		unsub()
+	if fn != nil {
+		fn(snap)
 	}
-	e.notify()
-	return nil
 }
 
-func (e *Engine) Respond(accept bool) error {
-	e.mu.Lock()
-	if !e.enabled {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: not enabled")
-	}
-	if e.host || e.state.Phase != PhaseLobby {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: no pending invite to respond to")
-	}
-	lobbyID := e.state.LobbyID
-	hostAddr := e.hostAddr
-	response := lobby.Response{LobbyID: lobbyID, PeerID: e.selfID, PeerName: e.selfName, Accept: accept}
-
-	if !accept {
-		unsub := e.resetLocked()
-		e.mu.Unlock()
-		if unsub != nil {
-			unsub()
-		}
-		e.notify()
-		if err := lobby.SendRespond(hostAddr, response); err != nil && !errors.Is(err, lobby.ErrClosed) {
-			return err
-		}
-		return nil
-	}
-
-	if e.unsubscribe != nil {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: already accepted")
-	}
-	e.unsubscribe = lobby.Subscribe(hostAddr, lobbyID, e.makeOnEvent(lobbyID), e.makeOnClosed(lobbyID))
-	e.mu.Unlock()
-
-	err := lobby.SendRespond(hostAddr, response)
-	if err == nil {
-		return nil
-	}
-	e.mu.Lock()
-	var unsub func()
-	if !e.host && e.state.LobbyID == lobbyID && e.state.Phase == PhaseLobby {
-		unsub = e.unsubscribe
-		e.unsubscribe = nil
-		if errors.Is(err, lobby.ErrClosed) {
-			e.state.Phase = PhaseMissed
-		} else {
-			e.state.Phase = PhaseHostLeft
-		}
-	}
-	e.mu.Unlock()
-	if unsub != nil {
-		unsub()
-	}
-	e.notify()
-	return err
-}
-
-func (e *Engine) handleRespond(r lobby.Response) error {
-	e.mu.Lock()
-	idx := -1
-	if e.host && e.state.LobbyID == r.LobbyID {
-		idx = e.playerIndexLocked(r.PeerID)
-	}
-	if idx <= 0 {
-		e.mu.Unlock()
-		return rejectAccept(r.Accept)
-	}
-	switch e.state.Phase {
-	case PhaseLobby:
-		if r.Accept {
-			e.state.Players[idx].Status = "accepted"
-			e.peerAddrs[r.PeerID] = lobby.WithHost(e.peerAddrs[r.PeerID], r.RemoteIP)
-		} else {
-			e.state.Players[idx].Status = "declined"
-		}
-		e.publishLocked()
-	case PhaseDrawing, PhaseReveal:
-		if r.Accept {
-			e.mu.Unlock()
-			return nil
-		}
-		leavingDrawer := e.state.Players[idx].PeerID == e.state.DrawerID
-		e.removePlayerLocked(idx)
-		switch {
-		case leavingDrawer && e.state.Phase == PhaseDrawing:
-			e.endRoundLocked()
-		case e.state.Phase == PhaseDrawing:
-			e.maybeEndRoundLocked()
-		default:
-			e.publishLocked()
-		}
-	default:
-		e.mu.Unlock()
-		return rejectAccept(r.Accept)
-	}
-	e.mu.Unlock()
-	e.notify()
-	return nil
-}
-
-func rejectAccept(accept bool) error {
-	if accept {
-		return lobby.ErrClosed
-	}
-	return nil
-}
-
-func (e *Engine) Start() error {
-	e.mu.Lock()
-	if !e.enabled {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: not enabled")
-	}
-	if !e.host || e.state.Phase != PhaseLobby {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: cannot start now")
-	}
-	lobbyID := e.state.LobbyID
-
-	players := make([]Player, 0, len(e.state.Players))
-	order := make([]string, 0, len(e.state.Players))
-	for _, p := range e.state.Players {
-		if p.Status != "accepted" {
-			delete(e.peerAddrs, p.PeerID)
-			continue
-		}
-		p.Score = 0
-		players = append(players, p)
-		order = append(order, p.PeerID)
-	}
+// BeginHost starts a drawing game for the host: players is the accepted
+// roster in turn order, peerAddrs resolves each non-self player's address.
+func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[string]string,
+	publish func(bool, string, json.RawMessage), sendStart func(addr, lobbyID string, payload json.RawMessage) error) error {
 	if len(players) == 0 {
-		e.mu.Unlock()
 		return fmt.Errorf("draw: no accepted players")
 	}
-	e.state.Players = players
+	order := make([]string, len(players))
+	for i, p := range players {
+		order[i] = p.PeerID
+		players[i].Score = 0
+	}
+
+	e.mu.Lock()
+	e.host = true
+	e.hostAddr = ""
+	e.lobbyID = lobbyID
+	e.peerAddrs = peerAddrs
+	e.publish = publish
+	e.sendStart = sendStart
 	e.drawOrder = order
 	e.usedWords = map[string]bool{}
 	e.roundDeltas = nil
@@ -526,82 +181,82 @@ func (e *Engine) Start() error {
 	word := e.pickWordLocked()
 	endsAt := time.Now().Add(e.roundDuration).UnixMilli()
 
-	e.state.Phase = PhaseDrawing
-	e.state.Round = round
-	e.state.TotalRounds = len(players)
-	e.state.DrawerID = drawerID
-	e.state.DrawerName = drawerName
-	e.state.Word = word
-	e.state.Strokes = nil
-	e.state.Guessed = nil
-	e.state.LastRound = nil
-	e.state.RoundEndsAtMs = endsAt
-
-	total := e.state.TotalRounds
+	e.state = State{
+		Phase: PhaseDrawing, Round: round, TotalRounds: len(players),
+		DrawerID: drawerID, DrawerName: drawerName, Word: word,
+		RoundEndsAtMs: endsAt, Players: clonePlayers(players),
+	}
 	playersCopy := clonePlayers(e.state.Players)
-	targets := e.sendTargetsLocked()
 	e.roundTimer = time.AfterFunc(e.roundDuration, func() { e.expireRound(lobbyID, round) })
 	e.mu.Unlock()
 	e.notify()
 
-	e.sendRoundStarts(targets, lobbyID, round, total, drawerID, drawerName, word, endsAt, playersCopy)
+	e.sendRoundStarts(peerAddrs, lobbyID, round, len(players), drawerID, drawerName, word, endsAt, playersCopy)
 
 	e.mu.Lock()
-	if e.host && e.state.LobbyID == lobbyID {
+	if e.lobbyID == lobbyID {
 		e.publishLocked()
 	}
 	e.mu.Unlock()
 	return nil
 }
 
-func (e *Engine) sendTargetsLocked() []target {
-	out := make([]target, 0, len(e.state.Players))
-	for _, p := range e.state.Players {
-		if p.PeerID == e.selfID {
+func (e *Engine) sendRoundStarts(peerAddrs map[string]string, lobbyID string, round, total int, drawerID, drawerName, word string, endsAt int64, players []Player) {
+	var wg sync.WaitGroup
+	for peerID, addr := range peerAddrs {
+		if peerID == e.selfID {
 			continue
 		}
-		if addr, ok := e.peerAddrs[p.PeerID]; ok {
-			out = append(out, target{PeerID: p.PeerID, Addr: addr})
-		}
-	}
-	return out
-}
-
-func (e *Engine) sendRoundStarts(targets []target, lobbyID string, round, total int, drawerID, drawerName, word string, endsAt int64, players []Player) {
-	var wg sync.WaitGroup
-	for _, tg := range targets {
 		wg.Add(1)
-		go func(tg target) {
+		go func(peerID, addr string) {
 			defer wg.Done()
 			w := ""
-			if tg.PeerID == drawerID {
+			if peerID == drawerID {
 				w = word
 			}
 			payload := startPayload{
 				Round: round, TotalRounds: total, DrawerID: drawerID, DrawerName: drawerName,
 				Word: w, RoundEndsAtMs: endsAt, Players: players,
 			}
-			_ = lobby.SendStart(tg.Addr, lobby.Start{LobbyID: lobbyID, Payload: mustMarshal(payload)})
-		}(tg)
+			_ = e.sendStart(addr, lobbyID, mustMarshal(payload))
+		}(peerID, addr)
 	}
 	wg.Wait()
 }
 
-func (e *Engine) handleStart(s lobby.Start) error {
+// BeginGuest starts a drawing game for a guest once the host's initial
+// round-start message arrives.
+func (e *Engine) BeginGuest(lobbyID, hostAddr string, payload json.RawMessage) error {
 	var p startPayload
-	if err := json.Unmarshal(s.Payload, &p); err != nil {
+	if err := json.Unmarshal(payload, &p); err != nil {
 		return lobby.ErrRejected
 	}
 	e.mu.Lock()
-	if e.host || e.state.LobbyID != s.LobbyID || e.unsubscribe == nil || !lobby.SameHost(e.hostAddr, s.RemoteIP) {
-		e.mu.Unlock()
-		return lobby.ErrClosed
+	e.host = false
+	e.hostAddr = hostAddr
+	e.lobbyID = lobbyID
+	e.state = State{
+		Phase: PhaseDrawing, Round: p.Round, TotalRounds: p.TotalRounds,
+		DrawerID: p.DrawerID, DrawerName: p.DrawerName, Word: p.Word,
+		RoundEndsAtMs: p.RoundEndsAtMs, Players: clonePlayers(p.Players),
 	}
-	if e.state.Phase != PhaseLobby && e.state.Phase != PhaseDrawing && e.state.Phase != PhaseReveal {
+	e.mu.Unlock()
+	e.notify()
+	return nil
+}
+
+// HandleStart applies a mid-game round-transition start message (the only
+// kind draw ever receives once gameplay has begun).
+func (e *Engine) HandleStart(payload json.RawMessage) error {
+	var p startPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return lobby.ErrRejected
+	}
+	e.mu.Lock()
+	if e.host {
 		e.mu.Unlock()
 		return nil
 	}
-	e.state.Phase = PhaseDrawing
 	e.state.Round = p.Round
 	e.state.TotalRounds = p.TotalRounds
 	e.state.DrawerID = p.DrawerID
@@ -612,64 +267,46 @@ func (e *Engine) handleStart(s lobby.Start) error {
 	e.state.Strokes = nil
 	e.state.Guessed = nil
 	e.state.LastRound = nil
+	e.state.Phase = PhaseDrawing
 	e.mu.Unlock()
 	e.notify()
 	return nil
 }
 
-func (e *Engine) makeOnEvent(lobbyID string) func(json.RawMessage) {
-	return func(payload json.RawMessage) {
-		var snap State
-		if err := json.Unmarshal(payload, &snap); err != nil || snap.LobbyID != lobbyID {
-			return
-		}
-		e.mu.Lock()
-		if e.host || e.state.LobbyID != lobbyID {
-			e.mu.Unlock()
-			return
-		}
-		word := snap.Word
-		if e.state.DrawerID == e.selfID && e.state.Word != "" {
-			word = e.state.Word
-		}
-		e.state.Word = word
-		e.state.Strokes = cloneStrokes(snap.Strokes)
-		e.state.Guessed = append([]string(nil), snap.Guessed...)
-		e.state.Players = clonePlayers(snap.Players)
-		e.state.LastRound = snap.LastRound
-		switch {
-		case e.state.Phase == PhaseDrawing && snap.Phase == PhaseReveal:
-			e.state.Phase = PhaseReveal
-		case (e.state.Phase == PhaseDrawing || e.state.Phase == PhaseReveal) && snap.Phase == PhaseFinished:
-			e.state.Phase = PhaseFinished
-		}
-		e.mu.Unlock()
-		e.notify()
+func (e *Engine) HandleRespond(r lobby.Response) error {
+	e.mu.Lock()
+	idx := -1
+	if e.host && e.lobbyID == r.LobbyID {
+		idx = e.playerIndexLocked(r.PeerID)
 	}
-}
-
-func (e *Engine) makeOnClosed(lobbyID string) func(error) {
-	return func(error) {
-		e.mu.Lock()
-		if e.host || e.state.LobbyID != lobbyID {
-			e.mu.Unlock()
-			return
-		}
-		e.unsubscribe = nil
-		if e.state.Phase == PhaseLobby || e.state.Phase == PhaseDrawing || e.state.Phase == PhaseReveal {
-			e.state.Phase = PhaseHostLeft
-		}
+	if idx <= 0 {
 		e.mu.Unlock()
-		e.notify()
+		if r.Accept {
+			return lobby.ErrClosed
+		}
+		return nil
 	}
+	if r.Accept {
+		e.mu.Unlock()
+		return nil
+	}
+	leavingDrawer := e.state.Players[idx].PeerID == e.state.DrawerID
+	e.removePlayerLocked(idx)
+	switch {
+	case leavingDrawer && e.state.Phase == PhaseDrawing:
+		e.endRoundLocked()
+	case e.state.Phase == PhaseDrawing:
+		e.maybeEndRoundLocked()
+	default:
+		e.publishLocked()
+	}
+	e.mu.Unlock()
+	e.notify()
+	return nil
 }
 
 func (e *Engine) SubmitStroke(stroke Stroke) error {
 	e.mu.Lock()
-	if !e.enabled {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: not enabled")
-	}
 	if e.state.Phase != PhaseDrawing {
 		e.mu.Unlock()
 		return fmt.Errorf("draw: not drawing")
@@ -681,7 +318,7 @@ func (e *Engine) SubmitStroke(stroke Stroke) error {
 	host := e.host
 	selfID := e.selfID
 	hostAddr := e.hostAddr
-	lobbyID := e.state.LobbyID
+	lobbyID := e.lobbyID
 	e.mu.Unlock()
 
 	if host {
@@ -697,10 +334,6 @@ func (e *Engine) SubmitStroke(stroke Stroke) error {
 
 func (e *Engine) SubmitGuess(text string) error {
 	e.mu.Lock()
-	if !e.enabled {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: not enabled")
-	}
 	if e.state.Phase != PhaseDrawing {
 		e.mu.Unlock()
 		return fmt.Errorf("draw: not drawing")
@@ -708,7 +341,7 @@ func (e *Engine) SubmitGuess(text string) error {
 	host := e.host
 	selfID := e.selfID
 	hostAddr := e.hostAddr
-	lobbyID := e.state.LobbyID
+	lobbyID := e.lobbyID
 	e.mu.Unlock()
 
 	if host {
@@ -722,16 +355,10 @@ func (e *Engine) SubmitGuess(text string) error {
 	})
 }
 
-func (e *Engine) handleProgress(p lobby.Progress) error {
+func (e *Engine) HandleProgress(p lobby.Progress) error {
 	var payload progressPayload
 	if err := json.Unmarshal(p.Payload, &payload); err != nil {
 		return lobby.ErrRejected
-	}
-	e.mu.Lock()
-	known := lobby.SameHost(e.peerAddrs[p.PeerID], p.RemoteIP)
-	e.mu.Unlock()
-	if !known {
-		return lobby.ErrClosed
 	}
 	switch payload.Type {
 	case "stroke":
@@ -748,7 +375,7 @@ func (e *Engine) handleProgress(p lobby.Progress) error {
 
 func (e *Engine) applyStroke(lobbyID, peerID string, stroke Stroke) bool {
 	e.mu.Lock()
-	if !e.host || e.state.LobbyID != lobbyID || e.state.Phase != PhaseDrawing || e.state.DrawerID != peerID {
+	if !e.host || e.lobbyID != lobbyID || e.state.Phase != PhaseDrawing || e.state.DrawerID != peerID {
 		e.mu.Unlock()
 		return false
 	}
@@ -773,7 +400,7 @@ func (e *Engine) capStrokesLocked() {
 
 func (e *Engine) applyGuess(lobbyID, peerID, text string) bool {
 	e.mu.Lock()
-	eligible := e.host && e.state.LobbyID == lobbyID && e.state.Phase == PhaseDrawing &&
+	eligible := e.host && e.lobbyID == lobbyID && e.state.Phase == PhaseDrawing &&
 		peerID != e.state.DrawerID && !containsStr(e.state.Guessed, peerID)
 	if !eligible {
 		e.mu.Unlock()
@@ -809,7 +436,7 @@ func (e *Engine) maybeEndRoundLocked() {
 
 func (e *Engine) expireRound(lobbyID string, round int) {
 	e.mu.Lock()
-	if !e.host || e.state.LobbyID != lobbyID || e.state.Phase != PhaseDrawing || e.state.Round != round {
+	if !e.host || e.lobbyID != lobbyID || e.state.Phase != PhaseDrawing || e.state.Round != round {
 		e.mu.Unlock()
 		return
 	}
@@ -838,13 +465,13 @@ func (e *Engine) endRoundLocked() {
 	}
 	e.state.Phase = PhaseReveal
 	e.publishLocked()
-	lobbyID := e.state.LobbyID
+	lobbyID := e.lobbyID
 	e.revealTimer = time.AfterFunc(revealDuration, func() { e.advanceRound(lobbyID) })
 }
 
 func (e *Engine) advanceRound(lobbyID string) {
 	e.mu.Lock()
-	if !e.host || e.state.LobbyID != lobbyID || e.state.Phase != PhaseReveal {
+	if !e.host || e.lobbyID != lobbyID || e.state.Phase != PhaseReveal {
 		e.mu.Unlock()
 		return
 	}
@@ -873,15 +500,18 @@ func (e *Engine) advanceRound(lobbyID string) {
 
 	total := e.state.TotalRounds
 	players := clonePlayers(e.state.Players)
-	targets := e.sendTargetsLocked()
+	peerAddrs := make(map[string]string, len(e.peerAddrs))
+	for k, v := range e.peerAddrs {
+		peerAddrs[k] = v
+	}
 	e.roundTimer = time.AfterFunc(e.roundDuration, func() { e.expireRound(lobbyID, round) })
 	e.mu.Unlock()
 	e.notify()
 
-	e.sendRoundStarts(targets, lobbyID, round, total, drawerID, drawerName, word, endsAt, players)
+	e.sendRoundStarts(peerAddrs, lobbyID, round, total, drawerID, drawerName, word, endsAt, players)
 
 	e.mu.Lock()
-	if e.host && e.state.LobbyID == lobbyID {
+	if e.lobbyID == lobbyID {
 		e.publishLocked()
 	}
 	e.mu.Unlock()
@@ -961,7 +591,7 @@ func containsStr(list []string, v string) bool {
 }
 
 func (e *Engine) publishLocked() {
-	if !e.host || e.server == nil {
+	if !e.host || e.publish == nil {
 		return
 	}
 	redacted := cloneState(e.state)
@@ -970,40 +600,67 @@ func (e *Engine) publishLocked() {
 	if err != nil {
 		return
 	}
-	if redacted.Phase == PhaseFinished {
-		e.server.EndLobby(e.state.LobbyID, payload)
-		return
-	}
-	e.server.Broadcast(e.state.LobbyID, payload)
+	e.publish(redacted.Phase == PhaseFinished, e.lobbyID, payload)
 }
 
-func (e *Engine) Leave() {
+// ApplyEvent absorbs a broadcast snapshot received over the shared lobby
+// subscription, for a guest tracking the host's game. The host always
+// redacts Word in what it broadcasts, so a drawer's own locally-learned
+// word (from BeginGuest/HandleStart) must survive these snapshots.
+func (e *Engine) ApplyEvent(payload json.RawMessage) {
+	var snap State
+	if err := json.Unmarshal(payload, &snap); err != nil {
+		return
+	}
 	e.mu.Lock()
-	if e.state.Phase == PhaseIdle {
+	if e.host {
 		e.mu.Unlock()
 		return
 	}
-	tellHost := !e.host && (e.state.Phase == PhaseLobby || e.state.Phase == PhaseDrawing || e.state.Phase == PhaseReveal)
-	response := lobby.Response{LobbyID: e.state.LobbyID, PeerID: e.selfID, PeerName: e.selfName}
-	hostAddr := e.hostAddr
-	if e.host && e.server != nil && (e.state.Phase == PhaseLobby || e.state.Phase == PhaseDrawing || e.state.Phase == PhaseReveal) {
-		e.server.EndLobby(e.state.LobbyID, json.RawMessage(`{}`))
+	word := snap.Word
+	if e.state.DrawerID == e.selfID && e.state.Word != "" {
+		word = e.state.Word
 	}
-	unsub := e.resetLocked()
+	e.state.Word = word
+	e.state.Strokes = cloneStrokes(snap.Strokes)
+	e.state.Guessed = append([]string(nil), snap.Guessed...)
+	e.state.Players = clonePlayers(snap.Players)
+	e.state.LastRound = snap.LastRound
+	switch {
+	case e.state.Phase == PhaseDrawing && snap.Phase == PhaseReveal:
+		e.state.Phase = PhaseReveal
+	case (e.state.Phase == PhaseDrawing || e.state.Phase == PhaseReveal) && snap.Phase == PhaseFinished:
+		e.state.Phase = PhaseFinished
+	}
 	e.mu.Unlock()
-
-	if unsub != nil {
-		unsub()
-	}
-	if tellHost {
-		go func() { _ = lobby.SendRespond(hostAddr, response) }()
-	}
 	e.notify()
 }
 
-func (e *Engine) resetLocked() func() {
-	unsub := e.unsubscribe
-	e.unsubscribe = nil
+// FinishedIfClosed reports whether the game should be treated as finished
+// (rather than host-left) now that the shared subscription has closed.
+func (e *Engine) FinishedIfClosed() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.state.Phase == PhaseFinished
+}
+
+// Leave ends the engine's own participation in an in-progress game; the
+// caller (party) is responsible for the lobby-level cleanup.
+func (e *Engine) Leave() {
+	e.mu.Lock()
+	if e.state.Phase != PhaseDrawing && e.state.Phase != PhaseReveal {
+		e.mu.Unlock()
+		return
+	}
+	if e.host {
+		e.publish(true, e.lobbyID, mustMarshal(struct{}{}))
+	}
+	e.resetLocked()
+	e.mu.Unlock()
+	e.notify()
+}
+
+func (e *Engine) resetLocked() {
 	if e.roundTimer != nil {
 		e.roundTimer.Stop()
 		e.roundTimer = nil
@@ -1014,12 +671,14 @@ func (e *Engine) resetLocked() func() {
 	}
 	e.host = false
 	e.hostAddr = ""
+	e.lobbyID = ""
 	e.peerAddrs = nil
 	e.drawOrder = nil
 	e.usedWords = nil
 	e.roundDeltas = nil
+	e.publish = nil
+	e.sendStart = nil
 	e.state = State{Phase: PhaseIdle}
-	return unsub
 }
 
 func (e *Engine) playerIndexLocked(peerID string) int {
@@ -1034,12 +693,6 @@ func (e *Engine) playerIndexLocked(peerID string) int {
 func (e *Engine) removePlayerLocked(i int) {
 	delete(e.peerAddrs, e.state.Players[i].PeerID)
 	e.state.Players = append(e.state.Players[:i:i], e.state.Players[i+1:]...)
-}
-
-func randomLobbyID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 func mustMarshal(v any) json.RawMessage {

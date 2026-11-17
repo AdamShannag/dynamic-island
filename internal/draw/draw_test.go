@@ -1,269 +1,232 @@
 package draw_test
 
 import (
-	"fmt"
+	"encoding/json"
+	"sync"
 	"testing"
-	"time"
 
-	"github.com/AdamShannag/dynamic-island/internal/discovery"
 	"github.com/AdamShannag/dynamic-island/internal/draw"
+	"github.com/AdamShannag/dynamic-island/internal/lobby"
 )
 
-func waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatal("condition not met within deadline")
+type fakeTransport struct {
+	mu        sync.Mutex
+	published []json.RawMessage
+	started   map[string]json.RawMessage
 }
 
-func newHostGuest(t *testing.T, hostPort, guestPort int) (*draw.Engine, *draw.Engine) {
-	t.Helper()
-	host := draw.NewEngine("h1", "Host", "127.0.0.1", hostPort)
-	if err := host.Enable(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(host.Disable)
-	guest := draw.NewEngine("g1", "Guest", "127.0.0.1", guestPort)
-	if err := guest.Enable(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(guest.Disable)
-	host.SetRoundDuration(10 * time.Second)
-	guest.SetRoundDuration(10 * time.Second)
-	return host, guest
+func newFakeTransport() *fakeTransport {
+	return &fakeTransport{started: map[string]json.RawMessage{}}
 }
 
-func startGame(t *testing.T, host, guest *draw.Engine, hostPort, guestPort int) {
+func (f *fakeTransport) publish(_ bool, _ string, payload json.RawMessage) {
+	f.mu.Lock()
+	f.published = append(f.published, payload)
+	f.mu.Unlock()
+}
+
+func (f *fakeTransport) sendStart(addr, _ string, payload json.RawMessage) error {
+	f.mu.Lock()
+	f.started[addr] = payload
+	f.mu.Unlock()
+	return nil
+}
+
+func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
-	host.CreateLobby()
-	if err := host.Invite(discovery.Peer{ID: "g1", Name: "Guest", Addr: fmt.Sprintf("127.0.0.1:%d", guestPort)}); err != nil {
+	b, err := json.Marshal(v)
+	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return guest.State().Phase == draw.PhaseLobby })
-	if err := guest.Respond(true); err != nil {
+	return b
+}
+
+func TestHostNeverLeaksTheWordInWhatItBroadcasts(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		for _, p := range host.State().Players {
-			if p.PeerID == "g1" && p.Status == "accepted" {
-				return true
+	if host.State().DrawerID != "h1" {
+		t.Fatalf("drawer = %q, want the host to draw first", host.State().DrawerID)
+	}
+	if host.State().Word == "" {
+		t.Fatal("the drawer's own State() must show the word")
+	}
+
+	tr.mu.Lock()
+	last := tr.published[len(tr.published)-1]
+	tr.mu.Unlock()
+	var broadcast draw.State
+	if err := json.Unmarshal(last, &broadcast); err != nil {
+		t.Fatal(err)
+	}
+	if broadcast.Word != "" {
+		t.Fatal("the broadcast payload must always redact the word, even when the host is drawing")
+	}
+
+	tr.mu.Lock()
+	startPayload, ok := tr.started["127.0.0.1:2"]
+	tr.mu.Unlock()
+	if !ok {
+		t.Fatal("expected a round-start sent to the guest")
+	}
+	var p struct{ Word string }
+	_ = json.Unmarshal(startPayload, &p)
+	if p.Word != "" {
+		t.Fatal("a non-drawer must not receive the word in their own start payload")
+	}
+}
+
+func TestDrawerLearnsTheWordFromTheirOwnStartPayload(t *testing.T) {
+	g := draw.NewEngine("g1", "Guest")
+	payload := mustJSON(t, map[string]any{
+		"round": 1, "totalRounds": 2, "drawerId": "g1", "drawerName": "Guest",
+		"word": "umbrella", "roundEndsAtMs": 0,
+		"players": []draw.Player{{PeerID: "g1", Name: "Guest", Status: "accepted"}},
+	})
+	if err := g.BeginGuest("lobby1", "127.0.0.1:1", payload); err != nil {
+		t.Fatal(err)
+	}
+	if g.State().Word != "umbrella" {
+		t.Fatalf("the drawer must see their own word, got %q", g.State().Word)
+	}
+}
+
+func TestApplyEventDoesNotOverwriteTheDrawersOwnKnownWord(t *testing.T) {
+	g := draw.NewEngine("g1", "Guest")
+	payload := mustJSON(t, map[string]any{
+		"round": 1, "totalRounds": 2, "drawerId": "g1", "drawerName": "Guest",
+		"word": "umbrella", "roundEndsAtMs": 0,
+		"players": []draw.Player{{PeerID: "g1", Name: "Guest", Status: "accepted"}},
+	})
+	if err := g.BeginGuest("lobby1", "127.0.0.1:1", payload); err != nil {
+		t.Fatal(err)
+	}
+	// A broadcast from the host always redacts Word, even for the drawer.
+	g.ApplyEvent(mustJSON(t, draw.State{
+		Phase: draw.PhaseDrawing, DrawerID: "g1", Word: "",
+		Players: []draw.Player{{PeerID: "g1", Name: "Guest", Status: "accepted"}},
+	}))
+	if g.State().Word != "umbrella" {
+		t.Fatalf("the drawer's own locally-learned word must survive a redacted broadcast, got %q", g.State().Word)
+	}
+}
+
+func TestNonDrawerNeverSeesTheWord(t *testing.T) {
+	g := draw.NewEngine("g1", "Guest")
+	payload := mustJSON(t, map[string]any{
+		"round": 1, "totalRounds": 2, "drawerId": "h1", "drawerName": "Host",
+		"word": "", "roundEndsAtMs": 0,
+		"players": []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}},
+	})
+	if err := g.BeginGuest("lobby1", "127.0.0.1:1", payload); err != nil {
+		t.Fatal(err)
+	}
+	if g.State().Word != "" {
+		t.Fatal("a non-drawer must never see the word")
+	}
+}
+
+func TestCorrectGuessScoresByRankAndEndsRoundWhenEveryoneHasGuessed(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+	word := host.State().Word
+	if err := host.HandleProgress(lobby.Progress{LobbyID: "lobby1", PeerID: "g1", Payload: mustJSON(t, map[string]string{"type": "guess", "text": word})}); err != nil {
+		t.Fatal(err)
+	}
+	st := host.State()
+	if st.Phase != draw.PhaseReveal && st.Phase != draw.PhaseFinished {
+		t.Fatalf("the only non-drawer guessing correctly must end the round, got phase %v", st.Phase)
+	}
+	if st.LastRound == nil || len(st.LastRound.Deltas) == 0 {
+		t.Fatal("expected a scored round result")
+	}
+	foundGuesser := false
+	for _, d := range st.LastRound.Deltas {
+		if d.PeerID == "g1" {
+			foundGuesser = true
+			if d.Points != 3 {
+				t.Fatalf("first correct guesser should score 3, got %d", d.Points)
 			}
 		}
-		return false
-	})
-	if err := host.Start(); err != nil {
+	}
+	if !foundGuesser {
+		t.Fatal("expected a score delta for the guesser")
+	}
+}
+
+func TestWrongGuessDoesNotScoreOrEndTheRound(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return guest.State().Phase == draw.PhaseDrawing })
-}
-
-func TestNewEngineOpensNothing(t *testing.T) {
-	e := draw.NewEngine("h1", "Host", "127.0.0.1", 48671)
-	if e.Enabled() {
-		t.Fatal("a freshly constructed Engine must not be enabled")
-	}
-	if id := e.CreateLobby(); id != "" {
-		t.Fatal("CreateLobby must be a no-op while disabled")
-	}
-}
-
-func TestEnableDisableIdempotent(t *testing.T) {
-	e := draw.NewEngine("h1", "Host", "127.0.0.1", 48672)
-	if err := e.Enable(); err != nil {
+	if err := host.HandleProgress(lobby.Progress{LobbyID: "lobby1", PeerID: "g1", Payload: mustJSON(t, map[string]string{"type": "guess", "text": "definitely wrong"})}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Enable(); err != nil {
-		t.Fatalf("second Enable must be a no-op, got %v", err)
+	if host.State().Phase != draw.PhaseDrawing {
+		t.Fatalf("phase = %v, want still drawing after a wrong guess", host.State().Phase)
 	}
-	e.Disable()
-	e.Disable()
-}
-
-func TestLobbyInviteAndStart(t *testing.T) {
-	host, guest := newHostGuest(t, 48673, 48674)
-	startGame(t, host, guest, 48673, 48674)
-
-	hs := host.State()
-	if hs.TotalRounds != 2 {
-		t.Fatalf("expected 2 total rounds for 2 players, got %d", hs.TotalRounds)
-	}
-	if hs.DrawerID != "h1" {
-		t.Fatalf("host should draw first, got drawer %q", hs.DrawerID)
-	}
-	if hs.Word == "" {
-		t.Fatal("host (the drawer) must know the word")
+	if len(host.State().Guessed) != 0 {
+		t.Fatal("a wrong guess must not be recorded as a correct guesser")
 	}
 }
 
-func TestNonDrawerNeverSeesWord(t *testing.T) {
-	host, guest := newHostGuest(t, 48675, 48676)
-	startGame(t, host, guest, 48675, 48676)
-
-	hs := host.State()
-	gs := guest.State()
-	if gs.Word != "" {
-		t.Fatalf("guest is not the drawer but sees word %q", gs.Word)
+func TestDrawerCannotGuessTheirOwnWord(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
 	}
-	if hs.Word == "" {
-		t.Fatal("host is the drawer and must know the word")
+	word := host.State().Word
+	if err := host.HandleProgress(lobby.Progress{LobbyID: "lobby1", PeerID: "h1", Payload: mustJSON(t, map[string]string{"type": "guess", "text": word})}); err != nil {
+		t.Fatal(err)
 	}
+	if len(host.State().Guessed) != 0 {
+		t.Fatal("the drawer guessing their own word must not score")
+	}
+}
 
-	// Submit a few strokes from the drawer (host) and confirm the guest still never
-	// receives the word, even though state keeps flowing between them.
-	for i := 0; i < 3; i++ {
-		if err := host.SubmitStroke(draw.Stroke{Points: []draw.Point{{X: 0.1, Y: 0.1}, {X: 0.2, Y: 0.2}}, Color: "#fff", Width: 2}); err != nil {
+func TestStrokesAreCappedPerRound(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", players, map[string]string{}, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		pts := make([]draw.Point, 200)
+		if err := host.SubmitStroke(draw.Stroke{Points: pts, Color: "#000", Width: 2}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	waitFor(t, func() bool { return len(guest.State().Strokes) == 3 })
-	if guest.State().Word != "" {
-		t.Fatal("guest must still not know the word after receiving stroke broadcasts")
+	total := 0
+	for _, s := range host.State().Strokes {
+		total += len(s.Points)
+	}
+	if total > 4000 {
+		t.Fatalf("stroke points = %d, want capped at 4000", total)
 	}
 }
 
-func TestCorrectGuessScoresAndEndsRound(t *testing.T) {
-	host, guest := newHostGuest(t, 48677, 48678)
-	startGame(t, host, guest, 48677, 48678)
-
-	word := host.State().Word
-	if err := guest.SubmitGuess(word); err != nil {
-		t.Fatal(err)
-	}
-	// Only non-drawer (guest) in this 2-player game, so the round should end
-	// immediately once they guess correctly.
-	waitFor(t, func() bool { return host.State().Phase == draw.PhaseReveal })
-
-	hs := host.State()
-	if hs.LastRound == nil {
-		t.Fatal("expected LastRound to be populated after the round ends")
-	}
-	if hs.LastRound.Word != word {
-		t.Fatalf("LastRound.Word = %q, want %q", hs.LastRound.Word, word)
-	}
-	var guestScore, hostScore int
-	for _, p := range hs.Players {
-		if p.PeerID == "g1" {
-			guestScore = p.Score
-		}
-		if p.PeerID == "h1" {
-			hostScore = p.Score
-		}
-	}
-	if guestScore != 3 {
-		t.Fatalf("first correct guesser should score 3, got %d", guestScore)
-	}
-	if hostScore != 1 {
-		t.Fatalf("drawer should get a bonus point when someone guesses, got %d", hostScore)
-	}
-
-	waitFor(t, func() bool { return guest.State().Phase == draw.PhaseReveal })
-	if guest.State().LastRound == nil || guest.State().LastRound.Word != word {
-		t.Fatal("guest must see the revealed word in LastRound after the round ends")
-	}
-}
-
-func TestRoundAdvancesToNextDrawer(t *testing.T) {
-	host, guest := newHostGuest(t, 48679, 48680)
-	startGame(t, host, guest, 48679, 48680)
-
-	word := host.State().Word
-	if err := guest.SubmitGuess(word); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return host.State().Phase == draw.PhaseDrawing && host.State().Round == 2 })
-
-	hs := host.State()
-	if hs.DrawerID != "g1" {
-		t.Fatalf("round 2 should be drawn by the guest, got drawer %q", hs.DrawerID)
-	}
-	if hs.Word != "" {
-		t.Fatal("host is not the drawer this round and must not know the word")
-	}
-	waitFor(t, func() bool { return guest.State().Phase == draw.PhaseDrawing && guest.State().Round == 2 })
-	if guest.State().Word == "" {
-		t.Fatal("guest is the drawer this round and must know the word")
-	}
-
-	if err := guest.SubmitStroke(draw.Stroke{Points: []draw.Point{{X: 0.5, Y: 0.5}}, Color: "#000", Width: 3}); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return len(host.State().Strokes) == 1 })
-}
-
-func TestGameFinishesAfterAllRounds(t *testing.T) {
-	host, guest := newHostGuest(t, 48681, 48682)
-	startGame(t, host, guest, 48681, 48682)
-
-	if err := guest.SubmitGuess(host.State().Word); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return host.State().Round == 2 && host.State().Phase == draw.PhaseDrawing })
-
-	drawerWord := host.State().Word
-	if drawerWord == "" {
-		drawerWord = guest.State().Word
-	}
-	if err := host.SubmitGuess(drawerWord); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return host.State().Phase == draw.PhaseFinished })
-	waitFor(t, func() bool { return guest.State().Phase == draw.PhaseFinished })
-}
-
-func TestDeclinesSecondInviteWhileBusy(t *testing.T) {
-	host := draw.NewEngine("h1", "Host", "127.0.0.1", 48683)
-	host.Enable()
-	defer host.Disable()
-	busy := draw.NewEngine("b1", "Busy", "127.0.0.1", 48684)
-	busy.Enable()
-	defer busy.Disable()
-	other := draw.NewEngine("o1", "Other", "127.0.0.1", 48685)
-	other.Enable()
-	defer other.Disable()
-
-	host.CreateLobby()
-	host.Invite(discovery.Peer{ID: "b1", Name: "Busy", Addr: "127.0.0.1:48684"})
-	waitFor(t, func() bool { return busy.State().Phase == draw.PhaseLobby })
-
-	other.CreateLobby()
-	other.Invite(discovery.Peer{ID: "b1", Name: "Busy", Addr: "127.0.0.1:48684"})
-	waitFor(t, func() bool {
-		for _, p := range other.State().Players {
-			if p.PeerID == "b1" {
-				return p.Status == "declined"
-			}
-		}
-		return false
+func TestOnlyTheDrawerCanSubmitAStroke(t *testing.T) {
+	g := draw.NewEngine("g1", "Guest")
+	payload := mustJSON(t, map[string]any{
+		"round": 1, "totalRounds": 1, "drawerId": "h1", "drawerName": "Host",
+		"players": []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}},
 	})
-}
-
-func TestHostLeaveEndsGuestGame(t *testing.T) {
-	host, guest := newHostGuest(t, 48686, 48687)
-	startGame(t, host, guest, 48686, 48687)
-
-	host.Leave()
-	waitFor(t, func() bool { return guest.State().Phase == draw.PhaseHostLeft })
-}
-
-func TestRoundTimeoutEndsRoundWithNoGuesses(t *testing.T) {
-	host, guest := newHostGuest(t, 48688, 48689)
-	host.SetRoundDuration(300 * time.Millisecond)
-	guest.SetRoundDuration(300 * time.Millisecond)
-	startGame(t, host, guest, 48688, 48689)
-
-	waitFor(t, func() bool { return host.State().Phase == draw.PhaseReveal })
-	hs := host.State()
-	if hs.LastRound == nil {
-		t.Fatal("expected a LastRound even when nobody guessed")
+	if err := g.BeginGuest("lobby1", "127.0.0.1:1", payload); err != nil {
+		t.Fatal(err)
 	}
-	for _, d := range hs.LastRound.Deltas {
-		if d.PeerID == "h1" {
-			t.Fatal("drawer must not get a bonus point when nobody guessed correctly")
-		}
+	if err := g.SubmitStroke(draw.Stroke{Points: []draw.Point{{X: 0, Y: 0}}}); err == nil {
+		t.Fatal("a non-drawer must not be able to submit a stroke")
 	}
 }

@@ -1,12 +1,12 @@
 package race_test
 
 import (
-	"net"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/AdamShannag/dynamic-island/internal/discovery"
+	"github.com/AdamShannag/dynamic-island/internal/lobby"
 	"github.com/AdamShannag/dynamic-island/internal/race"
 )
 
@@ -17,226 +17,158 @@ func waitFor(t *testing.T, cond func() bool) {
 		if cond() {
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("condition not met within deadline")
 }
 
-func TestHostStartRace(t *testing.T) {
-	host := race.NewEngine("h1", "Host", "127.0.0.1", 48571)
-	if err := host.Enable(); err != nil {
-		t.Fatal(err)
-	}
-	defer host.Disable()
-	guest := race.NewEngine("g1", "Guest", "127.0.0.1", 48572)
-	if err := guest.Enable(); err != nil {
-		t.Fatal(err)
-	}
-	defer guest.Disable()
+type fakeTransport struct {
+	mu        sync.Mutex
+	published []json.RawMessage
+	started   map[string]json.RawMessage
+}
 
-	var guestStates []race.State
-	guest.OnChange(func(s race.State) { guestStates = append(guestStates, s) })
+func newFakeTransport() *fakeTransport {
+	return &fakeTransport{started: map[string]json.RawMessage{}}
+}
 
-	lobbyID := host.CreateLobby()
-	if err := host.Invite(discovery.Peer{ID: "g1", Name: "Guest", Addr: "127.0.0.1:48572"}); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return guest.State().Phase == race.PhaseLobby })
+func (f *fakeTransport) publish(_ bool, _ string, payload json.RawMessage) {
+	f.mu.Lock()
+	f.published = append(f.published, payload)
+	f.mu.Unlock()
+}
 
-	if err := guest.Respond(true); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool {
-		for _, r := range host.State().Racers {
-			if r.PeerID == "g1" && r.Status == "accepted" {
-				return true
-			}
+func (f *fakeTransport) sendStart(addr, _ string, payload json.RawMessage) error {
+	f.mu.Lock()
+	f.started[addr] = payload
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeTransport) last() race.State {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var s race.State
+	_ = json.Unmarshal(f.published[len(f.published)-1], &s)
+	return s
+}
+
+func racer(s race.State, id string) (race.Racer, bool) {
+	for _, r := range s.Racers {
+		if r.PeerID == id {
+			return r, true
 		}
-		return false
-	})
+	}
+	return race.Racer{}, false
+}
 
-	if err := host.Start(); err != nil {
+func TestBeginHostSendsStartToEveryGuest(t *testing.T) {
+	host := race.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	racers := []race.Racer{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	peerAddrs := map[string]string{"h1": "127.0.0.1:1", "g1": "127.0.0.1:2"}
+	if err := host.BeginHost("lobby1", racers, peerAddrs, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return guest.State().Phase == race.PhaseRacing && guest.State().Passage != "" })
-
-	passage := guest.State().Passage
-	if err := guest.SubmitProgress(len(passage)); err != nil {
-		t.Fatal(err)
+	if host.State().Phase != race.PhaseRacing {
+		t.Fatalf("phase = %v, want racing", host.State().Phase)
 	}
-	waitFor(t, func() bool {
-		for _, r := range host.State().Racers {
-			if r.PeerID == "g1" && r.FinishedAtMs != 0 {
-				return true
-			}
-		}
-		return false
-	})
-	if lobbyID == "" {
-		t.Fatal("empty lobby id")
+	if _, ok := tr.started["127.0.0.1:2"]; !ok {
+		t.Fatal("expected a start message sent to the guest")
+	}
+	if _, ok := tr.started["127.0.0.1:1"]; ok {
+		t.Fatal("the host must not send itself a start message")
 	}
 }
 
-func TestDeclinesSecondInviteWhileBusy(t *testing.T) {
-	host := race.NewEngine("h1", "Host", "127.0.0.1", 48573)
-	host.Enable()
-	defer host.Disable()
-	busy := race.NewEngine("b1", "Busy", "127.0.0.1", 48574)
-	busy.Enable()
-	defer busy.Disable()
-	other := race.NewEngine("o1", "Other", "127.0.0.1", 48575)
-	other.Enable()
-	defer other.Disable()
-
-	host.CreateLobby()
-	host.Invite(discovery.Peer{ID: "b1", Name: "Busy", Addr: "127.0.0.1:48574"})
-	waitFor(t, func() bool { return busy.State().Phase == race.PhaseLobby })
-
-	other.CreateLobby()
-	other.Invite(discovery.Peer{ID: "b1", Name: "Busy", Addr: "127.0.0.1:48574"})
-	waitFor(t, func() bool {
-		for _, r := range other.State().Racers {
-			if r.PeerID == "b1" {
-				return r.Status == "declined"
-			}
-		}
-		return false
-	})
-	if busy.State().LobbyID != host.State().LobbyID {
-		t.Fatal("the busy engine's original lobby must be unaffected by the second invite")
+func TestBeginHostRequiresAtLeastOneRacer(t *testing.T) {
+	host := race.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	if err := host.BeginHost("lobby1", nil, nil, tr.publish, tr.sendStart); err == nil {
+		t.Fatal("expected an error with no accepted racers")
 	}
 }
 
-func TestNewEngineOpensNothing(t *testing.T) {
-	e := race.NewEngine("h1", "Host", "127.0.0.1", 48576)
-	if e.Enabled() {
-		t.Fatal("a freshly constructed Engine must not be enabled")
+func TestBeginGuestLearnsThePassage(t *testing.T) {
+	g := race.NewEngine("g1", "Guest")
+	payload, _ := json.Marshal("a short passage")
+	if err := g.BeginGuest("lobby1", "127.0.0.1:1", payload); err != nil {
+		t.Fatal(err)
 	}
-	l, err := net.Listen("tcp", "127.0.0.1:48576")
+	if g.State().Passage != "a short passage" || g.State().Phase != race.PhaseRacing {
+		t.Fatalf("got %+v", g.State())
+	}
+}
+
+func TestApplyProgressClampsToThePassageLength(t *testing.T) {
+	host := race.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	racers := []race.Racer{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", racers, map[string]string{}, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+	passageLen := len([]rune(host.State().Passage))
+
+	if err := host.HandleProgress(lobby.Progress{LobbyID: "lobby1", PeerID: "g1", Payload: mustJSON(t, map[string]int{"typedChars": 1 << 30})}); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := racer(host.State(), "g1")
+	if !ok || r.Progress != 1 {
+		t.Fatalf("a huge typedChars count must clamp to 100%% progress, got %+v", r)
+	}
+	if r.FinishedAtMs == 0 {
+		t.Fatal("reaching the full passage length must mark the racer finished")
+	}
+	_ = passageLen
+}
+
+func TestFinishingEveryRacerEndsTheRace(t *testing.T) {
+	host := race.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	racers := []race.Racer{{PeerID: "h1", Name: "Host", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", racers, map[string]string{}, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+	passageLen := len([]rune(host.State().Passage))
+	if err := host.SubmitProgress(passageLen); err != nil {
+		t.Fatal(err)
+	}
+	if host.State().Phase != race.PhaseFinished {
+		t.Fatalf("phase = %v, want finished once the only racer is done", host.State().Phase)
+	}
+}
+
+func TestApplyEventIgnoredOnTheHost(t *testing.T) {
+	host := race.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	racers := []race.Racer{{PeerID: "h1", Name: "Host", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", racers, map[string]string{}, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+	before := host.State()
+	host.ApplyEvent(mustJSON(t, race.State{Phase: race.PhaseFinished}))
+	if host.State().Phase != before.Phase {
+		t.Fatal("ApplyEvent must be a no-op on the host, which is authoritative over its own state")
+	}
+}
+
+func TestLeaveDuringRaceResetsToIdle(t *testing.T) {
+	g := race.NewEngine("g1", "Guest")
+	payload, _ := json.Marshal("passage")
+	if err := g.BeginGuest("lobby1", "127.0.0.1:1", payload); err != nil {
+		t.Fatal(err)
+	}
+	g.Leave()
+	if g.State().Phase != race.PhaseIdle {
+		t.Fatalf("phase = %v, want idle after Leave", g.State().Phase)
+	}
+}
+
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
 	if err != nil {
-		t.Fatalf("port 48576 was already bound by NewEngine: %v", err)
-	}
-	l.Close()
-	if id := e.CreateLobby(); id != "" {
-		t.Fatal("CreateLobby must be a no-op while disabled")
-	}
-}
-
-func TestEnableDisableIdempotent(t *testing.T) {
-	e := race.NewEngine("h1", "Host", "127.0.0.1", 48577)
-	if err := e.Enable(); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Enable(); err != nil {
-		t.Fatalf("second Enable must be a no-op, got %v", err)
-	}
-	e.Disable()
-	e.Disable()
-}
-
-func TestGuestPhaseFinishedOnCleanRaceEnd(t *testing.T) {
-	host := race.NewEngine("h1", "Host", "127.0.0.1", 18581)
-	if err := host.Enable(); err != nil {
-		t.Fatal(err)
-	}
-	defer host.Disable()
-	guest := race.NewEngine("g1", "Guest", "127.0.0.1", 18582)
-	if err := guest.Enable(); err != nil {
-		t.Fatal(err)
-	}
-	defer guest.Disable()
-
-	host.CreateLobby()
-	if err := host.Invite(discovery.Peer{ID: "g1", Name: "Guest", Addr: "127.0.0.1:18582"}); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return guest.State().Phase == race.PhaseLobby })
-
-	if err := guest.Respond(true); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool {
-		for _, r := range host.State().Racers {
-			if r.PeerID == "g1" && r.Status == "accepted" {
-				return true
-			}
-		}
-		return false
-	})
-
-	if err := host.Start(); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return guest.State().Phase == race.PhaseRacing && guest.State().Passage != "" })
-
-	passage := guest.State().Passage
-	if err := host.SubmitProgress(len(passage)); err != nil {
-		t.Fatal(err)
-	}
-	if err := guest.SubmitProgress(len(passage)); err != nil {
-		t.Fatal(err)
-	}
-
-	waitFor(t, func() bool { return guest.State().Phase == race.PhaseFinished })
-
-	for _, r := range guest.State().Racers {
-		if r.FinishedAtMs == 0 {
-			t.Fatalf("expected racer %s to be finished in the guest's view, got %+v", r.PeerID, r)
-		}
-	}
-}
-
-func TestEnableConcurrentIsSafe(t *testing.T) {
-	e := race.NewEngine("h1", "Host", "127.0.0.1", 18583)
-	defer e.Disable()
-
-	var wg sync.WaitGroup
-	errs := make(chan error, 5)
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := e.Enable(); err != nil {
-				errs <- err
-			}
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatalf("concurrent Enable() returned an error: %v", err)
-	}
-
-	if !e.Enabled() {
-		t.Fatal("engine should be enabled after concurrent Enable() calls")
-	}
-	if id := e.CreateLobby(); id == "" {
-		t.Fatal("CreateLobby should work after concurrent Enable() calls settle")
-	}
-}
-
-func TestOnChangeReentrantLeaveDoesNotDeadlock(t *testing.T) {
-	e := race.NewEngine("h1", "Host", "127.0.0.1", 18584)
-	if err := e.Enable(); err != nil {
-		t.Fatal(err)
-	}
-	defer e.Disable()
-
-	done := make(chan struct{})
-	e.OnChange(func(s race.State) {
-		if s.Phase == race.PhaseLobby {
-			e.Leave()
-			close(done)
-		}
-	})
-
-	e.CreateLobby()
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("reentrant Leave() call from inside OnChange appears to have deadlocked")
-	}
-
-	waitFor(t, func() bool { return e.State().Phase == race.PhaseIdle })
+	return b
 }

@@ -892,6 +892,9 @@
   spacing: 4px;
   padding: 0 4px;
 }
+.island-play-mode-row { spacing: 8px; padding-bottom: 6px; }
+.island-play-mode-row .island-pill-btn { background-color: rgba(255, 255, 255, 0.06); }
+.island-play-mode-row .island-pill-btn:checked { background-color: #0a84ff; color: #fff; }
 .island-race-ready-ring {
   width: 86px;
   height: 86px;

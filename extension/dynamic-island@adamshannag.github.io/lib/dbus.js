@@ -54,23 +54,18 @@ export const INTERFACE_XML = `
     <method name="PickColor"/>
     <method name="SetPresenting"><arg name="on" type="b" direction="in"/></method>
     <signal name="ColorPicked"><arg name="hex" type="s"/></signal>
-    <method name="RacePeers"><arg name="peers" type="s" direction="out"/></method>
-    <method name="RaceState"><arg name="state" type="s" direction="out"/></method>
-    <method name="RaceCreate"/>
-    <method name="RaceInvite"><arg name="peer_id" type="s" direction="in"/></method>
-    <method name="RaceRespond"><arg name="accept" type="b" direction="in"/></method>
-    <method name="RaceStart"/>
+    <method name="PartyPeers"><arg name="peers" type="s" direction="out"/></method>
+    <method name="PartyState"><arg name="state" type="s" direction="out"/></method>
+    <method name="PartyCreate"/>
+    <method name="PartyInvite"><arg name="peer_id" type="s" direction="in"/></method>
+    <method name="PartyRespond"><arg name="accept" type="b" direction="in"/></method>
+    <method name="PartySetMode"><arg name="mode" type="s" direction="in"/></method>
+    <method name="PartyStart"/>
+    <method name="PartyRematch"/>
+    <method name="PartyLeave"/>
     <method name="RaceProgress"><arg name="typed_chars" type="i" direction="in"/></method>
-    <method name="RaceLeave"/>
-    <method name="DrawPeers"><arg name="peers" type="s" direction="out"/></method>
-    <method name="DrawState"><arg name="state" type="s" direction="out"/></method>
-    <method name="DrawCreate"/>
-    <method name="DrawInvite"><arg name="peer_id" type="s" direction="in"/></method>
-    <method name="DrawRespond"><arg name="accept" type="b" direction="in"/></method>
-    <method name="DrawStart"/>
     <method name="DrawStroke"><arg name="stroke" type="s" direction="in"/></method>
     <method name="DrawGuess"><arg name="text" type="s" direction="in"/></method>
-    <method name="DrawLeave"/>
     <signal name="StateChanged"><arg name="state" type="s"/></signal>
     <signal name="OpenDashboard"><arg name="tab" type="s"/></signal>
   </interface>
