@@ -1075,9 +1075,47 @@
 .island-proc-icon { icon-size: 20px; }
 .island-proc-initial { font-size: 8pt; font-weight: 800; color: rgba(245, 245, 247, 0.6); }
 
-.island-draw-header { spacing: 10px; padding-bottom: 6px; }
-.island-draw-canvas {
-  border-radius: 14px;
-  min-height: 220px;
+.island-race-timer { font-size: 10pt; font-weight: 700; color: rgba(245, 245, 247, 0.5); font-feature-settings: "tnum"; padding: 0 10px; }
+
+.island-draw-word-pill {
+  padding: 8px 20px;
+  border-radius: 999px;
+  background-color: rgba(255, 214, 10, 0.1);
+  border: 1px solid rgba(255, 214, 10, 0.25);
 }
-.island-draw-guess { font-family: inherit; }
+.island-draw-word-text { font-size: 14pt; font-weight: 800; letter-spacing: 0.3px; color: #ffd60a; }
+.island-draw-word-hint { font-size: 7.5pt; color: rgba(245, 245, 247, 0.35); padding-top: 4px; }
+
+.island-draw-canvas-wrap { padding-top: 12px; }
+.island-draw-canvas {
+  border-radius: 18px;
+  min-height: 180px;
+  background-color: #f5f5f7;
+}
+
+.island-draw-tools { spacing: 10px; }
+.island-draw-swatch { width: 18px; height: 18px; border-radius: 11px; border: 2px solid rgba(255, 255, 255, 0.4); }
+.island-draw-swatch:checked { border-color: rgba(255, 255, 255, 0.9); }
+
+.island-draw-drawer-row { spacing: 10px; padding-top: 10px; }
+.island-badge.island-draw-drawer-avatar { width: 26px; height: 26px; border-radius: 13px; }
+.island-draw-drawer-avatar .island-badge-glyph { font-size: 8.5pt; }
+.island-draw-drawer-label { font-size: 10pt; font-weight: 600; color: rgba(245, 245, 247, 0.6); }
+
+.island-badge.island-draw-presence-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 14px;
+  border: 2px solid #000000;
+}
+.island-draw-presence-avatar .island-badge-glyph { font-size: 7pt; }
+.island-draw-presence-guessed { box-shadow: 0 0 0 2px #30d158; }
+
+.island-draw-guess-entry {
+  margin-top: 12px;
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 11px 18px;
+  font-size: 10pt;
+}
