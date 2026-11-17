@@ -249,6 +249,8 @@ export class RacePage extends Page {
 
     _applyTyped() {
         this._passageLabel.clutter_text.set_markup(this._passageMarkup(this._typed));
+        const [, naturalHeight] = this._passageLabel.get_preferred_height(620);
+        this._markerLayer.height = naturalHeight;
         this._moveCaret(this._selfCaret, Math.min(Array.from(this._typed).length, Array.from(this._passage).length), SELF_CARET_MS);
         this._submitProgress();
     }
