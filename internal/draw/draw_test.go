@@ -296,3 +296,22 @@ func TestRoundsConfiguredAboveThePlayerCountActuallyPlayAllOfThem(t *testing.T) 
 		t.Fatalf("phase after round 4 = %v, want finished", got)
 	}
 }
+
+// TestGuestLeavingMidGameEndsItRatherThanContinuingSolo: drawing needs a
+// drawer and at least one guesser, so once a leave drops the roster below
+// 2 the game should finish outright instead of sitting the host through
+// every remaining round alone with nobody able to guess.
+func TestGuestLeavingMidGameEndsItRatherThanContinuingSolo(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, 5, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.HandleRespond(lobby.Response{LobbyID: "lobby1", PeerID: "g1", Accept: false}); err != nil {
+		t.Fatal(err)
+	}
+	if got := host.State().Phase; got != draw.PhaseFinished {
+		t.Fatalf("phase = %v, want finished once the guest leaves and only the host remains", got)
+	}
+}

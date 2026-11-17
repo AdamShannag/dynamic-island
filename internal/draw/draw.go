@@ -298,6 +298,20 @@ func (e *Engine) HandleRespond(r lobby.Response) error {
 	leavingDrawer := e.state.Players[idx].PeerID == e.state.DrawerID
 	e.removePlayerLocked(idx)
 	switch {
+	case len(e.state.Players) < 2:
+		// Drawing needs at least one drawer and one guesser; continuing
+		// solo would just sit out every remaining round until the timer
+		// expires each time, with nobody able to guess.
+		e.state.Phase = PhaseFinished
+		if e.roundTimer != nil {
+			e.roundTimer.Stop()
+			e.roundTimer = nil
+		}
+		if e.revealTimer != nil {
+			e.revealTimer.Stop()
+			e.revealTimer = nil
+		}
+		e.publishLocked()
 	case leavingDrawer && e.state.Phase == PhaseDrawing:
 		e.endRoundLocked()
 	case e.state.Phase == PhaseDrawing:

@@ -926,23 +926,28 @@ export class PlayPage extends Page {
         this._snakeCanvas.connect('motion-event', (actor, event) => this._onSnakeMove(actor, event));
         stack.add_child(this._snakeCanvas);
 
-        this._snakeLeaderboard = column({
-            style_class: 'island-snake-leaderboard', x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.START,
-        });
+        // BinLayout only honors x_expand/y_expand (fill); it ignores a
+        // child's x_align/y_align, so corner/centered overlays need their
+        // own FixedLayout with explicitly computed positions (see
+        // _layoutSnakeOverlay) rather than relying on alignment here.
+        const overlay = new St.Widget({layout_manager: new Clutter.FixedLayout(), x_expand: true, y_expand: true});
+        stack.add_child(overlay);
+
+        this._snakeLeaderboard = column({style_class: 'island-snake-leaderboard'});
         this._snakeLeaderboard.add_child(label('island-igroup-title', {text: 'LEADERBOARD'}));
         this._snakeLeaderboardList = column();
         this._snakeLeaderboard.add_child(this._snakeLeaderboardList);
-        stack.add_child(this._snakeLeaderboard);
+        overlay.add_child(this._snakeLeaderboard);
 
-        this._snakeDeadOverlay = column({
-            style_class: 'island-snake-dead', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
-        });
+        this._snakeDeadOverlay = column({style_class: 'island-snake-dead'});
         this._snakeDeadTitle = label('island-race-finish-title', {text: 'You died', x_align: Clutter.ActorAlign.CENTER});
         this._snakeDeadScore = label('island-race-subtitle', {x_align: Clutter.ActorAlign.CENTER});
         this._snakeDeadOverlay.add_child(this._snakeDeadTitle);
         this._snakeDeadOverlay.add_child(this._snakeDeadScore);
         this._snakeDeadOverlay.hide();
-        stack.add_child(this._snakeDeadOverlay);
+        overlay.add_child(this._snakeDeadOverlay);
+
+        overlay.connect('notify::allocation', () => this._layoutSnakeOverlay(overlay));
 
         const leaveRow = new St.BoxLayout({x_expand: true});
         const leaveSpacer = new St.Widget({x_expand: true});
@@ -953,6 +958,18 @@ export class PlayPage extends Page {
         view.add_child(stack);
         view.add_child(leaveRow);
         return view;
+    }
+
+    _layoutSnakeOverlay(overlay) {
+        const box = overlay.get_allocation_box();
+        const w = box.get_width(), h = box.get_height();
+        if (w <= 0 || h <= 0)
+            return;
+        const [, lbW] = this._snakeLeaderboard.get_preferred_width(-1);
+        this._snakeLeaderboard.set_position(Math.round(w - lbW - 10), 10);
+        const [, doW] = this._snakeDeadOverlay.get_preferred_width(-1);
+        const [, doH] = this._snakeDeadOverlay.get_preferred_height(-1);
+        this._snakeDeadOverlay.set_position(Math.round((w - doW) / 2), Math.round((h - doH) / 2));
     }
 
     _onSnakeMove(actor, event) {
@@ -1073,16 +1090,23 @@ export class PlayPage extends Page {
         }
     }
 
+    _snakeRankCompare(a, b) {
+        if (!!a.alive !== !!b.alive)
+            return a.alive ? -1 : 1;
+        return b.score - a.score;
+    }
+
     _syncSnakeLeaderboard(players) {
-        const ranked = [...players].sort((a, b) => b.score - a.score).slice(0, 5);
-        const sig = ranked.map(p => `${p.peerId}:${p.score}`).join('|');
+        const ranked = [...players].sort((a, b) => this._snakeRankCompare(a, b)).slice(0, 5);
+        const sig = ranked.map(p => `${p.peerId}:${p.score}:${p.alive}`).join('|');
         if (sig === this._snakeLbSig)
             return;
         this._snakeLbSig = sig;
         this._snakeLeaderboardList.destroy_all_children();
         ranked.forEach((p, i) => {
             const isSelf = p.peerId === this._selfId;
-            const row = new St.BoxLayout({style_class: `island-snake-lb-row${isSelf ? ' self' : ''}`});
+            const classes = `island-snake-lb-row${isSelf ? ' self' : ''}${p.alive ? '' : ' dead'}`;
+            const row = new St.BoxLayout({style_class: classes});
             row.add_child(label('island-snake-lb-rank', {text: `${i + 1}`}));
             const dot = new St.Widget({style_class: 'island-snake-lb-dot', y_align: Clutter.ActorAlign.CENTER});
             dot.set_style(`background-color: ${isSelf ? SELF_CARET_COLOR : this._playerColor(p.peerId)};`);
@@ -1241,17 +1265,17 @@ export class PlayPage extends Page {
 
     _renderSnakeResult(state, finished, missed) {
         const players = state.snake?.players ?? [];
-        const ranked = [...players].sort((a, b) => b.score - a.score);
+        const ranked = [...players].sort((a, b) => this._snakeRankCompare(a, b));
         const winner = ranked[0];
         setText(this._resultTitle, finished ? 'Game finished' : missed ? 'That game already started' : 'The host left the game');
         setText(this._resultHint, finished
-            ? (winner ? `${winner.name} had the highest score` : '')
+            ? (winner ? `${winner.name} ${winner.alive ? 'survived with the highest score' : 'had the highest score'}` : '')
             : missed ? 'The host started before you joined.' : 'Your progress was not saved.');
         this._resultHint.visible = !finished || !!winner;
         this._resultGroupActor.visible = finished && ranked.length > 0;
         if (!finished)
             return;
-        const sig = `snake:${ranked.map(p => `${p.peerId}:${p.score}`).join('|')}`;
+        const sig = `snake:${ranked.map(p => `${p.peerId}:${p.score}:${p.alive}`).join('|')}`;
         if (sig === this._resultSig)
             return;
         this._resultSig = sig;
@@ -1271,7 +1295,7 @@ export class PlayPage extends Page {
             nameRow.add_child(this._winnerIcon());
         row.add_child(nameRow);
         row.add_child(label(isWinner ? 'island-irow-sub island-race-winner-wpm' : 'island-irow-sub', {
-            text: `${p.score} pts`, x_align: Clutter.ActorAlign.END,
+            text: `${p.score} pts${p.alive ? '' : ' · Died'}`, x_align: Clutter.ActorAlign.END,
         }));
         return row;
     }
