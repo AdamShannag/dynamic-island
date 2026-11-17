@@ -991,3 +991,10 @@
 .island-proc-iconbin.initial { border-radius: 6px; background-color: rgba(255, 255, 255, 0.08); }
 .island-proc-icon { icon-size: 20px; }
 .island-proc-initial { font-size: 8pt; font-weight: 800; color: rgba(245, 245, 247, 0.6); }
+
+.island-draw-header { spacing: 10px; padding-bottom: 6px; }
+.island-draw-canvas {
+  border-radius: 14px;
+  min-height: 220px;
+}
+.island-draw-guess { font-family: inherit; }
