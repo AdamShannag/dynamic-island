@@ -869,33 +869,63 @@
   border-radius: 1.5px;
 }
 
+.island-race-subtitle { font-size: 10pt; color: rgba(245, 245, 247, 0.5); padding: 2px 0 0; }
+.island-race-finish-title { font-size: 19.5pt; font-weight: 700; }
+
 .island-race-peer-btn { border-radius: 999px; background-color: transparent; }
 .island-race-peer-btn:hover  { background-color: transparent; }
 .island-race-peer-btn:active { background-color: transparent; }
 .island-race-peer-btn:focus  { box-shadow: none; }
-.island-race-peer-avatar { width: 72px; height: 72px; border-radius: 36px; }
-.island-race-peer-avatar .island-badge-glyph { font-size: 20pt; }
-.island-race-peer-name { font-size: 11pt; padding-top: 10px; }
-.island-race-peer-addr { font-size: 8.5pt; }
+.island-race-peer-ring {
+  width: 108px;
+  height: 108px;
+  border-radius: 54px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.island-badge.island-race-peer-avatar { width: 84px; height: 84px; border-radius: 42px; }
+.island-race-peer-avatar .island-badge-glyph { font-size: 21pt; }
+.island-race-peer-name { font-size: 10.5pt; padding-top: 12px; }
+.island-race-peer-addr { font-size: 8pt; }
 
-.island-race-host-row { spacing: 18px; }
+.island-race-host-row { spacing: 20px; }
 .island-race-host-panel {
-  width: 220px;
-  spacing: 14px;
+  width: 240px;
+  spacing: 4px;
   padding: 0 4px;
 }
-.island-race-ready-track {
-  width: 160px;
-  height: 6px;
-  border-radius: 3px;
-  background-color: rgba(255, 255, 255, 0.08);
+.island-race-ready-ring {
+  width: 86px;
+  height: 86px;
+  border-radius: 43px;
+  border: 4px solid #0a84ff;
+  background-color: #000000;
+  margin-bottom: 14px;
 }
-.island-race-ready-fill {
-  height: 6px;
-  border-radius: 3px;
-  background-color: #0a84ff;
+.island-race-ready-ring-label { font-size: 13pt; font-weight: 800; }
+.island-race-ready-label { font-size: 10.5pt; font-weight: 600; padding-bottom: 18px; }
+.island-race-start-btn { width: 232px; padding: 13px 0; font-size: 10.5pt; }
+.island-race-full-btn { padding: 13px 0; font-size: 10.5pt; }
+
+.island-race-chip {
+  font-size: 8pt;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
 }
-.island-race-ready-label { font-size: 10.5pt; font-weight: 600; padding-top: 4px; }
+.island-race-chip.ready  { color: #30d158; background-color: rgba(48, 209, 88, 0.16); }
+.island-race-chip.waiting { color: rgba(245, 245, 247, 0.5); background-color: rgba(255, 255, 255, 0.08); }
+.island-race-chip.declined { color: #ff453a; background-color: rgba(255, 69, 58, 0.16); }
+.island-badge.island-race-row-avatar { width: 34px; height: 34px; border-radius: 17px; }
+.island-race-row-avatar .island-badge-glyph { font-size: 9.5pt; }
+
+.island-badge.island-race-presence-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 15px;
+  border: 2px solid #000000;
+}
+.island-race-presence-avatar .island-badge-glyph { font-size: 8.5pt; }
+.island-race-presence-self { box-shadow: 0 0 0 2px #0a84ff; }
 
 .island-pill-btn.link {
   background-color: transparent;
@@ -913,12 +943,14 @@
   background-color: rgba(255, 214, 10, 0.08);
   border: 1px solid rgba(255, 214, 10, 0.22);
 }
-.island-race-winner-avatar { width: 52px; height: 52px; border-radius: 26px; }
+.island-badge.island-race-winner-avatar { width: 56px; height: 56px; border-radius: 28px; }
 .island-race-winner-avatar .island-badge-glyph { font-size: 15pt; }
-.island-race-winner-name { font-size: 13pt; font-weight: 700; }
-.island-race-winner-sub  { font-size: 9.5pt; font-weight: 700; color: #ffd60a; }
-.island-race-winner-wpm  { font-size: 17pt; font-weight: 800; font-feature-settings: "tnum"; }
-.island-race-rank { width: 18px; color: rgba(245, 245, 247, 0.35); font-weight: 700; }
+.island-race-winner-name { font-size: 14pt; font-weight: 700; }
+.island-race-winner-sub  { font-size: 10pt; font-weight: 700; color: #ffd60a; }
+.island-race-winner-wpm  { font-size: 19pt; font-weight: 800; font-feature-settings: "tnum"; }
+.island-race-rank { width: 20px; font-size: 10pt; color: rgba(245, 245, 247, 0.35); font-weight: 700; }
+.island-badge.island-race-list-avatar { width: 30px; height: 30px; border-radius: 15px; }
+.island-race-list-avatar .island-badge-glyph { font-size: 9pt; }
 
 .island.theme-blue .island-xf-mini.accent { background-color: #0a84ff; }
 .island.theme-blue .island-xf-text { caret-color: #0a84ff; }

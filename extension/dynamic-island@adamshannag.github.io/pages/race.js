@@ -15,12 +15,12 @@ const SELF_CARET_COLOR = '#0a84ff';
 const SELF_CARET_MS = 110;
 const PEER_CARET_MS = 350;
 
-function statusSpec(status) {
+function chipSpec(status) {
     if (status === 'accepted')
-        return {glyph: '✓', color: '#30d158'};
+        return {text: 'Ready', kind: 'ready'};
     if (status === 'declined')
-        return {glyph: '✕', color: '#ff453a'};
-    return {glyph: '•', color: '#8e8e93'};
+        return {text: 'Declined', kind: 'declined'};
+    return {text: 'Waiting', kind: 'waiting'};
 }
 
 export class RacePage extends Page {
@@ -53,6 +53,7 @@ export class RacePage extends Page {
     _buildIdle() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
         const eyebrow = label('island-igroup-title', {text: 'NEARBY'});
+        const subtitle = label('island-race-subtitle', {text: 'Tap someone to invite them to race'});
         this._peerEmpty = new EmptyState();
         this._peerFlow = new St.Widget({
             layout_manager: new Clutter.FlowLayout({
@@ -64,13 +65,18 @@ export class RacePage extends Page {
         flowWrap.add_child(this._peerFlow);
         this._idleScroll = scrollView(flowWrap);
         view.add_child(eyebrow);
+        view.add_child(subtitle);
         view.add_child(this._peerEmpty.actor);
         view.add_child(this._idleScroll);
         return view;
     }
 
     _buildLobbyHost() {
-        const view = new St.BoxLayout({style_class: 'island-page island-race-host-row', x_expand: true, y_expand: true});
+        const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
+        const eyebrow = label('island-igroup-title', {text: 'LOBBY'});
+        const subtitle = label('island-race-subtitle', {text: 'Waiting for racers to accept'});
+
+        const row = new St.BoxLayout({style_class: 'island-race-host-row', x_expand: true, y_expand: true});
         this._inviteToggleBtn = pillButton('Invite more', () => this._toggleInvitePicker());
         const racersGroup = group('RACERS', this._inviteToggleBtn);
         this._hostRacerList = racersGroup.list;
@@ -86,18 +92,25 @@ export class RacePage extends Page {
         left.x_expand = true;
 
         const panel = column({style_class: 'island-race-host-panel', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
-        const track = new St.Widget({style_class: 'island-race-ready-track', layout_manager: new Clutter.BinLayout(), x_align: Clutter.ActorAlign.CENTER});
-        this._readyFill = new St.Widget({style_class: 'island-race-ready-fill', x_align: Clutter.ActorAlign.START});
-        track.add_child(this._readyFill);
+        const ring = new St.Widget({
+            style_class: 'island-race-ready-ring', layout_manager: new Clutter.BinLayout(),
+            width: 86, height: 86, x_expand: false, y_expand: false, x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._readyRingLabel = label('island-race-ready-ring-label', {x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+        ring.add_child(this._readyRingLabel);
         this._readyLabel = label('island-race-ready-label', {text: '', x_align: Clutter.ActorAlign.CENTER});
         const startBtn = pillButton('Start race', () => this.call('RaceStart', [], () => this.refresh()), 'primary');
-        panel.add_child(track);
+        startBtn.add_style_class_name('island-race-start-btn');
+        panel.add_child(ring);
         panel.add_child(this._readyLabel);
         panel.add_child(startBtn);
         panel.add_child(this._leaveButton('Cancel', 'link'));
 
-        view.add_child(left);
-        view.add_child(panel);
+        row.add_child(left);
+        row.add_child(panel);
+        view.add_child(eyebrow);
+        view.add_child(subtitle);
+        view.add_child(row);
         return view;
     }
 
@@ -119,37 +132,37 @@ export class RacePage extends Page {
 
     _buildRacing() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
-        const card = new St.BoxLayout({style_class: 'island-card island-race-card', x_expand: true, y_align: Clutter.ActorAlign.START});
-        const cardCol = column({x_expand: true});
 
+        const top = new St.BoxLayout({x_expand: true});
+        const eyebrow = label('island-igroup-title', {text: 'RACING', x_expand: true});
+        this._presenceRow = new St.Widget({layout_manager: new Clutter.FixedLayout(), height: 30});
+        top.add_child(eyebrow);
+        top.add_child(this._presenceRow);
+
+        const passageWrap = column({x_expand: true, y_expand: true, x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
         this._passageStack = new St.Widget({
-            layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true,
+            layout_manager: new Clutter.BinLayout(), width: 620,
             reactive: true, can_focus: true,
         });
-        this._passageLabel = new St.Label({style_class: 'island-race-passage', x_expand: true, y_expand: true});
+        this._passageLabel = new St.Label({style_class: 'island-race-passage', width: 620});
         this._passageLabel.clutter_text.line_wrap = true;
         this._passageLabel.reactive = false;
-        this._markerLayer = new St.Widget({x_expand: true, y_expand: true, clip_to_allocation: true, reactive: false});
+        this._markerLayer = new St.Widget({width: 620, clip_to_allocation: true, reactive: false});
         this._passageStack.add_child(this._passageLabel);
         this._passageStack.add_child(this._markerLayer);
         this._selfCaret = this._makeCaret(SELF_CARET_COLOR);
         this._markerLayer.add_child(this._selfCaret);
         this._raceMarkers = new Map();
         this._typed = '';
+        this._presenceSig = null;
         this._passageStack.connect('key-press-event', (actor, event) => this._onKeyPress(event));
+        passageWrap.add_child(this._passageStack);
 
-        cardCol.add_child(this._passageStack);
-        card.add_child(cardCol);
-        const raceGroup = group('RACERS');
-        this._raceList = raceGroup.list;
-        this._raceRefs = new Map();
-        const groups = column({style_class: 'island-groups'});
-        groups.add_child(raceGroup.actor);
-        const toolbar = new St.BoxLayout({style_class: 'island-toolbar'});
-        toolbar.add_child(this._leaveButton('Leave'));
-        view.add_child(card);
-        view.add_child(scrollView(groups));
-        view.add_child(toolbar);
+        const leaveBtn = this._leaveButton('Leave', 'link');
+        leaveBtn.x_align = Clutter.ActorAlign.CENTER;
+        view.add_child(top);
+        view.add_child(passageWrap);
+        view.add_child(leaveBtn);
         return view;
     }
 
@@ -275,8 +288,8 @@ export class RacePage extends Page {
 
     _buildResult() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
-        this._resultTitle = label('island-xf-title');
-        this._resultHint = label('island-hint');
+        this._resultTitle = label('island-race-finish-title');
+        this._resultHint = label('island-race-subtitle');
 
         this._winnerCard = new St.BoxLayout({style_class: 'island-race-winner-card', x_expand: true});
         this._winnerBadge = badge({glyph: '?', color: '#8e8e93'});
@@ -294,13 +307,14 @@ export class RacePage extends Page {
         const resultGroup = group('RESULTS');
         this._resultGroupActor = resultGroup.actor;
         this._resultList = resultGroup.list;
-        const toolbar = new St.BoxLayout({style_class: 'island-toolbar'});
-        toolbar.add_child(this._leaveButton('Done', 'primary'));
+        const doneBtn = this._leaveButton('Done', 'primary');
+        doneBtn.x_expand = true;
+        doneBtn.add_style_class_name('island-race-full-btn');
         view.add_child(this._resultTitle);
         view.add_child(this._resultHint);
         view.add_child(this._winnerCard);
         view.add_child(scrollView(resultGroup.actor));
-        view.add_child(toolbar);
+        view.add_child(doneBtn);
         return view;
     }
 
@@ -334,7 +348,7 @@ export class RacePage extends Page {
             this._lastSubmittedLen = 0;
             this._typed = '';
             this._hostSig = null;
-            this._raceSig = null;
+            this._presenceSig = null;
             this._resultSig = null;
             this._peerSig = null;
             this._passage = null;
@@ -402,7 +416,11 @@ export class RacePage extends Page {
         const col = column({x_align: Clutter.ActorAlign.CENTER});
         const badgeActor = badge({glyph: (peer.name[0] ?? '?').toUpperCase(), color: this._racerColor(peer.id)});
         badgeActor.add_style_class_name('island-race-peer-avatar');
-        const btn = new St.Button({style_class: 'island-race-peer-btn', can_focus: true, child: badgeActor});
+        badgeActor.x_align = Clutter.ActorAlign.CENTER;
+        badgeActor.y_align = Clutter.ActorAlign.CENTER;
+        const ring = new St.Widget({style_class: 'island-race-peer-ring', layout_manager: new Clutter.BinLayout()});
+        ring.add_child(badgeActor);
+        const btn = new St.Button({style_class: 'island-race-peer-btn', can_focus: true, child: ring});
         const name = label('island-irow-title island-race-peer-name', {text: peer.name, x_align: Clutter.ActorAlign.CENTER});
         const addr = label('island-irow-sub island-race-peer-addr', {text: peer.addr, x_align: Clutter.ActorAlign.CENTER});
         const refs = {btn, addr};
@@ -474,11 +492,15 @@ export class RacePage extends Page {
         this._invitedIds = new Set(racers.map(r => r.peerId));
         this._syncHostRacerRows(racers);
         const ready = racers.filter(r => r.status === 'accepted').length;
-        const total = Math.max(racers.length, 1);
-        this._readyFill.width = Math.round(160 * (ready / total));
+        setText(this._readyRingLabel, `${ready}/${racers.length}`);
         setText(this._readyLabel, `${ready} of ${racers.length} ready to race`);
         if (this._invitePickerOpen)
             this._refreshInvitePicker();
+    }
+
+    _chip(status) {
+        const spec = chipSpec(status);
+        return label(`island-race-chip ${spec.kind}`, {text: spec.text});
     }
 
     _syncHostRacerRows(racers) {
@@ -489,12 +511,15 @@ export class RacePage extends Page {
             this._hostRacerRefs.clear();
             for (const r of racers) {
                 const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
+                const avatar = badge({glyph: (r.name[0] ?? '?').toUpperCase(), color: this._racerColor(r.peerId)});
+                avatar.add_style_class_name('island-race-row-avatar');
                 const name = label('island-irow-title', {text: r.name, x_expand: true});
+                const chip = this._chip(r.status);
+                row.add_child(avatar);
                 row.add_child(name);
-                const badgeActor = badge(statusSpec(r.status));
-                row.add_child(badgeActor);
+                row.add_child(chip);
                 this._hostRacerList.add_child(row);
-                this._hostRacerRefs.set(r.peerId, {name, row, badgeActor, status: r.status});
+                this._hostRacerRefs.set(r.peerId, {name, row, chip, status: r.status});
             }
             return;
         }
@@ -505,9 +530,9 @@ export class RacePage extends Page {
             setText(refs.name, r.name);
             if (refs.status !== r.status) {
                 refs.status = r.status;
-                refs.row.remove_child(refs.badgeActor);
-                refs.badgeActor = badge(statusSpec(r.status));
-                refs.row.add_child(refs.badgeActor);
+                refs.row.remove_child(refs.chip);
+                refs.chip = this._chip(r.status);
+                refs.row.add_child(refs.chip);
             }
         }
     }
@@ -543,34 +568,29 @@ export class RacePage extends Page {
             this._applyTyped();
         }
         this._syncRaceMarkers(state);
-        this._syncRaceRows(state.racers ?? [], state.selfId);
+        this._syncPresence(state.racers ?? [], state.selfId);
     }
 
-    _syncRaceRows(racers, selfId) {
+    _syncPresence(racers, selfId) {
         const sig = racers.map(r => r.peerId).join('|');
-        if (sig !== this._raceSig) {
-            this._raceSig = sig;
-            this._raceList.destroy_all_children();
-            this._raceRefs.clear();
-            for (const r of racers) {
-                const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
-                const dot = badge({color: r.peerId === selfId ? SELF_CARET_COLOR : this._racerColor(r.peerId), glyph: ''});
-                const name = label('island-irow-title', {text: r.name, x_expand: true});
-                const value = label('island-irow-sub', {x_align: Clutter.ActorAlign.END});
-                row.add_child(dot);
-                row.add_child(name);
-                row.add_child(value);
-                this._raceList.add_child(row);
-                this._raceRefs.set(r.peerId, {name, value});
-            }
+        if (sig === this._presenceSig)
+            return;
+        this._presenceSig = sig;
+        this._presenceRow.destroy_all_children();
+        const ordered = [...racers].sort((a, b) => (a.peerId === selfId ? -1 : b.peerId === selfId ? 1 : 0));
+        const step = 22;
+        let x = 0;
+        for (const r of ordered) {
+            const avatar = badge({glyph: (r.name[0] ?? '?').toUpperCase(), color: r.peerId === selfId ? SELF_CARET_COLOR : this._racerColor(r.peerId)});
+            avatar.add_style_class_name('island-race-presence-avatar');
+            if (r.peerId === selfId)
+                avatar.add_style_class_name('island-race-presence-self');
+            avatar.x = x;
+            avatar.y = 0;
+            this._presenceRow.add_child(avatar);
+            x += step;
         }
-        for (const r of racers) {
-            const refs = this._raceRefs.get(r.peerId);
-            if (!refs)
-                continue;
-            setText(refs.name, r.name);
-            setText(refs.value, r.finishedAtMs ? `Finished · ${Math.round(r.wpm)} wpm` : '');
-        }
+        this._presenceRow.width = ordered.length ? x + (30 - step) : 1;
     }
 
     _renderResult(state) {
@@ -597,12 +617,15 @@ export class RacePage extends Page {
             setText(this._winnerName, winner.name);
             setText(this._winnerWpm, winner.finishedAtMs ? `${Math.round(winner.wpm)} wpm` : '—');
         }
-        fillList(this._resultList, ranked.slice(1), (r, i) => this._resultRow(r, i + 2));
+        fillList(this._resultList, ranked.slice(1), (r, i) => this._resultRow(r, i + 2, state.selfId));
     }
 
-    _resultRow(r, rank) {
+    _resultRow(r, rank, selfId) {
         const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
         row.add_child(label('island-race-rank', {text: `${rank}`, x_align: Clutter.ActorAlign.CENTER}));
+        const avatar = badge({glyph: (r.name[0] ?? '?').toUpperCase(), color: r.peerId === selfId ? SELF_CARET_COLOR : this._racerColor(r.peerId)});
+        avatar.add_style_class_name('island-race-list-avatar');
+        row.add_child(avatar);
         row.add_child(label('island-irow-title', {text: r.name, x_expand: true}));
         row.add_child(label('island-irow-sub', {
             text: r.finishedAtMs ? `${Math.round(r.wpm)} wpm` : 'Did not finish',
