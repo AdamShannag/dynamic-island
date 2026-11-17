@@ -2,11 +2,13 @@ package dbusapi
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
 	"github.com/godbus/dbus/v5"
 
+	"github.com/AdamShannag/dynamic-island/internal/discovery"
 	"github.com/AdamShannag/dynamic-island/internal/island"
 	"github.com/AdamShannag/dynamic-island/internal/tools"
 )
@@ -14,6 +16,14 @@ import (
 func (a *api) QR(text string) (string, *dbus.Error) {
 	p, err := tools.QR(text)
 	return p, dbusErr(err)
+}
+
+func (a *api) LanAddress() (string, *dbus.Error) {
+	ip := discovery.LocalIP()
+	if ip == "" {
+		return "", dbusErr(errors.New("no LAN address"))
+	}
+	return ip, nil
 }
 
 func (a *api) PickColor() *dbus.Error {

@@ -1,6 +1,9 @@
 package settings
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,49 +73,79 @@ func TestPlayFeatureOffByDefault(t *testing.T) {
 	}
 }
 
-func TestNormalizeBar(t *testing.T) {
+func loadFile(t *testing.T, body string) Settings {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	cur = Defaults()
+	mu.Unlock()
+	if err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	return Get()
+}
+
+func TestMigrateBarToFavorites(t *testing.T) {
 	cases := []struct {
-		in, want []string
+		name, file, want string
 	}{
-		{nil, []string{"home"}},
-		{[]string{"docker"}, []string{"home", "docker"}},
-		{[]string{"notes", "home", "bogus", "notes", "inbox"}, []string{"home", "notes", "inbox"}},
-		{[]string{"inbox", "docker", "ports", "notes", "play"}, []string{"home", "inbox", "docker", "ports"}},
+		{"pins move, home and inbox dropped", `{"accent":"green","bar":["home","inbox","docker","notes"]}`, "docker,notes"},
+		{"only home and inbox falls back to defaults", `{"bar":["home","inbox"]}`, "docker,ports,clipboard,notes,agents"},
+		{"unknown ids are dropped", `{"bar":["home","bogus","play","play"]}`, "play"},
+		{"an existing home key wins", `{"bar":["home","docker"],"home":{"favorites":["agents"]}}`, "agents"},
+		{"no bar keeps defaults", `{"accent":"teal"}`, "docker,ports,clipboard,notes,agents"},
 	}
 	for _, c := range cases {
-		if got := NormalizeBar(c.in); strings.Join(got, ",") != strings.Join(c.want, ",") {
-			t.Errorf("NormalizeBar(%v) = %v, want %v", c.in, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := strings.Join(loadFile(t, c.file).Home.Favorites, ","); got != c.want {
+				t.Fatalf("favorites = %s, want %s", got, c.want)
+			}
+		})
 	}
 }
 
-func TestUpdateBar(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	mu.Lock()
-	cur = Defaults()
-	mu.Unlock()
-	if got := strings.Join(Get().Bar, ","); got != "home,inbox,notes" {
-		t.Fatalf("default bar = %s", got)
+func TestMigrationRunsOnceAndDropsBar(t *testing.T) {
+	s := loadFile(t, `{"accent":"green","bar":["home","ports","agents"]}`)
+	if s.Accent != "green" || strings.Join(s.Home.Favorites, ",") != "ports,agents" {
+		t.Fatalf("migrated settings wrong: %+v", s)
 	}
-	s, err := Update([]byte(`{"bar":["docker","docker","nope","ports","agents","play"]}`))
+	b, err := os.ReadFile(path())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(s.Bar, ","); got != "home,docker,ports,agents" {
-		t.Fatalf("bar = %s", got)
+	var saved map[string]json.RawMessage
+	if err := json.Unmarshal(b, &saved); err != nil {
+		t.Fatal(err)
 	}
-	if s, err = Update([]byte(`{"accent":"green"}`)); err != nil || strings.Join(s.Bar, ",") != "home,docker,ports,agents" {
-		t.Fatalf("an unrelated patch must keep the bar: %v %v", s.Bar, err)
+	if _, ok := saved["bar"]; ok {
+		t.Fatal("the migrated file must not keep the bar")
 	}
-	s.Bar[1] = "mutated"
-	if Get().Bar[1] != "docker" {
-		t.Fatal("Get must return a copy of the bar")
+	if _, ok := saved["home"]; !ok {
+		t.Fatal("the migrated file must hold the favourites")
+	}
+	if _, err := Update([]byte(`{"home":{"favorites":["notes"]}}`)); err != nil {
+		t.Fatal(err)
 	}
 	mu.Lock()
 	cur = Defaults()
 	mu.Unlock()
-	if err := Load(); err != nil || strings.Join(Get().Bar, ",") != "home,docker,ports,agents" {
-		t.Fatalf("reload failed: %v %v", err, Get().Bar)
+	if err := Load(); err != nil || strings.Join(Get().Home.Favorites, ",") != "notes" {
+		t.Fatalf("a second load must not migrate again: %v %v", err, Get().Home.Favorites)
+	}
+}
+
+func TestSettingsCanBeAFavorite(t *testing.T) {
+	if got := strings.Join(NormalizeFavorites([]string{"settings", "home", "inbox"}), ","); got != "settings,inbox" {
+		t.Fatalf("favorites = %s", got)
+	}
+	if contains(TabIDs, SettingsTab) {
+		t.Fatal("settings must not become a toggleable tab")
 	}
 }
 

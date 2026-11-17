@@ -8,6 +8,11 @@ export const INTERFACE_XML = `
   <interface name="${BUS_NAME}">
     <method name="GetState"><arg name="state" type="s" direction="out"/></method>
     <method name="Action"><arg name="name" type="s" direction="in"/></method>
+    <method name="Notify">
+      <arg name="title" type="s" direction="in"/><arg name="body" type="s" direction="in"/>
+      <arg name="icon" type="s" direction="in"/><arg name="accent" type="s" direction="in"/>
+      <arg name="timeout_ms" type="i" direction="in"/><arg name="id" type="u" direction="out"/>
+    </method>
     <method name="DockerList"><arg name="containers" type="s" direction="out"/></method>
     <method name="DockerAction">
       <arg name="id" type="s" direction="in"/><arg name="op" type="s" direction="in"/>
@@ -53,6 +58,7 @@ export const INTERFACE_XML = `
       <arg name="text" type="s" direction="in"/><arg name="png" type="s" direction="out"/>
     </method>
     <method name="PickColor"/>
+    <method name="LanAddress"><arg name="address" type="s" direction="out"/></method>
     <method name="SetPresenting"><arg name="on" type="b" direction="in"/></method>
     <signal name="ColorPicked"><arg name="hex" type="s"/></signal>
     <method name="PartyPeers"><arg name="peers" type="s" direction="out"/></method>

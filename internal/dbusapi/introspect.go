@@ -162,6 +162,9 @@ const introXML = `
     <method name="SystemStats">
       <arg name="stats" type="s" direction="out"/>
     </method>
+    <method name="LanAddress">
+      <arg name="address" type="s" direction="out"/>
+    </method>
     <method name="MediaLastPlayer">
       <arg name="player" type="s" direction="out"/>
     </method>

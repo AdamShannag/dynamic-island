@@ -19,7 +19,6 @@ type Settings struct {
 	DisplayName string          `json:"displayName"`
 	Tabs        map[string]bool `json:"tabs"`
 	Features    map[string]bool `json:"features"`
-	Bar         []string        `json:"bar"`
 	Home        Home            `json:"home"`
 }
 
@@ -28,8 +27,8 @@ type Home struct {
 }
 
 const (
-	HomeTab = "home"
-	BarMax  = 4
+	HomeTab     = "home"
+	SettingsTab = "settings"
 
 	FavoritesMax = 5
 )
@@ -40,13 +39,13 @@ var (
 	TabIDs       = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "play"}
 	FeatureIDs   = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "play", "transparentPanel"}
 	offByDefault = map[string]bool{"play": true}
-	DefaultBar   = []string{HomeTab, "inbox", "notes"}
+	FavoriteIDs  = append(append([]string{}, TabIDs...), SettingsTab)
 
 	DefaultFavorites = []string{"docker", "ports", "clipboard", "notes", "agents"}
 )
 
 func Defaults() Settings {
-	s := Settings{Accent: "blue", Surface: "black", Tabs: map[string]bool{}, Features: map[string]bool{}, Bar: NormalizeBar(DefaultBar), Home: Home{Favorites: NormalizeFavorites(DefaultFavorites)}}
+	s := Settings{Accent: "blue", Surface: "black", Tabs: map[string]bool{}, Features: map[string]bool{}, Home: Home{Favorites: NormalizeFavorites(DefaultFavorites)}}
 	for _, t := range TabIDs {
 		s.Tabs[t] = true
 	}
@@ -81,8 +80,43 @@ func Load() error {
 	if err != nil {
 		return err
 	}
+	bar, ok := legacyBar(b)
+	if ok {
+		merged.Home.Favorites = favoritesFromBar(bar)
+		if err := save(merged); err != nil {
+			return fmt.Errorf("migrate bar to favorites: %w", err)
+		}
+	}
 	cur = merged
 	return nil
+}
+
+func legacyBar(b []byte) ([]string, bool) {
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(b, &keys) != nil {
+		return nil, false
+	}
+	raw, hasBar := keys["bar"]
+	if _, hasHome := keys["home"]; !hasBar || hasHome {
+		return nil, false
+	}
+	var bar []string
+	_ = json.Unmarshal(raw, &bar)
+	return bar, true
+}
+
+func favoritesFromBar(bar []string) []string {
+	var ids []string
+	for _, id := range bar {
+		if id != HomeTab && id != "inbox" {
+			ids = append(ids, id)
+		}
+	}
+	favs := NormalizeFavorites(ids)
+	if len(favs) == 0 {
+		return NormalizeFavorites(DefaultFavorites)
+	}
+	return favs
 }
 
 func Get() Settings {
@@ -129,7 +163,6 @@ func merge(base Settings, patch []byte) (Settings, error) {
 		DisplayName *string         `json:"displayName"`
 		Tabs        map[string]bool `json:"tabs"`
 		Features    map[string]bool `json:"features"`
-		Bar         []string        `json:"bar"`
 		Home        *struct {
 			Favorites []string `json:"favorites"`
 		} `json:"home"`
@@ -166,26 +199,10 @@ func merge(base Settings, patch []byte) (Settings, error) {
 			base.Features[k] = v
 		}
 	}
-	if p.Bar != nil {
-		base.Bar = NormalizeBar(p.Bar)
-	}
 	if p.Home != nil && p.Home.Favorites != nil {
 		base.Home.Favorites = NormalizeFavorites(p.Home.Favorites)
 	}
 	return base, nil
-}
-
-func NormalizeBar(ids []string) []string {
-	out := []string{HomeTab}
-	for _, id := range ids {
-		if len(out) == BarMax {
-			break
-		}
-		if contains(TabIDs, id) && !contains(out, id) {
-			out = append(out, id)
-		}
-	}
-	return out
 }
 
 func save(s Settings) error {
@@ -209,7 +226,7 @@ func NormalizeFavorites(ids []string) []string {
 		if len(out) == FavoritesMax {
 			break
 		}
-		if contains(TabIDs, id) && !contains(out, id) {
+		if contains(FavoriteIDs, id) && !contains(out, id) {
 			out = append(out, id)
 		}
 	}
@@ -219,7 +236,6 @@ func NormalizeFavorites(ids []string) []string {
 func clone(s Settings) Settings {
 	c := s
 	c.Tabs, c.Features = map[string]bool{}, map[string]bool{}
-	c.Bar = append([]string(nil), s.Bar...)
 	c.Home.Favorites = append([]string{}, s.Home.Favorites...)
 	for k, v := range s.Tabs {
 		c.Tabs[k] = v
