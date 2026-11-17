@@ -859,15 +859,66 @@
 .island-race-card { spacing: 10px; }
 .island-race-passage {
   font-family: monospace;
-  font-size: 10.5pt;
-  line-height: 1.5;
+  font-size: 16pt;
+  line-height: 1.6;
   padding: 0;
-  min-height: 80px;
+  min-height: 110px;
 }
 .island-race-caret {
-  width: 2px;
-  border-radius: 1px;
+  width: 3px;
+  border-radius: 1.5px;
 }
+
+.island-race-peer-btn { border-radius: 999px; background-color: transparent; }
+.island-race-peer-btn:hover  { background-color: transparent; }
+.island-race-peer-btn:active { background-color: transparent; }
+.island-race-peer-btn:focus  { box-shadow: none; }
+.island-race-peer-avatar { width: 72px; height: 72px; border-radius: 36px; }
+.island-race-peer-avatar .island-badge-glyph { font-size: 20pt; }
+.island-race-peer-name { font-size: 11pt; padding-top: 10px; }
+.island-race-peer-addr { font-size: 8.5pt; }
+
+.island-race-host-row { spacing: 18px; }
+.island-race-host-panel {
+  width: 220px;
+  spacing: 14px;
+  padding: 0 4px;
+}
+.island-race-ready-track {
+  width: 160px;
+  height: 6px;
+  border-radius: 3px;
+  background-color: rgba(255, 255, 255, 0.08);
+}
+.island-race-ready-fill {
+  height: 6px;
+  border-radius: 3px;
+  background-color: #0a84ff;
+}
+.island-race-ready-label { font-size: 10.5pt; font-weight: 600; padding-top: 4px; }
+
+.island-pill-btn.link {
+  background-color: transparent;
+  color: rgba(245, 245, 247, 0.4);
+  padding: 4px 6px;
+}
+.island-pill-btn.link:hover  { background-color: transparent; color: rgba(245, 245, 247, 0.65); }
+.island-pill-btn.link:active { background-color: transparent; }
+.island-pill-btn.link:focus  { box-shadow: none; }
+
+.island-race-winner-card {
+  spacing: 16px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background-color: rgba(255, 214, 10, 0.08);
+  border: 1px solid rgba(255, 214, 10, 0.22);
+}
+.island-race-winner-avatar { width: 52px; height: 52px; border-radius: 26px; }
+.island-race-winner-avatar .island-badge-glyph { font-size: 15pt; }
+.island-race-winner-name { font-size: 13pt; font-weight: 700; }
+.island-race-winner-sub  { font-size: 9.5pt; font-weight: 700; color: #ffd60a; }
+.island-race-winner-wpm  { font-size: 17pt; font-weight: 800; font-feature-settings: "tnum"; }
+.island-race-rank { width: 18px; color: rgba(245, 245, 247, 0.35); font-weight: 700; }
 
 .island.theme-blue .island-xf-mini.accent { background-color: #0a84ff; }
 .island.theme-blue .island-xf-text { caret-color: #0a84ff; }

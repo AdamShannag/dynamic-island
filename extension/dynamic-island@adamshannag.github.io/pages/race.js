@@ -52,19 +52,25 @@ export class RacePage extends Page {
 
     _buildIdle() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
+        const eyebrow = label('island-igroup-title', {text: 'NEARBY'});
         this._peerEmpty = new EmptyState();
-        const peerGroup = group('NEARBY');
-        this._peerList = peerGroup.list;
-        const groups = column({style_class: 'island-groups'});
-        groups.add_child(peerGroup.actor);
-        this._idleScroll = scrollView(groups);
+        this._peerFlow = new St.Widget({
+            layout_manager: new Clutter.FlowLayout({
+                orientation: Clutter.Orientation.HORIZONTAL, homogeneous: false, column_spacing: 36, row_spacing: 22,
+            }),
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        const flowWrap = column({x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        flowWrap.add_child(this._peerFlow);
+        this._idleScroll = scrollView(flowWrap);
+        view.add_child(eyebrow);
         view.add_child(this._peerEmpty.actor);
         view.add_child(this._idleScroll);
         return view;
     }
 
     _buildLobbyHost() {
-        const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
+        const view = new St.BoxLayout({style_class: 'island-page island-race-host-row', x_expand: true, y_expand: true});
         this._inviteToggleBtn = pillButton('Invite more', () => this._toggleInvitePicker());
         const racersGroup = group('RACERS', this._inviteToggleBtn);
         this._hostRacerList = racersGroup.list;
@@ -76,11 +82,22 @@ export class RacePage extends Page {
         const groups = column({style_class: 'island-groups'});
         groups.add_child(racersGroup.actor);
         groups.add_child(pickerGroup.actor);
-        view.add_child(scrollView(groups));
-        const toolbar = new St.BoxLayout({style_class: 'island-toolbar'});
-        toolbar.add_child(pillButton('Start race', () => this.call('RaceStart', [], () => this.refresh()), 'primary'));
-        toolbar.add_child(this._leaveButton('Cancel'));
-        view.add_child(toolbar);
+        const left = scrollView(groups);
+        left.x_expand = true;
+
+        const panel = column({style_class: 'island-race-host-panel', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+        const track = new St.Widget({style_class: 'island-race-ready-track', layout_manager: new Clutter.BinLayout(), x_align: Clutter.ActorAlign.CENTER});
+        this._readyFill = new St.Widget({style_class: 'island-race-ready-fill', x_align: Clutter.ActorAlign.START});
+        track.add_child(this._readyFill);
+        this._readyLabel = label('island-race-ready-label', {text: '', x_align: Clutter.ActorAlign.CENTER});
+        const startBtn = pillButton('Start race', () => this.call('RaceStart', [], () => this.refresh()), 'primary');
+        panel.add_child(track);
+        panel.add_child(this._readyLabel);
+        panel.add_child(startBtn);
+        panel.add_child(this._leaveButton('Cancel', 'link'));
+
+        view.add_child(left);
+        view.add_child(panel);
         return view;
     }
 
@@ -260,6 +277,20 @@ export class RacePage extends Page {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
         this._resultTitle = label('island-xf-title');
         this._resultHint = label('island-hint');
+
+        this._winnerCard = new St.BoxLayout({style_class: 'island-race-winner-card', x_expand: true});
+        this._winnerBadge = badge({glyph: '?', color: '#8e8e93'});
+        this._winnerBadge.add_style_class_name('island-race-winner-avatar');
+        const winnerText = column({x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        this._winnerName = label('island-race-winner-name', {text: ''});
+        this._winnerSub = label('island-race-winner-sub', {text: 'Winner'});
+        winnerText.add_child(this._winnerName);
+        winnerText.add_child(this._winnerSub);
+        this._winnerWpm = label('island-race-winner-wpm', {x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER});
+        this._winnerCard.add_child(this._winnerBadge);
+        this._winnerCard.add_child(winnerText);
+        this._winnerCard.add_child(this._winnerWpm);
+
         const resultGroup = group('RESULTS');
         this._resultGroupActor = resultGroup.actor;
         this._resultList = resultGroup.list;
@@ -267,6 +298,7 @@ export class RacePage extends Page {
         toolbar.add_child(this._leaveButton('Done', 'primary'));
         view.add_child(this._resultTitle);
         view.add_child(this._resultHint);
+        view.add_child(this._winnerCard);
         view.add_child(scrollView(resultGroup.actor));
         view.add_child(toolbar);
         return view;
@@ -363,25 +395,42 @@ export class RacePage extends Page {
         }
         this._peerEmpty.hide();
         this._idleScroll.show();
-        fillList(this._peerList, peers, p => this._peerRow(p, (peer, btn) => this._invitePeer(peer, btn)));
+        fillList(this._peerFlow, peers, p => this._peerAvatar(p, (peer, refs) => this._invitePeer(peer, refs)));
+    }
+
+    _peerAvatar(peer, onPick) {
+        const col = column({x_align: Clutter.ActorAlign.CENTER});
+        const badgeActor = badge({glyph: (peer.name[0] ?? '?').toUpperCase(), color: this._racerColor(peer.id)});
+        badgeActor.add_style_class_name('island-race-peer-avatar');
+        const btn = new St.Button({style_class: 'island-race-peer-btn', can_focus: true, child: badgeActor});
+        const name = label('island-irow-title island-race-peer-name', {text: peer.name, x_align: Clutter.ActorAlign.CENTER});
+        const addr = label('island-irow-sub island-race-peer-addr', {text: peer.addr, x_align: Clutter.ActorAlign.CENTER});
+        const refs = {btn, addr};
+        btn.connect('clicked', () => onPick(peer, refs));
+        col.add_child(btn);
+        col.add_child(name);
+        col.add_child(addr);
+        return col;
     }
 
     _peerRow(peer, onPick) {
         const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
+        const badgeActor = badge({glyph: (peer.name[0] ?? '?').toUpperCase(), color: this._racerColor(peer.id)});
+        row.add_child(badgeActor);
         row.add_child(rowText(peer.name, peer.addr).col);
         const btn = pillButton('Race', () => onPick(peer, btn));
         row.add_child(btn);
         return row;
     }
 
-    _invitePeer(peer, btn) {
-        btn.reactive = false;
-        btn.label = 'Inviting…';
+    _invitePeer(peer, refs) {
+        refs.btn.reactive = false;
+        setText(refs.addr, 'Inviting…');
         this.call('RaceCreate', [], () => {
             this.call('RaceInvite', [peer.id], (_result, err) => {
                 if (err) {
-                    btn.reactive = true;
-                    btn.label = 'Race';
+                    refs.btn.reactive = true;
+                    setText(refs.addr, peer.addr);
                     return;
                 }
                 this.refresh();
@@ -424,6 +473,10 @@ export class RacePage extends Page {
         const racers = state.racers ?? [];
         this._invitedIds = new Set(racers.map(r => r.peerId));
         this._syncHostRacerRows(racers);
+        const ready = racers.filter(r => r.status === 'accepted').length;
+        const total = Math.max(racers.length, 1);
+        this._readyFill.width = Math.round(160 * (ready / total));
+        setText(this._readyLabel, `${ready} of ${racers.length} ready to race`);
         if (this._invitePickerOpen)
             this._refreshInvitePicker();
     }
@@ -516,30 +569,41 @@ export class RacePage extends Page {
             if (!refs)
                 continue;
             setText(refs.name, r.name);
-            setText(refs.value, r.finishedAtMs ? `Finished · ${Math.round(r.wpm)} wpm` : `${Math.round(r.progress * 100)}%`);
+            setText(refs.value, r.finishedAtMs ? `Finished · ${Math.round(r.wpm)} wpm` : '');
         }
     }
 
     _renderResult(state) {
         const finished = state.phase === 'finished';
         const missed = state.phase === 'missed';
-        setText(this._resultTitle, finished ? 'Race finished!' : missed ? 'That race already started' : 'The host left the race');
-        setText(this._resultHint, finished ? '' : missed ? 'The host started before you joined.' : 'Your progress was not saved.');
-        this._resultHint.visible = !finished;
-        this._resultGroupActor.visible = finished;
+        const ranked = [...(state.racers ?? [])].sort((a, b) => (a.finishedAtMs || Infinity) - (b.finishedAtMs || Infinity));
+        const winner = ranked[0];
+        setText(this._resultTitle, finished ? 'Race finished' : missed ? 'That race already started' : 'The host left the race');
+        setText(this._resultHint, finished
+            ? (winner ? `${winner.name} crossed the line first` : '')
+            : missed ? 'The host started before you joined.' : 'Your progress was not saved.');
+        this._resultHint.visible = !finished || !!winner;
+        this._winnerCard.visible = finished && !!winner;
+        this._resultGroupActor.visible = finished && ranked.length > 1;
         if (!finished)
             return;
-        const ranked = [...(state.racers ?? [])].sort((a, b) => (a.finishedAtMs || Infinity) - (b.finishedAtMs || Infinity));
         const sig = ranked.map(r => r.peerId).join('|');
         if (sig === this._resultSig)
             return;
         this._resultSig = sig;
-        fillList(this._resultList, ranked, (r, i) => this._resultRow(r, i));
+        if (winner) {
+            this._winnerBadge.set_style(`background-color: ${winner.peerId === state.selfId ? SELF_CARET_COLOR : this._racerColor(winner.peerId)};`);
+            this._winnerBadge.child.text = (winner.name[0] ?? '?').toUpperCase();
+            setText(this._winnerName, winner.name);
+            setText(this._winnerWpm, winner.finishedAtMs ? `${Math.round(winner.wpm)} wpm` : '—');
+        }
+        fillList(this._resultList, ranked.slice(1), (r, i) => this._resultRow(r, i + 2));
     }
 
-    _resultRow(r, i) {
+    _resultRow(r, rank) {
         const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
-        row.add_child(label('island-irow-title', {text: `${i + 1}. ${r.name}`, x_expand: true}));
+        row.add_child(label('island-race-rank', {text: `${rank}`, x_align: Clutter.ActorAlign.CENTER}));
+        row.add_child(label('island-irow-title', {text: r.name, x_expand: true}));
         row.add_child(label('island-irow-sub', {
             text: r.finishedAtMs ? `${Math.round(r.wpm)} wpm` : 'Did not finish',
             x_align: Clutter.ActorAlign.END,
