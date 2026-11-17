@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -146,6 +147,10 @@ func (d *Discovery) Peers() []Peer {
 	for _, p := range d.peers {
 		out = append(out, p)
 	}
+	// Go map iteration is randomized, so without a stable order the
+	// extension's polling would see the peer list reshuffle on every call
+	// and rebuild its rows, making names appear to jump around.
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
