@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.dynamic-island" path="/org/gnome/shell/extensions/dynamic-island/">
+    <key name="search-shortcut" type="as">
+      <default><![CDATA[['<Super>k']]]></default>
+      <summary>Search shortcut</summary>
+      <description>Opens the Dynamic Island dashboard with search focused. Ctrl+K only works while the dashboard is open.</description>
+    </key>
+  </schema>
+</schemalist>

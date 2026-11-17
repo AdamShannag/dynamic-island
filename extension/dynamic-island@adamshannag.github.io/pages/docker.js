@@ -6,7 +6,7 @@ import Pango from 'gi://Pango';
 import {VERTICAL} from '../lib/constants.js';
 import {dockerProblem} from '../lib/format.js';
 import {
-    EmptyState, badge, column, fillList, group, hoverActions, iconButton, label, page, pillButton, portButton,
+    EmptyState, badge, column, fillList, group, hoverActions, iconButton, label, page, portButton,
     rowText, scrollView, setText,
 } from '../lib/widgets.js';
 import {Page} from './page.js';
@@ -116,18 +116,14 @@ export class DockerPage extends Page {
 
 export class LogsPage extends Page {
     static id = 'logs';
-    static title = '›  Logs';
+    static title = 'Logs';
     static parent = 'docker';
     static height = 520;
     static interval = 2000;
 
     build() {
         const actor = page();
-        const bar = new St.BoxLayout({style_class: 'island-toolbar'});
-        bar.add_child(pillButton('Back', () => this.island.showTab('docker')));
-        this._title = label('island-logs-title', {x_expand: true});
-        bar.add_child(this._title);
-        bar.add_child(label('island-hint', {text: 'Last 50 lines · live'}));
+        this._hint = label('island-hint', {text: 'Last 50 lines · live'});
         const card = new St.BoxLayout({style_class: 'island-card island-logs-card', ...VERTICAL, x_expand: true, y_expand: true});
         this._text = new St.Label({style_class: 'island-logs', reactive: true});
         const ct = this._text.clutter_text;
@@ -139,14 +135,20 @@ export class LogsPage extends Page {
         box.add_child(this._text);
         this._scroll = scrollView(box);
         card.add_child(this._scroll);
-        actor.add_child(bar);
         actor.add_child(card);
         return actor;
     }
 
+    get heading() {
+        return this._container ? `Logs · ${this._container.name}` : 'Logs';
+    }
+
+    get navActions() {
+        return this._hint;
+    }
+
     open(container) {
         this._container = container;
-        this._title.text = container.name;
         this._text.text = 'Loading…';
         this.island.showTab('logs');
     }

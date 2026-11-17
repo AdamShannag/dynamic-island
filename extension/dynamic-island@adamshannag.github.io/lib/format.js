@@ -90,11 +90,3 @@ export function correctPrefix(typed, target) {
         i++;
     return i;
 }
-
-export const SHOULDER_MIN = 8;
-export const SHOULDER_MAX = 14;
-
-export function shoulderRadius(height) {
-    const r = SHOULDER_MIN + Math.max(0, height - 32) * 0.1;
-    return Math.min(SHOULDER_MAX, r);
-}

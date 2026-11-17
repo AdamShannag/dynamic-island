@@ -9,26 +9,36 @@ import GnomeDesktop from 'gi://GnomeDesktop';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {
-    ACCENTS, AUTO_MIN_HEIGHT, DASH_WIDTH, FADE_IN_MS, FADE_OUT_MS, HOVER_IN_MS, HOVER_OUT_MS, IDLE, LIVE_KINDS, MODES,
-    MORE_TAB, MORPH_MS, OSD_MS, REVEAL_DELAY_MS, TABS, TAB_ALIASES, TAB_IDS, VERTICAL, featureOn, scale, tabOn,
+    ACCENTS, AUTO_MIN_HEIGHT, DASH_RISE, DASH_WIDTH, FIND_HEIGHT, FIND_SHIFT, HOME_TAB, HOVER_IN_MS, HOVER_OUT_MS, IDLE,
+    LIVE_KINDS, MODES, OSD_MS, PAGE_IN_DELAY_MS, PAGE_IN_MS, PAGE_OUT_MS, PAGE_SHIFT, SHAPES, TAB_ALIASES, VERTICAL,
+    featureOn, scale, tabInfo, tabOn,
 } from './lib/constants.js';
-import {barTabs} from './lib/bar.js';
+import {firstLine} from './lib/find.js';
+import {Finder} from './lib/finder.js';
 import {fmtClock} from './lib/format.js';
-import {eachFrame, springTo} from './lib/motion.js';
+import {eachFrame, frameLoop} from './lib/motion.js';
 import {Personality} from './lib/personality.js';
 import {focusPids, openUri} from './lib/shell.js';
-import {TabBar} from './lib/tabbar.js';
 import {Pill} from './lib/pill.js';
 import {Shoulders} from './lib/shoulders.js';
-import {iconButton, label} from './lib/widgets.js';
+import {OPACITY_SPRING, SIZE_SPRING, SpringSet, clamp01, dashReveal, pillReveal} from './lib/spring.js';
+import {iconButton, label, tactile} from './lib/widgets.js';
 import {PAGES} from './pages/index.js';
 
 const OPEN_RETRY_MS = 150;
 const RELEASE_SWALLOW_MS = 1500;
 const PRIVATE_TABS = new Set(['clipboard', 'notes', 'inbox']);
 const KIND_TABS = {agent: 'agents', task: 'activity', service: 'activity', party: 'play'};
-const MORE = MORE_TAB[0];
-const EXTRA_TABS = new Set(['settings', MORE]);
+const MORE = 'more';
+const SHOW_SCALE = 0.7;
+const BOUNCE_SCALE = 1.07;
+const BELL_PX = 32;
+const BELL_ICON_PX = 17;
+const BELL_DOT_X = 19;
+const BELL_DOT_Y = 6;
+const ENTER_KEYS = new Set([Clutter.KEY_Return, Clutter.KEY_KP_Enter, Clutter.KEY_ISO_Enter]);
+
+const animationsOn = () => St.Settings.get().enable_animations;
 
 export const Island = GObject.registerClass(
 class Island extends St.BoxLayout {
@@ -43,24 +53,33 @@ class Island extends St.BoxLayout {
         this.ext = ext;
         this.mode = 'idle';
         this.dashOpen = false;
-        this.tab = 'home';
+        this.tab = HOME_TAB;
         this.media = null;
         this.timer = null;
         this.settings = null;
         this._state = IDLE;
         this._raw = IDLE;
+        this._pillMode = 'idle';
         this._grab = null;
         this._tickId = 0;
         this._refreshId = 0;
         this._hoverId = 0;
         this._hoverExpanded = false;
         this._shown = false;
-        this._springs = {};
-        this._target = null;
-        this._morphGen = 0;
         this._osd = null;
         this._osdTimer = 0;
         this._unread = false;
+        this._finding = false;
+        this._pendingFind = false;
+        this._loop = null;
+        this._lastFrame = 0;
+        this._radius = -1;
+        this._shoulderPx = 0;
+        this._motion = new SpringSet({
+            width: [SIZE_SPRING, 0], height: [SIZE_SPRING, 0], radius: [SIZE_SPRING, SHAPES.idle.radius],
+            shoulder: [SIZE_SPRING, SHAPES.idle.shoulder], scale: [SIZE_SPRING, 1],
+            op: [OPACITY_SPRING, 0], fade: [OPACITY_SPRING, 1],
+        });
         this.set_pivot_point(0.5, 0);
 
         this._wallClock = new GnomeDesktop.WallClock();
@@ -74,7 +93,9 @@ class Island extends St.BoxLayout {
             y_expand: true,
         });
         this.add_child(this._clip);
-        this._shoulders = new Shoulders(this);
+        this._bg = new St.Widget({style_class: 'island-bg', x_expand: true, y_expand: true});
+        this._clip.add_child(this._bg);
+        this._shoulders = new Shoulders(this, this._bg);
 
         this._pill = new Pill({spyIcon: ext.spyIcon, agentIcon: ext.agentIcon, faceTarget: () => this._faceTarget()});
         this._content = this._pill.actor;
@@ -90,7 +111,7 @@ class Island extends St.BoxLayout {
 
     vfunc_allocate(box) {
         super.vfunc_allocate(box);
-        this._shoulders?.allocate(box, scale());
+        this._shoulders?.allocate(box, this._shoulderPx);
     }
 
     _onDestroy() {
@@ -101,11 +122,9 @@ class Island extends St.BoxLayout {
             if (id)
                 GLib.source_remove(id);
         }
+        this._loop?.stop();
+        this._loop = null;
         this._pill.destroy();
-        this._tabs.destroy();
-        for (const tl of Object.values(this._springs))
-            tl.stop();
-        this._springs = {};
         this.closeDash(false);
         for (const page of this._pages.values())
             page.destroy();
@@ -118,11 +137,15 @@ class Island extends St.BoxLayout {
             style_class: 'island-dash',
             ...VERTICAL,
             visible: false,
+            opacity: 0,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.START,
         });
         this._clip.add_child(this._dash);
-        this._dash.add_child(this._buildHeader());
+        this._header = this._buildHeader();
+        this._dash.add_child(this._header);
+        this._nav = this._buildNav();
+        this._dash.add_child(this._nav);
 
         const body = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
         this._pages = new Map();
@@ -132,34 +155,71 @@ class Island extends St.BoxLayout {
             body.add_child(page.actor);
             this._pages.set(page.id, page);
         }
+        this._finder = new Finder({ext: this.ext, onRun: item => this._runFind(item), onResize: () => this.refit()});
+        this._finder.actor.set({y_expand: true});
+        body.add_child(this._finder.actor);
         this._current = null;
         this._dash.add_child(body);
     }
 
     _buildHeader() {
         const header = new St.BoxLayout({style_class: 'island-header'});
-        this._tabs = new TabBar([...TABS, MORE_TAB], id => this.showTab(id));
-        this._tabs.setOrder([...barTabs(null, TAB_IDS), MORE]);
-        header.add_child(this._tabs.actor);
-        this._tabName = label('island-tab-name', {x_expand: true});
-        header.add_child(this._tabName);
-        this._presentBadge = label('island-present-badge', {text: 'Presenting · private info hidden', visible: false});
+        this._gridBtn = iconButton('view-app-grid-symbolic', 'island-head-grid', () => this._toggleMore(), 'All tabs');
+        header.add_child(this._gridBtn);
+
+        this._search = new St.Entry({
+            style_class: 'island-head-search',
+            hint_text: 'Search',
+            can_focus: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            primary_icon: new St.Icon({icon_name: 'system-search-symbolic', style_class: 'island-head-search-icon'}),
+            secondary_icon: label('island-key-chip', {text: 'Ctrl K'}),
+        });
+        this._search.clutter_text.connect('text-changed', () => this._onSearchText());
+        this._search.clutter_text.connect('key-focus-in', () => this._beginFind());
+        header.add_child(this._search);
+
+        const k = scale();
+        const bell = new St.Widget({layout_manager: new Clutter.FixedLayout(), width: BELL_PX * k, height: BELL_PX * k});
+        const inset = Math.round((BELL_PX - BELL_ICON_PX) / 2 * k);
+        bell.add_child(new St.Icon({
+            icon_name: 'preferences-system-notifications-symbolic', icon_size: BELL_ICON_PX, x: inset, y: inset,
+            style_class: 'island-head-bell-icon',
+        }));
+        this._bellDot = new St.Widget({
+            style_class: 'island-bell-dot', visible: false, x: Math.round(BELL_DOT_X * k), y: Math.round(BELL_DOT_Y * k),
+        });
+        bell.add_child(this._bellDot);
+        this._bell = tactile(new St.Button({
+            style_class: 'island-head-bell', can_focus: true, accessible_name: 'Notifications',
+            y_align: Clutter.ActorAlign.CENTER, child: bell,
+        }));
+        this._bell.connect('clicked', () => this.showTab('inbox'));
+        header.add_child(this._bell);
+
+        this._presentBadge = label('island-present-badge', {text: 'Presenting', visible: false});
         header.add_child(this._presentBadge);
-        header.add_child(iconButton('color-select-symbolic', 'island-head-btn', () => {
-            this.closeDash();
-            this.ext.call('PickColor');
-        }, 'Pick a colour'));
-        this._spyBtn = new St.Button({
+        this._spyBtn = tactile(new St.Button({
             style_class: 'island-head-btn', can_focus: true, accessible_name: 'Presentation mode',
             y_align: Clutter.ActorAlign.CENTER,
             child: new St.Icon({gicon: this.ext.spyIcon, style_class: 'island-head-spy'}),
-        });
+        }));
         this._spyBtn.connect('clicked', () => this.ext.setPresenting(!this.ext.presenting, false));
         header.add_child(this._spyBtn);
-        header.add_child(iconButton('emblem-system-symbolic', 'island-head-btn', () => this.showTab('settings'), 'Settings'));
         this._dashClock = label('island-dash-clock');
         header.add_child(this._dashClock);
         return header;
+    }
+
+    _buildNav() {
+        const nav = new St.BoxLayout({style_class: 'island-nav', visible: false});
+        nav.add_child(iconButton('go-previous-symbolic', 'island-nav-back', () => this._goBack(), 'Back'));
+        this._navTitle = label('island-nav-title', {x_expand: true});
+        nav.add_child(this._navTitle);
+        this._navActions = new St.Bin({style_class: 'island-nav-actions', y_align: Clutter.ActorAlign.CENTER});
+        nav.add_child(this._navActions);
+        return nav;
     }
 
     page(id) {
@@ -188,6 +248,7 @@ class Island extends St.BoxLayout {
 
     applySettings(st) {
         this.settings = st;
+        this._finder.settings = st;
         for (const c of (this.style_class ?? '').split(' ')) {
             if (c.startsWith('theme-') || c.startsWith('surface-'))
                 this.remove_style_class_name(c);
@@ -195,43 +256,27 @@ class Island extends St.BoxLayout {
         this.add_style_class_name(`theme-${st.accent ?? 'blue'}`);
         this.add_style_class_name(`surface-${st.surface ?? 'black'}`);
 
-        this._tabs.setOrder([...this.barTabs().filter(id => tabOn(st, id)), MORE]);
         const parent = this._current?.parentTab;
         if (this.dashOpen && parent && !tabOn(st, parent))
-            this.showTab('home');
-        else if (this._current)
-            this._tabs.select(this._barSelection(this._current));
-        this.setUnread(this._unread);
+            this.showTab(HOME_TAB);
 
         for (const page of this._pages.values())
             page.onSettings(st);
         this.setState(this._raw);
     }
 
-    barTabs() {
-        return barTabs(this.settings, TAB_IDS);
-    }
-
-    _barSelection(page) {
-        const tab = page.parentTab;
-        if (!tab || tab === MORE || this._tabs.shows(tab))
-            return tab;
-        return MORE;
-    }
-
     setUnread(on) {
         this._unread = on;
-        const dot = on && !(this.dashOpen && this.tab === 'inbox');
-        const pinned = this._tabs.shows('inbox');
-        this._tabs.setDot('inbox', dot && pinned);
-        this._tabs.setDot(MORE, dot && !pinned);
+        this._bellDot.visible = on && !(this.dashOpen && this.tab === 'inbox');
     }
 
     setPresenting(on) {
         this._pill.face.setSpy(on);
         this._apply();
         this.relayout(true);
-        if (this.dashOpen && PRIVATE_TABS.has(this.tab))
+        if (this._finding)
+            this._finder.open(this._search.text);
+        else if (this.dashOpen && PRIVATE_TABS.has(this.tab))
             this.showTab(this.tab);
     }
 
@@ -262,13 +307,15 @@ class Island extends St.BoxLayout {
     }
 
     bounce() {
-        this.set({scale_x: 1.07, scale_y: 1.07});
-        this._springTo({scale_x: 1, scale_y: 1}, 520, null, 'scale');
+        if (!animationsOn())
+            return;
+        this._motion.springs.scale.x = BOUNCE_SCALE;
+        this._kick();
     }
 
     toggleDash(tab) {
         tab = TAB_ALIASES[tab] ?? tab;
-        const valid = TAB_IDS.includes(tab) || EXTRA_TABS.has(tab);
+        const valid = !!tabInfo(tab);
         if (this.dashOpen) {
             if (valid && tab !== this.tab)
                 this.showTab(tab);
@@ -276,7 +323,23 @@ class Island extends St.BoxLayout {
                 this.closeDash();
             return;
         }
-        this.openDash(valid ? tab : 'home');
+        this.openDash(valid ? tab : HOME_TAB);
+    }
+
+    openSearch() {
+        if (this.dashOpen) {
+            this.focusSearch();
+            return;
+        }
+        this._pendingFind = true;
+        this.openDash(HOME_TAB);
+    }
+
+    focusSearch() {
+        if (!this.dashOpen)
+            return;
+        this._search.grab_key_focus();
+        this._beginFind();
     }
 
     openDash(tab, retried = false) {
@@ -293,13 +356,20 @@ class Island extends St.BoxLayout {
                         this.openDash(tab, true);
                         return GLib.SOURCE_REMOVE;
                     });
+                } else {
+                    this._pendingFind = false;
                 }
                 return;
             }
             this.dashOpen = true;
             this.tab = tab;
+            this._dash.visible = true;
             this._render(this._state);
             this.showTab(tab);
+            if (this._pendingFind) {
+                this._pendingFind = false;
+                this.focusSearch();
+            }
         } catch (e) {
             if (this._grab) {
                 Main.popModal(this._grab);
@@ -312,6 +382,8 @@ class Island extends St.BoxLayout {
     closeDash(render = true) {
         if (!this.dashOpen)
             return;
+        this._pendingFind = false;
+        this._endFind();
         this._current?.onHide();
         this.dashOpen = false;
         if (this._grab) {
@@ -323,23 +395,24 @@ class Island extends St.BoxLayout {
             this._render(this._state);
     }
 
-    showTab(id) {
+    showTab(id, {back = false} = {}) {
         const page = this._pages.get(id);
         if (!page)
             return;
+        const fromFind = this._finding;
+        const from = fromFind ? this._finder.actor : this._current?.actor;
+        this._endFind();
         if (this._current && this._current !== page)
             this._current.onHide();
         this._stopRefresh();
         this.tab = id;
         this._current = page;
-        for (const p of this._pages.values())
-            p.actor.visible = p === page;
-        this._tabName.text = page.heading;
-        this._tabs.select(this._barSelection(page));
-        if (id === 'inbox')
-            this.setUnread(false);
+        this._syncHeader();
 
+        this._swap(from, page.actor, fromFind ? {dy: -1} : {dx: back ? -1 : 1});
         const focus = page.onShow() ?? this;
+        if (from !== page.actor)
+            page.reveal();
         if (page.interval) {
             this._refreshId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, page.interval, () => {
                 page.refresh();
@@ -353,7 +426,7 @@ class Island extends St.BoxLayout {
     }
 
     refit() {
-        if (!this.dashOpen || !this._current?.autoHeight || this._refitQueued)
+        if (!this.dashOpen || !(this._finding || this._current?.autoHeight) || this._refitQueued)
             return;
         this._refitQueued = true;
         eachFrame(() => {
@@ -369,7 +442,7 @@ class Island extends St.BoxLayout {
             return;
         this._prewarmed = true;
         const actors = [...this._pages.values()].map(p => p.actor);
-        const width = (DASH_WIDTH - 40) * scale();
+        const width = this._innerWidth(DASH_WIDTH * scale());
         let k = 0;
         GLib.idle_add(GLib.PRIORITY_LOW, () => {
             const actor = actors[k++];
@@ -378,6 +451,170 @@ class Island extends St.BoxLayout {
             actor.get_preferred_width(-1);
             actor.get_preferred_height(width);
             return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _toggleMore() {
+        if (this.tab === MORE && !this._finding)
+            this.showTab(HOME_TAB, {back: true});
+        else
+            this.showTab(MORE);
+    }
+
+    _goBack() {
+        this.showTab(this._current?.backTab ?? HOME_TAB, {back: true});
+    }
+
+    _escape() {
+        if (this._finding)
+            this._leaveFind();
+        else if (this.tab !== HOME_TAB)
+            this.showTab(HOME_TAB, {back: true});
+        else
+            this.closeDash();
+    }
+
+    _syncHeader() {
+        if (this.tab === MORE && !this._finding)
+            this._gridBtn.add_style_class_name('active');
+        else
+            this._gridBtn.remove_style_class_name('active');
+        const page = this._current;
+        this._nav.visible = !this._finding && !!page && page.id !== HOME_TAB;
+        if (page)
+            this._navTitle.text = page.heading;
+        const actions = this._nav.visible ? page.navActions : null;
+        if (this._navActions.child !== actions)
+            this._navActions.child = actions;
+        this.setUnread(this._unread && !(this.dashOpen && this.tab === 'inbox'));
+    }
+
+    _onSearchText() {
+        const text = this._search.text;
+        if (!this._finding && this.dashOpen && text)
+            this._beginFind();
+        else if (this._finding)
+            this._finder.setQuery(text);
+    }
+
+    _beginFind() {
+        if (this._finding || !this.dashOpen)
+            return;
+        this._finding = true;
+        this._finder.open(this._search.text);
+        this._syncHeader();
+        this._swap(this._current?.actor, this._finder.actor, {dy: 1});
+        this.relayout(true);
+    }
+
+    _endFind() {
+        if (!this._finding)
+            return;
+        this._finding = false;
+        this._finder.close();
+        this._search.text = '';
+    }
+
+    _leaveFind() {
+        if (!this._finding)
+            return;
+        this._endFind();
+        this._syncHeader();
+        this._swap(this._finder.actor, this._current.actor, {dy: -1});
+        this.grab_key_focus();
+        this.relayout(true);
+    }
+
+    _runFind(item) {
+        const a = item.action;
+        const ext = this.ext;
+        switch (a.kind) {
+        case 'tab':
+            this.showTab(a.id);
+            break;
+        case 'note':
+            this.showTab('notes');
+            this.page('notes').select(a.id);
+            break;
+        case 'clip':
+            this.closeDash();
+            ext.copy(a.text);
+            ext.notify('Copied to clipboard', firstLine(a.text), 'edit-paste-symbolic', 'ok');
+            break;
+        case 'focus':
+            this.closeDash();
+            ext.action('pomodoro.start');
+            ext.notify('Focus started', '25 minutes', 'alarm-symbolic', 'ok');
+            break;
+        case 'color':
+            this.closeDash();
+            ext.call('PickColor');
+            break;
+        case 'lan':
+            this.closeDash();
+            ext.call('LanAddress', [], (res, err) => {
+                if (err) {
+                    ext.notify("Couldn't find a LAN address", 'Connect to a network first', 'dialog-error-symbolic', 'error');
+                    return;
+                }
+                ext.copy(res[0]);
+                ext.notify('LAN address copied', res[0], 'network-wired-symbolic', 'ok');
+            });
+            break;
+        case 'port':
+            this.closeDash();
+            ext.call('PortFree', [a.port]);
+            break;
+        case 'restart':
+            this.closeDash();
+            ext.notify(`Restarting ${a.name}`, '', 'view-refresh-symbolic', '');
+            ext.call('DockerAction', [a.id, 'restart'], (_res, err) => {
+                if (err)
+                    ext.notify(`Couldn't restart ${a.name}`, err.message.replace(/^.*?Error\.Failed: /, ''), 'dialog-error-symbolic', 'error');
+                else
+                    ext.notify(`${a.name} restarted`, '', 'emblem-ok-symbolic', 'ok');
+            });
+            break;
+        }
+    }
+
+    _layers() {
+        return [...[...this._pages.values()].map(p => p.actor), this._finder.actor];
+    }
+
+    _shownLayer() {
+        return this._finding ? this._finder.actor : this._current?.actor;
+    }
+
+    _swap(from, to, {dx = 0, dy = 0} = {}) {
+        const animate = animationsOn() && this._dash.opacity > 0 && !!from && from !== to && from.visible;
+        const rest = {opacity: 255, translation_x: 0, translation_y: 0};
+        for (const a of this._layers()) {
+            if (a === to || (animate && a === from))
+                continue;
+            a.remove_all_transitions();
+            a.set({...rest, visible: false});
+        }
+        to.remove_all_transitions();
+        to.visible = true;
+        if (!animate) {
+            to.set(rest);
+            return;
+        }
+        const k = scale();
+        const sx = Math.round(PAGE_SHIFT * k), sy = Math.round(FIND_SHIFT * k);
+        from.remove_all_transitions();
+        from.ease({
+            opacity: 0, translation_x: -dx * sx, translation_y: -dy * sy, duration: PAGE_OUT_MS,
+            mode: Clutter.AnimationMode.EASE_IN_CUBIC,
+            onStopped: () => {
+                if (from !== this._shownLayer())
+                    from.set({...rest, visible: false});
+            },
+        });
+        to.set({opacity: 0, translation_x: dx * sx, translation_y: dy * sy});
+        to.ease({
+            ...rest, duration: PAGE_IN_MS, delay: PAGE_IN_DELAY_MS, mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
         });
     }
 
@@ -425,65 +662,40 @@ class Island extends St.BoxLayout {
             return;
         }
         const mode = this._targetMode();
-        const structural = mode !== this.mode ||
-            (mode !== 'dashboard' && (prev.kind !== s.kind || prev.title !== s.title || prev.art !== s.art));
-        if (!structural) {
-            this._apply();
-            this.relayout(true);
-            return;
-        }
-
-        const gen = ++this._morphGen;
-        const leaving = this.mode === 'dashboard' ? this._dash : this._content;
-        leaving.remove_all_transitions();
-        const morph = () => {
-            if (!this._wallClock || gen !== this._morphGen)
-                return;
-            this._apply();
-            const entering = this.mode === 'dashboard' ? this._dash : this._content;
-            entering.remove_all_transitions();
-            entering.opacity = 0;
-            this.relayout(true);
-            entering.ease({
-                opacity: 255,
-                delay: REVEAL_DELAY_MS,
-                duration: FADE_IN_MS,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            });
-        };
-        if (leaving === this._dash && leaving.opacity > 0) {
-            leaving.ease({
-                opacity: 0,
-                duration: FADE_OUT_MS,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                onComplete: morph,
-            });
-        } else {
-            leaving.opacity = 0;
-            morph();
-        }
+        const swap = mode !== 'dashboard' && this.mode !== 'dashboard' &&
+            (mode !== this.mode || prev.kind !== s.kind || prev.title !== s.title || prev.art !== s.art);
+        this._apply();
+        if (swap && animationsOn())
+            this._motion.springs.fade.x = 0;
+        this.relayout(true);
     }
 
     _apply() {
         const s = this._state;
         const mode = this._targetMode();
         this.mode = mode;
+        if (mode !== 'dashboard')
+            this._pillMode = mode;
         for (const m of MODES)
             this.remove_style_class_name(m);
-        this.add_style_class_name(mode);
-        for (const a of ACCENTS)
-            this.remove_style_class_name(`accent-${a}`);
-        if (mode !== 'dashboard' && ACCENTS.includes(s.accent))
-            this.add_style_class_name(`accent-${s.accent}`);
+        this.add_style_class_name(this._pillMode);
+        if (mode === 'dashboard')
+            this.add_style_class_name('dashboard');
+        if (mode !== 'dashboard') {
+            for (const a of ACCENTS)
+                this.remove_style_class_name(`accent-${a}`);
+            if (ACCENTS.includes(s.accent))
+                this.add_style_class_name(`accent-${s.accent}`);
+        }
         this.ensure_style();
 
-        this._dash.visible = mode === 'dashboard';
-        this._content.visible = mode !== 'dashboard';
-        this._pill.apply(s, mode, {
-            presenting: this.ext.presenting,
-            showFace: featureOn(this.settings, 'face'),
-            osd: this._osd,
-        });
+        if (mode !== 'dashboard') {
+            this._pill.apply(s, mode, {
+                presenting: this.ext.presenting,
+                showFace: featureOn(this.settings, 'face'),
+                osd: this._osd,
+            });
+        }
 
         const priv = this.ext.presenting;
         this._presentBadge.visible = priv;
@@ -517,7 +729,8 @@ class Island extends St.BoxLayout {
         if (!this._wallClock)
             return;
         const now = Date.now();
-        this._pill.setTrailing(this._trailingText(now));
+        if (this.mode !== 'dashboard')
+            this._pill.setTrailing(this._trailingText(now));
         if (!this.dashOpen)
             return;
         this._dashClock.text = this._wallClock.clock;
@@ -586,7 +799,7 @@ class Island extends St.BoxLayout {
         } else if (s.kind !== 'media' && s.kind !== 'timer' && s.click) {
             this.ext.action(s.click);
         } else {
-            this.openDash(KIND_TABS[s.kind] ?? 'home');
+            this.openDash(KIND_TABS[s.kind] ?? HOME_TAB);
         }
     }
 
@@ -594,10 +807,8 @@ class Island extends St.BoxLayout {
         if (!this.dashOpen)
             return Clutter.EVENT_PROPAGATE;
         const type = event.type();
-        if (type === Clutter.EventType.KEY_PRESS && event.get_key_symbol() === Clutter.KEY_Escape) {
-            this.closeDash();
-            return Clutter.EVENT_STOP;
-        }
+        if (type === Clutter.EventType.KEY_PRESS)
+            return this._onKey(event);
         if (type === Clutter.EventType.BUTTON_PRESS || type === Clutter.EventType.TOUCH_BEGIN) {
             const target = global.stage.get_event_actor(event);
             if (!target || !this.contains(target)) {
@@ -609,89 +820,163 @@ class Island extends St.BoxLayout {
         return Clutter.EVENT_PROPAGATE;
     }
 
+    _onKey(event) {
+        const sym = event.get_key_symbol();
+        const ctrl = (event.get_state() & Clutter.ModifierType.CONTROL_MASK) !== 0;
+        if (ctrl && (sym === Clutter.KEY_k || sym === Clutter.KEY_K)) {
+            this.focusSearch();
+            return Clutter.EVENT_STOP;
+        }
+        if (sym === Clutter.KEY_Escape) {
+            this._escape();
+            return Clutter.EVENT_STOP;
+        }
+        if (!this._finding)
+            return Clutter.EVENT_PROPAGATE;
+        if (sym === Clutter.KEY_Up || sym === Clutter.KEY_Down) {
+            this._finder.move(sym === Clutter.KEY_Up ? -1 : 1);
+            return Clutter.EVENT_STOP;
+        }
+        if (ENTER_KEYS.has(sym)) {
+            this._finder.run();
+            return Clutter.EVENT_STOP;
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
     _faceTarget() {
         const [px, py] = global.get_pointer();
         const f = this._pill.face.actor;
         const [fx, fy] = f.get_transformed_position();
-        return [px - (fx + f.width / 2), py - (fy + f.height / 2)];
+        const dx = px - (fx + f.width / 2), dy = py - (fy + f.height / 2);
+        return Number.isFinite(dx) && Number.isFinite(dy) ? [dx, dy] : [0, 0];
     }
 
     _size() {
         const barH = Main.panel.height;
         const k = scale();
+        const shape = SHAPES[this.mode];
         switch (this.mode) {
         case 'idle': {
             this._content.set_size(-1, -1);
             const [, natural] = this._content.get_preferred_width(barH);
-            return [Math.max(150 * k, Math.ceil(natural) + 44 * k), barH];
+            return [Math.max(shape.width * k, Math.ceil(natural)), barH];
         }
         case 'notify':
-            return [420 * k, 72 * k];
+            return [shape.width * k, shape.height * k];
         case 'dashboard':
             return this._dashSize(k);
-        case 'osd':
-            return [300 * k, barH];
         default:
-            return [320 * k, barH];
+            return [shape.width * k, barH];
         }
+    }
+
+    _innerWidth(width) {
+        return width - this._dash.get_theme_node().get_horizontal_padding();
     }
 
     _dashSize(k) {
-        const page = this._pages.get(this.tab);
         const width = DASH_WIDTH * k;
-        const max = page.height * k;
+        if (this._finding)
+            return [width, this._sheetHeight(width, this._finder.actor, FIND_HEIGHT * k, k)];
+        const page = this._current ?? this._pages.get(this.tab);
         if (!page.autoHeight)
-            return [width, max];
-        const node = this.get_theme_node();
-        this._dash.set_size(-1, -1);
-        const [, natural] = this._dash.get_preferred_height(width - node.get_horizontal_padding());
-        const h = Math.ceil(natural + node.get_vertical_padding());
-        return [width, Math.max(AUTO_MIN_HEIGHT * k, Math.min(max, h))];
+            return [width, page.height * k];
+        return [width, this._sheetHeight(width, page.actor, page.height * k, k)];
     }
 
-    _springTo(target, duration, onDone = null, key = 'geom') {
-        this._springs[key]?.stop();
-        const tl = springTo(this, target, duration, () => {
-            if (this._springs[key] === tl)
-                delete this._springs[key];
-            onDone?.();
-        });
-        this._springs[key] = tl;
+    _sheetHeight(width, actor, max, k) {
+        const inner = this._innerWidth(width);
+        const gap = this._dash.layout_manager.spacing;
+        let h = this._dash.get_theme_node().get_vertical_padding() +
+            this._header.get_preferred_height(inner)[1] + gap + actor.get_preferred_height(inner)[1];
+        if (this._nav.visible)
+            h += this._nav.get_preferred_height(inner)[1] + gap;
+        return Math.max(AUTO_MIN_HEIGHT * k, Math.min(max, Math.ceil(h)));
     }
 
     relayout(animate) {
+        if (!Main.layoutManager.primaryMonitor)
+            return;
+        const [width, height] = this._size();
+        const layer = this.mode === 'dashboard' ? this._dash : this._content;
+        layer.set_size(Math.round(width), Math.round(height));
+        const shape = SHAPES[this.mode];
+        const targets = {
+            width, height, radius: shape.radius, shoulder: shape.shoulder, op: this.mode === 'dashboard' ? 1 : 0,
+        };
+        if (!animate || !animationsOn()) {
+            this._motion.jump({...targets, fade: 1, scale: 1});
+            this._paint();
+            return;
+        }
+        this._motion.retarget(targets);
+        this._kick();
+    }
+
+    _kick() {
+        if (this._loop)
+            return;
+        this._lastFrame = 0;
+        this._loop = frameLoop(this, () => this._frame());
+    }
+
+    _frame() {
+        const now = GLib.get_monotonic_time() / 1e6;
+        const dt = this._lastFrame ? now - this._lastFrame : 1 / 60;
+        this._lastFrame = now;
+        const moving = this._motion.step(dt);
+        this._paint();
+        if (!moving)
+            this._loop = null;
+        return moving;
+    }
+
+    _paint() {
         const mon = Main.layoutManager.primaryMonitor;
         if (!mon)
             return;
-        const [width, height] = this._size();
-        const t = {x: mon.x + Math.round((mon.width - width) / 2), y: mon.y, width, height};
+        const m = this._motion;
+        const k = scale();
+        const w = Math.max(1, Math.round(m.value('width')));
+        const h = Math.max(1, Math.round(m.value('height')));
+        this.set_position(mon.x + Math.round((mon.width - w) / 2), mon.y);
+        this.set_size(w, h);
 
-        const node = this.get_theme_node();
-        const innerW = width - node.get_horizontal_padding() -
-            node.get_border_width(St.Side.LEFT) - node.get_border_width(St.Side.RIGHT);
-        const innerH = height - node.get_vertical_padding() -
-            node.get_border_width(St.Side.TOP) - node.get_border_width(St.Side.BOTTOM);
-        const layer = this.mode === 'dashboard' ? this._dash : this._content;
-        layer.set_size(Math.max(0, innerW), Math.max(0, innerH));
-
-        const same = a => a && a.x === t.x && a.y === t.y && a.width === t.width && a.height === t.height;
-        if (animate && this._springs.geom && same(this._target))
-            return;
-        this._target = t;
-        if (!animate || same(this)) {
-            this._springs.geom?.stop();
-            delete this._springs.geom;
-            this.set(t);
-            return;
+        const r = Math.max(0, Math.round(m.value('radius')));
+        if (r !== this._radius) {
+            this._radius = r;
+            this._bg.set_style(`border-radius: 0 0 ${r}px ${r}px;`);
         }
-        this._springTo(t, MORPH_MS);
+        const sh = Math.max(0, Math.round(m.value('shoulder') * k));
+        if (sh !== this._shoulderPx) {
+            this._shoulderPx = sh;
+            this.queue_relayout();
+        }
+
+        const op = m.value('op');
+        const dash = dashReveal(op);
+        this._dash.visible = this.dashOpen || dash > 0;
+        this._dash.opacity = Math.round(dash * 255);
+        this._dash.translation_y = Math.round(-DASH_RISE * (1 - dash) * k);
+        const pill = pillReveal(op) * clamp01(m.value('fade'));
+        this._content.visible = !this.dashOpen || pill > 0;
+        this._content.opacity = Math.round(pill * 255);
+
+        const s = m.value('scale');
+        if (this.scale_x !== s)
+            this.set_scale(s, s);
     }
 
     _show() {
         this._shown = true;
         this.relayout(false);
-        this.set({opacity: 0, scale_x: 0.7, scale_y: 0.7});
+        if (animationsOn()) {
+            this._motion.springs.scale.x = SHOW_SCALE;
+            this._paint();
+            this._kick();
+        }
+        this.opacity = 0;
         this.ease({opacity: 255, duration: 250, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-        this._springTo({scale_x: 1, scale_y: 1}, MORPH_MS, null, 'scale');
     }
 });

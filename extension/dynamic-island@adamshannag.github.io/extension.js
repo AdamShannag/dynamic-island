@@ -1,5 +1,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -13,6 +15,8 @@ import {BannerBlocker, BannerMute, OsdTakeover, PanelTransparency, ScreenShareWa
 import {activateNotification} from './lib/shell.js';
 
 const PREWARM_DELAY_S = 3;
+const NOTIFY_MS = 4000;
+const SEARCH_KEY = 'search-shortcut';
 
 export default class DynamicIslandExtension extends Extension {
     enable() {
@@ -61,9 +65,14 @@ export default class DynamicIslandExtension extends Extension {
                 ColorPicked: hex => this.copy(hex),
             },
         });
+        this._prefs = this.getSettings();
+        Main.wm.addKeybinding(SEARCH_KEY, this._prefs, Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW, () => this._island?.openSearch());
     }
 
     disable() {
+        Main.wm.removeKeybinding(SEARCH_KEY);
+        this._prefs = null;
         this._daemon.destroy();
         this._daemon = null;
         this._clipboard.destroy();
@@ -101,6 +110,10 @@ export default class DynamicIslandExtension extends Extension {
 
     action(name) {
         this.call('Action', [name]);
+    }
+
+    notify(title, body = '', icon = '', accent = '') {
+        this.call('Notify', [title, body, icon, accent, NOTIFY_MS]);
     }
 
     activateNotification(view) {

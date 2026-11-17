@@ -2,18 +2,15 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
 
-import {TABS, TAB_IDS, tabOn} from '../lib/constants.js';
+import {ALL_TABS, MORE_TAB, tabOn} from '../lib/constants.js';
 import {fmtClock} from '../lib/format.js';
 import {NOTHING_RUNNING, continueItems, focusSubtitle, homeFavorites, signature, taskProgress} from '../lib/home.js';
-import {column, iconButton, label, setText} from '../lib/widgets.js';
+import {PRESS_TILE, column, iconButton, label, setText, tactile} from '../lib/widgets.js';
 import {Page} from './page.js';
 
-const REVEAL_MS = 240;
-const REVEAL_STEP_MS = 40;
-const REVEAL_RISE = 8;
 const TILE_SLOTS = 6;
 const TILES_PER_ROW = 3;
-const MORE_TILE = ['more', 'More', 'view-more-horizontal-symbolic'];
+const FAVORITE_IDS = ALL_TABS.map(([id]) => id);
 
 function row(styleClass, props = {}) {
     const box = new St.BoxLayout({style_class: styleClass, ...props});
@@ -142,15 +139,15 @@ class Favorites {
     }
 
     update(settings) {
-        const tabs = new Map(TABS.map(t => [t[0], t]));
-        const ids = homeFavorites(settings, TAB_IDS).filter(id => tabOn(settings, id));
+        const tabs = new Map(ALL_TABS.map(t => [t[0], t]));
+        const ids = homeFavorites(settings, FAVORITE_IDS).filter(id => tabOn(settings, id));
         const sig = ids.join('|');
         if (sig === this._sig)
             return;
         this._sig = sig;
         this._rows.forEach(r => r.destroy_all_children());
         for (let i = 0; i < TILE_SLOTS; i++) {
-            const entry = i === TILE_SLOTS - 1 ? MORE_TILE : tabs.get(ids[i]);
+            const entry = i === TILE_SLOTS - 1 ? MORE_TAB : tabs.get(ids[i]);
             const r = this._rows[Math.floor(i / TILES_PER_ROW)];
             r.add_child(entry ? this._tile(entry) : new St.Widget({x_expand: true, y_expand: true}));
         }
@@ -165,7 +162,7 @@ class Favorites {
             x_expand: true, y_expand: true, child: body,
         });
         btn.connect('clicked', () => this._page.island.showTab(id));
-        return btn;
+        return tactile(btn, {press: PRESS_TILE, lift: 1});
     }
 }
 
@@ -276,16 +273,7 @@ export class HomePage extends Page {
     onShow() {
         this.onState();
         this.refresh();
-        this._reveal();
         return null;
-    }
-
-    onHide() {
-        for (const a of this._blocks()) {
-            a.remove_all_transitions();
-            a.opacity = 255;
-            a.translation_y = 0;
-        }
     }
 
     onSettings(st) {
@@ -344,21 +332,7 @@ export class HomePage extends Page {
         this.tick(Date.now());
     }
 
-    _blocks() {
+    blocks() {
         return [this._media.actor, this._favs.actor, this._label, ...this._cont.get_children()];
-    }
-
-    _reveal() {
-        if (!St.Settings.get().enable_animations)
-            return;
-        this._blocks().forEach((a, i) => {
-            a.remove_all_transitions();
-            a.opacity = 0;
-            a.translation_y = REVEAL_RISE;
-            a.ease({
-                opacity: 255, translation_y: 0, duration: REVEAL_MS, delay: i * REVEAL_STEP_MS,
-                mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
-            });
-        });
     }
 }

@@ -2,21 +2,32 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 
-import {BAR_MAX, DEFAULT_BAR} from './bar.js';
 import {DEFAULT_FAVORITES} from './home.js';
-
-export {BAR_MAX, DEFAULT_BAR};
 
 export const SHELL_MAJOR = parseInt(Config.PACKAGE_VERSION, 10);
 export const VERTICAL = SHELL_MAJOR >= 48 ? {orientation: Clutter.Orientation.VERTICAL} : {vertical: true};
 
 export const scale = () => St.ThemeContext.get_for_stage(global.stage).scale_factor;
 
-export const MORPH_MS = 480;
-export const FADE_OUT_MS = 70;
-export const REVEAL_DELAY_MS = 40;
-export const FADE_IN_MS = 200;
 export const OSD_MS = 1600;
+
+export const SHAPES = {
+    idle: {width: 184, radius: 16, shoulder: 8},
+    compact: {width: 214, radius: 16, shoulder: 8},
+    osd: {width: 300, radius: 16, shoulder: 8},
+    notify: {width: 440, height: 72, radius: 28, shoulder: 12},
+    dashboard: {width: 640, radius: 26, shoulder: 14},
+};
+export const DASH_RISE = 8;
+export const PAGE_OUT_MS = 170;
+export const PAGE_IN_MS = 380;
+export const PAGE_IN_DELAY_MS = 60;
+export const PAGE_SHIFT = 26;
+export const FIND_SHIFT = 6;
+export const REVEAL_MS = 420;
+export const REVEAL_STEP_MS = 38;
+export const REVEAL_RISE = 10;
+export const FIND_HEIGHT = 520;
 
 export const IDLE = {kind: 'idle'};
 export const MODES = ['idle', 'compact', 'notify', 'dashboard', 'osd'];
@@ -38,9 +49,13 @@ export const TABS = [
 ];
 export const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents', race: 'play', draw: 'play'};
 export const TAB_IDS = TABS.map(([id]) => id);
-export const MORE_TAB = ['more', 'More', 'view-more-horizontal-symbolic'];
+export const HOME_TAB = 'home';
+export const SETTINGS_TAB = ['settings', 'Settings', 'emblem-system-symbolic'];
+export const MORE_TAB = ['more', 'More', 'view-app-grid-symbolic'];
+export const ALL_TABS = [...TABS, SETTINGS_TAB];
+export const tabInfo = id => [...ALL_TABS, MORE_TAB].find(([tid]) => tid === id) ?? null;
 
-export const DASH_WIDTH = 760;
+export const DASH_WIDTH = SHAPES.dashboard.width;
 export const DASH_DEFAULT_HEIGHT = 500;
 export const AUTO_MIN_HEIGHT = 200;
 export const ROWS_PER_FRAME = 4;
@@ -88,6 +103,6 @@ export const SETTING_COLORS = {
     'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
     'input-keyboard-symbolic': '#ff9f0a', 'video-display-symbolic': '#5e5ce6',
 };
-export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {play: false}, bar: [...DEFAULT_BAR], home: {favorites: [...DEFAULT_FAVORITES]}};
+export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {play: false}, home: {favorites: [...DEFAULT_FAVORITES]}};
 export const featureOn = (st, key) => st?.features?.[key] !== false;
 export const tabOn = (st, id) => id === 'home' || st?.tabs?.[id] !== false;

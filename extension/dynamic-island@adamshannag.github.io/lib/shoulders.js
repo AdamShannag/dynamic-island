@@ -1,8 +1,6 @@
 import Clutter from 'gi://Clutter';
 import St from 'gi://St';
 
-import {shoulderRadius} from './format.js';
-
 const LEFT = -1;
 const RIGHT = 1;
 
@@ -28,21 +26,32 @@ function drawEar(area, side, color) {
 }
 
 export class Shoulders {
-    constructor(owner) {
+    constructor(owner, source) {
         this._owner = owner;
+        this._source = source;
         this._radius = 0;
+        this._color = '';
         this._ears = [LEFT, RIGHT].map(side => {
             const area = new St.DrawingArea({reactive: false});
-            area.connect('repaint', a => drawEar(a, side, this._owner.get_theme_node().get_background_color()));
+            area.connect('repaint', a => drawEar(a, side, this._source.get_theme_node().get_background_color()));
             owner.add_child(area);
             return {side, area};
         });
-        owner.connectObject('style-changed', () => this._repaint(), this);
+        source.connectObject('style-changed', () => this._onStyle(), this);
     }
 
-    allocate(box, scaleFactor) {
+    _onStyle() {
+        const bg = this._source.get_theme_node().get_background_color();
+        const c = `${bg.red},${bg.green},${bg.blue},${bg.alpha}`;
+        if (c === this._color)
+            return;
+        this._color = c;
+        this._repaint();
+    }
+
+    allocate(box, radius) {
         const width = Math.round(box.get_width());
-        const r = Math.round(shoulderRadius(box.get_height() / scaleFactor) * scaleFactor);
+        const r = Math.max(0, Math.round(radius));
         for (const {side, area} of this._ears) {
             const x = side === LEFT ? -r : width;
             area.allocate(new Clutter.ActorBox({x1: x, y1: 0, x2: x + r, y2: r}));
@@ -59,7 +68,7 @@ export class Shoulders {
     }
 
     destroy() {
-        this._owner.disconnectObject(this);
+        this._source.disconnectObject(this);
         for (const {area} of this._ears)
             area.destroy();
         this._ears = [];

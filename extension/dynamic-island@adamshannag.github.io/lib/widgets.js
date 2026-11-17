@@ -18,6 +18,25 @@ export function setText(lbl, text) {
         lbl.text = text;
 }
 
+export const PRESS_ROUND = 0.94;
+export const PRESS_TILE = 0.97;
+const PRESS_MS = 110;
+const LIFT_MS = 150;
+
+export function tactile(btn, {press = PRESS_ROUND, lift = 0} = {}) {
+    btn.set_pivot_point(0.5, 0.5);
+    btn.connect('notify::pressed', () => {
+        const s = btn.pressed ? press : 1;
+        btn.ease({scale_x: s, scale_y: s, duration: PRESS_MS, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+    });
+    if (lift) {
+        btn.connect('notify::hover', () => btn.ease({
+            translation_y: btn.hover ? -lift * scale() : 0, duration: LIFT_MS, mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        }));
+    }
+    return btn;
+}
+
 export function iconButton(iconName, styleClass, onClick, accessibleName = '') {
     const btn = new St.Button({
         style_class: styleClass,
@@ -27,7 +46,7 @@ export function iconButton(iconName, styleClass, onClick, accessibleName = '') {
         child: new St.Icon({icon_name: iconName}),
     });
     btn.connect('clicked', onClick);
-    return btn;
+    return tactile(btn);
 }
 
 export function pillButton(text, onClick, extraClass = '') {
@@ -290,7 +309,7 @@ export class Toggle {
         const x = (v ? 20 : 2) * k;
         this._knob.y = 2 * k;
         if (animate)
-            this._knob.ease({x, duration: 170, mode: Clutter.AnimationMode.EASE_OUT_CUBIC});
+            this._knob.ease({x, duration: 260, mode: Clutter.AnimationMode.EASE_OUT_BACK});
         else
             this._knob.x = x;
     }

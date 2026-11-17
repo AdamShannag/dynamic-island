@@ -15,7 +15,7 @@ GOBUILD    := CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)"
 ARCHES     := amd64 arm64
 NFPM       ?= nfpm
 
-.PHONY: all build test test-go test-js check fmt install install-daemon install-extension uninstall \
+.PHONY: all build test test-go test-js check fmt schemas install install-daemon install-extension uninstall \
         run logs dist deb clean
 
 all: check test build
@@ -35,6 +35,10 @@ check:
 	@test -z "$$(gofmt -l cmd internal)" || { gofmt -l cmd internal; echo "run: make fmt"; exit 1; }
 	go vet ./...
 	cd extension && npm run check
+	@if command -v glib-compile-schemas >/dev/null; then glib-compile-schemas --strict --dry-run $(EXT_SRC)/schemas; fi
+
+schemas:
+	glib-compile-schemas --strict $(EXT_SRC)/schemas
 
 fmt:
 	gofmt -w cmd internal
@@ -52,6 +56,7 @@ install-daemon: build
 install-extension:
 	mkdir -p $(EXT_DIR)
 	cp -r $(EXT_SRC)/. $(EXT_DIR)/
+	@if command -v glib-compile-schemas >/dev/null; then glib-compile-schemas $(EXT_DIR)/schemas; fi
 	@echo "Extension copied. First install: log out and back in (X11: Alt+F2, r), then:"
 	@echo "  gnome-extensions enable $(UUID)"
 

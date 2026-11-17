@@ -39,37 +39,6 @@ export function eachFrame(fn) {
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => (fn() ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE));
 }
 
-export class CriticalSpring {
-    constructor(dims, stiffness = 22) {
-        this.pos = new Array(dims).fill(0);
-        this.vel = new Array(dims).fill(0);
-        this.w = stiffness;
-        this.lastT = 0;
-    }
-
-    jump(target) {
-        this.pos = [...target];
-        this.vel = this.vel.map(() => 0);
-    }
-
-    step(target) {
-        const now = GLib.get_monotonic_time() / 1e6;
-        const dt = this.lastT ? Math.min(0.05, Math.max(0.001, now - this.lastT)) : 1 / 60;
-        this.lastT = now;
-        const w = this.w, e = Math.exp(-w * dt);
-        let moving = false;
-        for (let a = 0; a < this.pos.length; a++) {
-            const x = this.pos[a] - target[a], v = this.vel[a];
-            const nx = (x + (v + w * x) * dt) * e;
-            this.vel[a] = (v - w * (v + w * x) * dt) * e;
-            this.pos[a] = target[a] + nx;
-            if (Math.abs(nx) > 0.05 || Math.abs(this.vel[a]) > 0.5)
-                moving = true;
-        }
-        return moving;
-    }
-}
-
 export function frameLoop(actor, onFrame) {
     const tl = new Clutter.Timeline({actor, duration: 1000, repeat_count: -1});
     tl.connect('new-frame', () => {

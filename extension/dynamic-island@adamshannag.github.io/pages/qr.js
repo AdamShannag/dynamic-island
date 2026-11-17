@@ -3,16 +3,20 @@ import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
 
 import {VERTICAL} from '../lib/constants.js';
-import {column, label, pillButton} from '../lib/widgets.js';
+import {column, label} from '../lib/widgets.js';
 import {Page} from './page.js';
 
 export class QRPage extends Page {
     static id = 'qr';
-    static title = '›  QR code';
+    static title = 'QR code';
     static height = 430;
 
     get parentTab() {
         return this._return ?? 'clipboard';
+    }
+
+    get backTab() {
+        return this.parentTab;
     }
 
     build() {
@@ -27,9 +31,6 @@ export class QRPage extends Page {
         ct.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         ct.ellipsize = Pango.EllipsizeMode.END;
         col.add_child(this._text);
-        const back = pillButton('Back', () => this.island.showTab(this.parentTab));
-        back.x_align = Clutter.ActorAlign.START;
-        col.add_child(back);
         card.add_child(this._img);
         card.add_child(col);
         actor.add_child(card);

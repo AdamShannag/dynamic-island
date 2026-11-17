@@ -10,5 +10,6 @@
     "50"
   ],
   "url": "https://github.com/AdamShannag/dynamic-island",
-  "version": 3
+  "version": 3,
+  "settings-schema": "org.gnome.shell.extensions.dynamic-island"
 }

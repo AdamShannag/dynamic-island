@@ -87,6 +87,10 @@ export class NotesPage extends Page {
         this._flush();
     }
 
+    select(id) {
+        this._load(id);
+    }
+
     destroy() {
         this._flush();
     }
