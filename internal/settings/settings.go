@@ -20,10 +20,17 @@ type Settings struct {
 	Tabs        map[string]bool `json:"tabs"`
 	Features    map[string]bool `json:"features"`
 	Home        Home            `json:"home"`
+	Glance      Glance          `json:"glance"`
 }
 
 type Home struct {
 	Favorites []string `json:"favorites"`
+	Edited    bool     `json:"edited"`
+}
+
+type Glance struct {
+	Mode  string `json:"mode"`
+	Delay int    `json:"delay"`
 }
 
 const (
@@ -31,6 +38,10 @@ const (
 	SettingsTab = "settings"
 
 	FavoritesMax = 5
+
+	GlanceDelayMin     = 100
+	GlanceDelayMax     = 3000
+	GlanceDelayDefault = 400
 )
 
 var (
@@ -42,10 +53,12 @@ var (
 	FavoriteIDs  = append(append([]string{}, TabIDs...), SettingsTab)
 
 	DefaultFavorites = []string{"docker", "ports", "clipboard", "notes", "agents"}
+	GlanceModes      = []string{"off", "hover", "right-click"}
 )
 
 func Defaults() Settings {
-	s := Settings{Accent: "blue", Surface: "black", Tabs: map[string]bool{}, Features: map[string]bool{}, Home: Home{Favorites: NormalizeFavorites(DefaultFavorites)}}
+	s := Settings{Accent: "blue", Surface: "black", Tabs: map[string]bool{}, Features: map[string]bool{}, Home: Home{Favorites: NormalizeFavorites(DefaultFavorites)},
+		Glance: Glance{Mode: "hover", Delay: GlanceDelayDefault}}
 	for _, t := range TabIDs {
 		s.Tabs[t] = true
 	}
@@ -80,43 +93,62 @@ func Load() error {
 	if err != nil {
 		return err
 	}
-	bar, ok := legacyBar(b)
-	if ok {
-		merged.Home.Favorites = favoritesFromBar(bar)
+	f := readFile(b)
+	merged.Home.Edited = f.edited
+	if favs, changed := migrateFavorites(merged.Home.Favorites, f); changed || f.hasBar {
+		merged.Home.Favorites = favs
 		if err := save(merged); err != nil {
-			return fmt.Errorf("migrate bar to favorites: %w", err)
+			return fmt.Errorf("migrate favorites: %w", err)
 		}
 	}
 	cur = merged
 	return nil
 }
 
-func legacyBar(b []byte) ([]string, bool) {
-	var keys map[string]json.RawMessage
-	if json.Unmarshal(b, &keys) != nil {
-		return nil, false
-	}
-	raw, hasBar := keys["bar"]
-	if _, hasHome := keys["home"]; !hasBar || hasHome {
-		return nil, false
-	}
-	var bar []string
-	_ = json.Unmarshal(raw, &bar)
-	return bar, true
+type fileShape struct {
+	bar     []string
+	hasBar  bool
+	hasHome bool
+	edited  bool
 }
 
-func favoritesFromBar(bar []string) []string {
-	var ids []string
-	for _, id := range bar {
-		if id != HomeTab && id != "inbox" {
-			ids = append(ids, id)
+func readFile(b []byte) fileShape {
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(b, &keys) != nil {
+		return fileShape{}
+	}
+	var f fileShape
+	if raw, ok := keys["bar"]; ok {
+		f.hasBar = true
+		_ = json.Unmarshal(raw, &f.bar)
+	}
+	if raw, ok := keys["home"]; ok {
+		f.hasHome = true
+		var h struct {
+			Edited bool `json:"edited"`
 		}
+		_ = json.Unmarshal(raw, &h)
+		f.edited = h.Edited
 	}
-	favs := NormalizeFavorites(ids)
-	if len(favs) == 0 {
-		return NormalizeFavorites(DefaultFavorites)
+	return f
+}
+
+func migrateFavorites(current []string, f fileShape) ([]string, bool) {
+	if f.edited {
+		return current, false
 	}
-	return favs
+	favs := current
+	if f.hasBar && !f.hasHome {
+		var ids []string
+		for _, id := range f.bar {
+			if id != HomeTab && id != "inbox" {
+				ids = append(ids, id)
+			}
+		}
+		favs = NormalizeFavorites(ids)
+	}
+	full := NormalizeFavorites(append(append([]string{}, favs...), DefaultFavorites...))
+	return full, strings.Join(full, ",") != strings.Join(current, ",")
 }
 
 func Get() Settings {
@@ -166,6 +198,10 @@ func merge(base Settings, patch []byte) (Settings, error) {
 		Home        *struct {
 			Favorites []string `json:"favorites"`
 		} `json:"home"`
+		Glance *struct {
+			Mode  *string `json:"mode"`
+			Delay *int    `json:"delay"`
+		} `json:"glance"`
 	}
 	if err := json.Unmarshal(patch, &p); err != nil {
 		return base, fmt.Errorf("invalid settings: %w", err)
@@ -201,6 +237,20 @@ func merge(base Settings, patch []byte) (Settings, error) {
 	}
 	if p.Home != nil && p.Home.Favorites != nil {
 		base.Home.Favorites = NormalizeFavorites(p.Home.Favorites)
+		base.Home.Edited = true
+	}
+	if p.Glance != nil && p.Glance.Mode != nil {
+		if !contains(GlanceModes, *p.Glance.Mode) {
+			return base, fmt.Errorf("unknown glance mode %q", *p.Glance.Mode)
+		}
+		base.Glance.Mode = *p.Glance.Mode
+	}
+	if p.Glance != nil && p.Glance.Delay != nil {
+		d := *p.Glance.Delay
+		if d < GlanceDelayMin || d > GlanceDelayMax {
+			return base, fmt.Errorf("glance delay must be %d to %d ms", GlanceDelayMin, GlanceDelayMax)
+		}
+		base.Glance.Delay = d
 	}
 	return base, nil
 }

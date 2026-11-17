@@ -95,11 +95,13 @@ func TestMigrateBarToFavorites(t *testing.T) {
 	cases := []struct {
 		name, file, want string
 	}{
-		{"pins move, home and inbox dropped", `{"accent":"green","bar":["home","inbox","docker","notes"]}`, "docker,notes"},
-		{"only home and inbox falls back to defaults", `{"bar":["home","inbox"]}`, "docker,ports,clipboard,notes,agents"},
-		{"unknown ids are dropped", `{"bar":["home","bogus","play","play"]}`, "play"},
-		{"an existing home key wins", `{"bar":["home","docker"],"home":{"favorites":["agents"]}}`, "agents"},
+		{"pins move first, then defaults top up", `{"accent":"green","bar":["home","inbox","docker","notes"]}`, "docker,notes,ports,clipboard,agents"},
+		{"only home and inbox gives the defaults", `{"bar":["home","inbox"]}`, "docker,ports,clipboard,notes,agents"},
+		{"unknown ids and duplicates are dropped", `{"bar":["home","bogus","play","play","ports"]}`, "play,ports,docker,clipboard,notes"},
+		{"a never-edited home list is kept and topped up", `{"bar":["home","docker"],"home":{"favorites":["agents"]}}`, "agents,docker,ports,clipboard,notes"},
 		{"no bar keeps defaults", `{"accent":"teal"}`, "docker,ports,clipboard,notes,agents"},
+		{"an edited short list is never refilled", `{"bar":["home","docker"],"home":{"favorites":["agents"],"edited":true}}`, "agents"},
+		{"an edited empty list stays empty", `{"home":{"favorites":[],"edited":true}}`, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -112,7 +114,7 @@ func TestMigrateBarToFavorites(t *testing.T) {
 
 func TestMigrationRunsOnceAndDropsBar(t *testing.T) {
 	s := loadFile(t, `{"accent":"green","bar":["home","ports","agents"]}`)
-	if s.Accent != "green" || strings.Join(s.Home.Favorites, ",") != "ports,agents" {
+	if s.Accent != "green" || strings.Join(s.Home.Favorites, ",") != "ports,agents,docker,clipboard,notes" || s.Home.Edited {
 		t.Fatalf("migrated settings wrong: %+v", s)
 	}
 	b, err := os.ReadFile(path())
@@ -129,14 +131,47 @@ func TestMigrationRunsOnceAndDropsBar(t *testing.T) {
 	if _, ok := saved["home"]; !ok {
 		t.Fatal("the migrated file must hold the favourites")
 	}
-	if _, err := Update([]byte(`{"home":{"favorites":["notes"]}}`)); err != nil {
-		t.Fatal(err)
+}
+
+func TestUserEditedFavoritesAreNeverRefilled(t *testing.T) {
+	loadFile(t, `{"bar":["home","docker"]}`)
+	for _, list := range []string{`["notes"]`, `[]`} {
+		s, err := Update([]byte(`{"home":{"favorites":` + list + `}}`))
+		if err != nil || !s.Home.Edited {
+			t.Fatalf("an edit must mark the list: %v %+v", err, s.Home)
+		}
+		want := strings.Join(s.Home.Favorites, ",")
+		mu.Lock()
+		cur = Defaults()
+		mu.Unlock()
+		if err := Load(); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(Get().Home.Favorites, ","); got != want || !Get().Home.Edited {
+			t.Fatalf("reload refilled an edited list: got %q, want %q", got, want)
+		}
 	}
+}
+
+func TestGlanceSettings(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	mu.Lock()
 	cur = Defaults()
 	mu.Unlock()
-	if err := Load(); err != nil || strings.Join(Get().Home.Favorites, ",") != "notes" {
-		t.Fatalf("a second load must not migrate again: %v %v", err, Get().Home.Favorites)
+	if g := Get().Glance; g.Mode != "hover" || g.Delay != 400 {
+		t.Fatalf("default glance = %+v", g)
+	}
+	s, err := Update([]byte(`{"glance":{"mode":"right-click","delay":250}}`))
+	if err != nil || s.Glance.Mode != "right-click" || s.Glance.Delay != 250 {
+		t.Fatalf("glance update = %+v, %v", s.Glance, err)
+	}
+	for _, bad := range []string{`{"glance":{"mode":"always"}}`, `{"glance":{"delay":50}}`, `{"glance":{"delay":5000}}`} {
+		if _, err := Update([]byte(bad)); err == nil {
+			t.Fatalf("%s must be rejected", bad)
+		}
+	}
+	if s, err = Update([]byte(`{"glance":{"mode":"off"}}`)); err != nil || s.Glance.Delay != 250 {
+		t.Fatalf("a mode-only patch must keep the delay: %+v %v", s.Glance, err)
 	}
 }
 
