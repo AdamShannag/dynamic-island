@@ -45,7 +45,7 @@ func TestHostNeverLeaksTheWordInWhatItBroadcasts(t *testing.T) {
 	host := draw.NewEngine("h1", "Host")
 	tr := newFakeTransport()
 	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
-	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, tr.publish, tr.sendStart); err != nil {
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, 0, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
 	if host.State().DrawerID != "h1" {
@@ -133,7 +133,7 @@ func TestCorrectGuessScoresByRankAndEndsRoundWhenEveryoneHasGuessed(t *testing.T
 	host := draw.NewEngine("h1", "Host")
 	tr := newFakeTransport()
 	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
-	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, tr.publish, tr.sendStart); err != nil {
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, 0, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
 	word := host.State().Word
@@ -165,7 +165,7 @@ func TestWrongGuessDoesNotScoreOrEndTheRound(t *testing.T) {
 	host := draw.NewEngine("h1", "Host")
 	tr := newFakeTransport()
 	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
-	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, tr.publish, tr.sendStart); err != nil {
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, 0, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
 	if err := host.HandleProgress(lobby.Progress{LobbyID: "lobby1", PeerID: "g1", Payload: mustJSON(t, map[string]string{"type": "guess", "text": "definitely wrong"})}); err != nil {
@@ -183,7 +183,7 @@ func TestDrawerCannotGuessTheirOwnWord(t *testing.T) {
 	host := draw.NewEngine("h1", "Host")
 	tr := newFakeTransport()
 	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
-	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, tr.publish, tr.sendStart); err != nil {
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, 0, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
 	word := host.State().Word
@@ -199,7 +199,7 @@ func TestStrokesAreCappedPerRound(t *testing.T) {
 	host := draw.NewEngine("h1", "Host")
 	tr := newFakeTransport()
 	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}}
-	if err := host.BeginHost("lobby1", players, map[string]string{}, tr.publish, tr.sendStart); err != nil {
+	if err := host.BeginHost("lobby1", players, map[string]string{}, 0, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 50; i++ {

@@ -41,6 +41,10 @@ func (a *api) PartySetMode(mode string) *dbus.Error {
 	return dbusErr(a.party.Engine().SetMode(party.Mode(mode)))
 }
 
+func (a *api) PartySetRounds(rounds int32) *dbus.Error {
+	return dbusErr(a.party.Engine().SetRounds(int(rounds)))
+}
+
 func (a *api) PartyStart() *dbus.Error { return dbusErr(a.party.Engine().Start()) }
 
 func (a *api) PartyRematch() *dbus.Error { return dbusErr(a.party.Engine().Rematch()) }

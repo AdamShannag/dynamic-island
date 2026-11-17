@@ -128,6 +128,9 @@ const introXML = `
     <method name="PartySetMode">
       <arg name="mode" type="s" direction="in"/>
     </method>
+    <method name="PartySetRounds">
+      <arg name="rounds" type="i" direction="in"/>
+    </method>
     <method name="PartyStart"/>
     <method name="PartyRematch"/>
     <method name="PartyLeave"/>

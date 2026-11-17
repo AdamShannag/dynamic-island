@@ -863,20 +863,42 @@ export class PlayPage extends Page {
         const resultGroup = group('RESULTS');
         this._resultGroupActor = resultGroup.actor;
         this._resultList = resultGroup.list;
+        this._resultWaitingLabel = label('island-race-subtitle', {
+            text: 'Waiting for the host to start a new round', x_align: Clutter.ActorAlign.CENTER,
+        });
         const doneBtn = this._leaveButton('Done', 'primary');
         doneBtn.x_expand = true;
         doneBtn.add_style_class_name('island-race-full-btn');
+        this._rematchBtn = pillButton('Play Again', () => this._rematch());
+        this._rematchBtn.x_expand = true;
+        this._rematchBtn.add_style_class_name('island-race-full-btn');
+        const actionsRow = new St.BoxLayout({style_class: 'island-toolbar', x_expand: true});
+        actionsRow.add_child(this._rematchBtn);
+        actionsRow.add_child(doneBtn);
         view.add_child(this._resultTitle);
         view.add_child(this._resultHint);
         view.add_child(this._winnerCard);
         view.add_child(scrollView(resultGroup.actor));
-        view.add_child(doneBtn);
+        view.add_child(this._resultWaitingLabel);
+        view.add_child(actionsRow);
         return view;
+    }
+
+    _rematch() {
+        this._rematchBtn.reactive = false;
+        this.call('PartyRematch', [], (_result, err) => {
+            this._rematchBtn.reactive = true;
+            if (err)
+                return;
+            this.refresh();
+        });
     }
 
     _renderResult(state) {
         const finished = state.phase === 'finished';
         const missed = state.phase === 'missed';
+        this._rematchBtn.visible = finished && !!state.isHost;
+        this._resultWaitingLabel.visible = finished && !state.isHost;
         if (state.mode === 'draw')
             this._renderDrawResult(state, finished, missed);
         else

@@ -109,7 +109,7 @@ type Engine struct {
 	roundDeltas []ScoreDelta
 	onChange    func(State)
 
-	publish   func(end bool, lobbyID string, payload json.RawMessage)
+	publish   func(disband bool, lobbyID string, payload json.RawMessage)
 	sendStart func(addr, lobbyID string, payload json.RawMessage) error
 }
 
@@ -153,10 +153,15 @@ func (e *Engine) notify() {
 
 // BeginHost starts a drawing game for the host: players is the accepted
 // roster in turn order, peerAddrs resolves each non-self player's address.
-func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[string]string,
+// rounds is the host-configured round count; a value below 1 falls back to
+// one round per player.
+func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[string]string, rounds int,
 	publish func(bool, string, json.RawMessage), sendStart func(addr, lobbyID string, payload json.RawMessage) error) error {
 	if len(players) == 0 {
 		return fmt.Errorf("draw: no accepted players")
+	}
+	if rounds < 1 {
+		rounds = len(players)
 	}
 	order := make([]string, len(players))
 	for i, p := range players {
@@ -182,7 +187,7 @@ func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[strin
 	endsAt := time.Now().Add(e.roundDuration).UnixMilli()
 
 	e.state = State{
-		Phase: PhaseDrawing, Round: round, TotalRounds: len(players),
+		Phase: PhaseDrawing, Round: round, TotalRounds: rounds,
 		DrawerID: drawerID, DrawerName: drawerName, Word: word,
 		RoundEndsAtMs: endsAt, Players: clonePlayers(players),
 	}
@@ -600,7 +605,7 @@ func (e *Engine) publishLocked() {
 	if err != nil {
 		return
 	}
-	e.publish(redacted.Phase == PhaseFinished, e.lobbyID, payload)
+	e.publish(false, e.lobbyID, payload)
 }
 
 // ApplyEvent absorbs a broadcast snapshot received over the shared lobby

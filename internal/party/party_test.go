@@ -218,7 +218,17 @@ func TestDrawEndToEndKeepsTheWordSecretFromTheGuesser(t *testing.T) {
 
 func TestPartyPhaseTransitionsToFinishedAndSupportsARematch(t *testing.T) {
 	host := engine(t, "h1", 19015)
+	guest := engine(t, "g1", 19016)
 	host.CreateLobby()
+	if err := host.Invite(peer("g1", 19016)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return guest.State().Phase == party.PhaseLobby })
+	if err := guest.Respond(true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { s, ok := playerStatus(host.State(), "g1"); return ok && s == "accepted" })
+
 	if err := host.SetMode(party.ModeRace); err != nil {
 		t.Fatal(err)
 	}
@@ -228,11 +238,22 @@ func TestPartyPhaseTransitionsToFinishedAndSupportsARematch(t *testing.T) {
 	if host.State().Phase != party.PhasePlaying {
 		t.Fatalf("phase = %v, want playing", host.State().Phase)
 	}
+	waitFor(t, func() bool { return guest.State().Race != nil && guest.State().Race.Passage != "" })
+
 	passageLen := len([]rune(host.State().Race.Passage))
 	if err := host.RaceEngine().SubmitProgress(passageLen); err != nil {
 		t.Fatal(err)
 	}
+	if err := guest.RaceEngine().SubmitProgress(passageLen); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { return host.State().Phase == party.PhaseFinished })
+
+	// A finished round must not tear down the lobby's pub/sub channel: the
+	// guest should learn the game finished over the still-open subscription
+	// (not by having it closed out from under it), and the host's lobby
+	// server must still be able to reach the guest afterward.
+	waitFor(t, func() bool { return guest.State().Phase == party.PhaseFinished })
 
 	if err := host.Rematch(); err != nil {
 		t.Fatalf("Rematch after finishing must succeed, got: %v", err)
@@ -240,6 +261,42 @@ func TestPartyPhaseTransitionsToFinishedAndSupportsARematch(t *testing.T) {
 	if host.State().Phase != party.PhaseLobby || host.State().Mode != party.ModeNone {
 		t.Fatalf("got %+v, want back in the lobby with no mode selected", host.State())
 	}
+
+	// This only succeeds if (a) the guest's lobby subscription survived the
+	// round ending, so the rematch broadcast can even reach it, and (b) the
+	// guest's phase-gating lets a "party" snapshot move it out of
+	// PhaseFinished back into PhaseLobby.
+	waitFor(t, func() bool { return guest.State().Phase == party.PhaseLobby })
+	if guest.State().Mode != party.ModeNone {
+		t.Fatalf("got %+v, want the guest's mode reset by the rematch too", guest.State())
+	}
+}
+
+func TestHostLeavingMidGameStillDisbandsTheLobby(t *testing.T) {
+	host := engine(t, "h1", 19017)
+	guest := engine(t, "g1", 19018)
+	host.CreateLobby()
+	if err := host.Invite(peer("g1", 19018)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return guest.State().Phase == party.PhaseLobby })
+	if err := guest.Respond(true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { s, ok := playerStatus(host.State(), "g1"); return ok && s == "accepted" })
+
+	if err := host.SetMode(party.ModeRace); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return guest.State().Race != nil && guest.State().Race.Passage != "" })
+
+	// Unlike a round finishing on its own, the host explicitly leaving
+	// mid-game must still tear the lobby down for the guest.
+	host.Leave()
+	waitFor(t, func() bool { return guest.State().Phase == party.PhaseHostLeft })
 }
 
 func TestLateAcceptIsToldTheGameStarted(t *testing.T) {

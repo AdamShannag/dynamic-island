@@ -60,6 +60,7 @@ export const INTERFACE_XML = `
     <method name="PartyInvite"><arg name="peer_id" type="s" direction="in"/></method>
     <method name="PartyRespond"><arg name="accept" type="b" direction="in"/></method>
     <method name="PartySetMode"><arg name="mode" type="s" direction="in"/></method>
+    <method name="PartySetRounds"><arg name="rounds" type="i" direction="in"/></method>
     <method name="PartyStart"/>
     <method name="PartyRematch"/>
     <method name="PartyLeave"/>

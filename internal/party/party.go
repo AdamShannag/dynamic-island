@@ -50,16 +50,34 @@ type Player struct {
 	Status string `json:"status"`
 }
 
+const (
+	DefaultRounds = 3
+	MinRounds     = 1
+	MaxRounds     = 10
+)
+
 type State struct {
 	LobbyID string   `json:"lobbyId"`
 	IsHost  bool     `json:"isHost"`
 	Phase   Phase    `json:"phase"`
 	Mode    Mode     `json:"mode"`
+	Rounds  int      `json:"rounds"`
 	Players []Player `json:"players"`
 	SelfID  string   `json:"selfId"`
 
 	Race *race.State `json:"race,omitempty"`
 	Draw *draw.State `json:"draw,omitempty"`
+}
+
+func clampRounds(rounds int) int {
+	switch {
+	case rounds < MinRounds:
+		return MinRounds
+	case rounds > MaxRounds:
+		return MaxRounds
+	default:
+		return rounds
+	}
 }
 
 type broadcastEnvelope struct {
@@ -275,6 +293,7 @@ func (e *Engine) CreateLobby() string {
 		LobbyID: id,
 		IsHost:  true,
 		Phase:   PhaseLobby,
+		Rounds:  DefaultRounds,
 		Players: []Player{
 			{PeerID: e.selfID, Name: e.selfName, Status: "accepted"},
 		},
@@ -489,6 +508,21 @@ func (e *Engine) SetMode(mode Mode) error {
 	return nil
 }
 
+// SetRounds lets the host configure how many rounds draw plays, before
+// Start. Out-of-range values are clamped rather than rejected.
+func (e *Engine) SetRounds(rounds int) error {
+	e.mu.Lock()
+	if !e.host || e.state.Phase != PhaseLobby {
+		e.mu.Unlock()
+		return fmt.Errorf("party: not hosting a lobby")
+	}
+	e.state.Rounds = clampRounds(rounds)
+	e.publishLobbyLocked()
+	e.mu.Unlock()
+	e.notify()
+	return nil
+}
+
 func (e *Engine) Start() error {
 	e.mu.Lock()
 	if !e.enabled {
@@ -504,6 +538,7 @@ func (e *Engine) Start() error {
 		e.mu.Unlock()
 		return fmt.Errorf("party: pick a game before starting")
 	}
+	rounds := e.state.Rounds
 	lobbyID := e.state.LobbyID
 	accepted := make([]Player, 0, len(e.state.Players))
 	peerAddrs := make(map[string]string, len(e.peerAddrs))
@@ -533,7 +568,7 @@ func (e *Engine) Start() error {
 		for i, p := range accepted {
 			players[i] = draw.Player{PeerID: p.PeerID, Name: p.Name, Status: "accepted"}
 		}
-		err = e.drawEng.BeginHost(lobbyID, players, peerAddrs, publish, sendStart)
+		err = e.drawEng.BeginHost(lobbyID, players, peerAddrs, rounds, publish, sendStart)
 	}
 	if err != nil {
 		return err
@@ -549,8 +584,8 @@ func (e *Engine) Start() error {
 	return nil
 }
 
-func (e *Engine) makePublisher(mode Mode) func(end bool, lobbyID string, payload json.RawMessage) {
-	return func(end bool, lobbyID string, payload json.RawMessage) {
+func (e *Engine) makePublisher(mode Mode) func(disband bool, lobbyID string, payload json.RawMessage) {
+	return func(disband bool, lobbyID string, payload json.RawMessage) {
 		e.mu.Lock()
 		server := e.server
 		e.mu.Unlock()
@@ -558,7 +593,7 @@ func (e *Engine) makePublisher(mode Mode) func(end bool, lobbyID string, payload
 			return
 		}
 		b := mustMarshal(broadcastEnvelope{Source: string(mode), Payload: payload})
-		if end {
+		if disband {
 			server.EndLobby(lobbyID, b)
 			return
 		}
@@ -670,7 +705,8 @@ func (e *Engine) makeOnEvent(lobbyID string) func(json.RawMessage) {
 			}
 			e.state.Players = clonePlayers(snap.Players)
 			e.state.Mode = snap.Mode
-			if e.state.Phase == PhaseLobby {
+			switch e.state.Phase {
+			case PhaseLobby, PhaseFinished:
 				e.state.Phase = snap.Phase
 			}
 			e.mu.Unlock()

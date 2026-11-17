@@ -59,7 +59,7 @@ type Engine struct {
 	raceStartedAt time.Time
 	onChange      func(State)
 
-	publish   func(end bool, lobbyID string, payload json.RawMessage)
+	publish   func(disband bool, lobbyID string, payload json.RawMessage)
 	sendStart func(addr, lobbyID string, payload json.RawMessage) error
 }
 
@@ -271,10 +271,10 @@ func (e *Engine) endRaceLocked() {
 		e.raceTimer.Stop()
 		e.raceTimer = nil
 	}
-	e.publishLocked(true)
+	e.publishLocked(false)
 }
 
-func (e *Engine) publishLocked(end bool) {
+func (e *Engine) publishLocked(disband bool) {
 	if !e.host || e.publish == nil {
 		return
 	}
@@ -282,7 +282,7 @@ func (e *Engine) publishLocked(end bool) {
 	if err != nil {
 		return
 	}
-	e.publish(end, e.lobbyID, payload)
+	e.publish(disband, e.lobbyID, payload)
 }
 
 // ApplyEvent absorbs a broadcast snapshot received over the shared lobby
