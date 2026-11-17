@@ -1,27 +1,5 @@
 Package: dynamic-island
 Architecture: arm64
-Version: 0.5.0
-Priority: optional
-Section: gnome
-Maintainer: Adam Shannag <noreply@github.com>
-Installed-Size: 15556
-Depends: gnome-shell (>= 46), dbus-user-session
-Suggests: docker.io
-Filename: pool/main/d/dynamic-island/dynamic-island_0.5.0_arm64.deb
-Size: 6364752
-MD5sum: c59253738468e4012b80cc6e5b6b5494
-SHA1: 547597be11a3570720d4f06dfd6dc1b9b508af1b
-SHA256: 13ab7e6c01494af970f4f1203565cdca71af758d22e786bb2d8ed93e51c20e36
-SHA512: c9e1ca177ba0264750d44caa8db644e181aa5a2e3ebeb0bf3b8c1f89fef100252a267ed58e56782fd7996c38f04ce587e9baf332517150ef33d97fe3c56d615a
-Homepage: https://github.com/AdamShannag/dynamic-island
-Description: A Dynamic Island for the GNOME desktop
- Live activities (music, timers, notifications, builds, coding agents),
- a dashboard with system monitor, Docker, ports, clipboard history,
- developer tools, notes and quick web search, driven by a small Go
- daemon over D-Bus. Run `island setup` after installing.
-
-Package: dynamic-island
-Architecture: arm64
 Version: 0.6.0
 Priority: optional
 Section: gnome
@@ -101,6 +79,28 @@ MD5sum: 0422005bf2dc3c67cdaf4859e5890a8b
 SHA1: ea47226e8ed32796cf04d9e416a5f1979d4f78f5
 SHA256: a9a450339b529e230a34d17236a12be26f987573615a90dc617d6b4395bd2ec1
 SHA512: 88bf68a7f7e2ef90f7b4aeb8f74de33ca2f0997a3b82b4e9ed0653da841ed41c8a54ab1a74e3a0561196dec41eb90161aa377b5d5ccb2a35f37f15bdfd43c0ce
+Homepage: https://github.com/AdamShannag/dynamic-island
+Description: A Dynamic Island for the GNOME desktop
+ Live activities (music, timers, notifications, builds, coding agents),
+ a dashboard with system monitor, Docker, ports, clipboard history,
+ developer tools, notes and quick web search, driven by a small Go
+ daemon over D-Bus. Run `island setup` after installing.
+
+Package: dynamic-island
+Architecture: arm64
+Version: 0.7.3
+Priority: optional
+Section: gnome
+Maintainer: Adam Shannag <noreply@github.com>
+Installed-Size: 15638
+Depends: gnome-shell (>= 46), dbus-user-session
+Suggests: docker.io
+Filename: pool/main/d/dynamic-island/dynamic-island_0.7.3_arm64.deb
+Size: 6382926
+MD5sum: ce0f67ae5c07423d296eec936915d4ab
+SHA1: 46e67d1a3b72117d06b49b105db30fcabf49213b
+SHA256: fcdfb359a39fe3922a18d33b33fbce824bfc4d6c291e64b63cdfa6c6bdfa3bd9
+SHA512: 220cbb1c4505358259051c7bce13dd61ffc3ccf503a7f27bb89b3127b0e91b68a63cab475898c9d7c2e48ee1e7d555943ca2bf84777cdb14cc17592809e92dbb
 Homepage: https://github.com/AdamShannag/dynamic-island
 Description: A Dynamic Island for the GNOME desktop
  Live activities (music, timers, notifications, builds, coding agents),
