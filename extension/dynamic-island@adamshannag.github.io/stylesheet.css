@@ -1092,7 +1092,6 @@
 .island-draw-canvas {
   border-radius: 18px;
   min-height: 180px;
-  background-color: #f5f5f7;
 }
 
 .island-draw-tools { spacing: 10px; }
