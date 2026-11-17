@@ -3,6 +3,7 @@ package plugins
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClassify(t *testing.T) {
@@ -49,5 +50,39 @@ func TestWrapperChildIgnored(t *testing.T) {
 	procs := map[int]*procInfo{10: parent, 11: child}
 	if _, _, ok := classify(child, procs); ok {
 		t.Fatal("child of a tracked wrapper should not be tracked separately")
+	}
+}
+
+func TestExpectedFromLastRun(t *testing.T) {
+	c := NewContext()
+	done := &tracked{pid: 1, title: "go test", project: "island", kind: kindTask, start: time.Now().Add(-40 * time.Second), shown: true}
+	c.remember(done)
+	c.remember(&tracked{pid: 2, title: "vite", project: "island", kind: kindRun, start: time.Now().Add(-time.Minute), shown: true})
+	c.tracked[3] = &tracked{pid: 3, title: "go test", project: "island", kind: kindTask, start: time.Now(), shown: true}
+	c.tracked[4] = &tracked{pid: 4, title: "go test", project: "other", kind: kindTask, start: time.Now(), shown: true}
+	c.tracked[5] = &tracked{pid: 5, title: "vite", project: "island", kind: kindRun, start: time.Now(), shown: true}
+	for _, it := range c.List() {
+		switch it.PID {
+		case 3:
+			if it.Expected < 39000 || it.Expected > 41000 {
+				t.Fatalf("expected ~40s for a repeat run, got %dms", it.Expected)
+			}
+		case 4, 5:
+			if it.Expected != 0 {
+				t.Fatalf("pid %d: no estimate expected, got %dms", it.PID, it.Expected)
+			}
+		}
+	}
+}
+
+func TestPlayerName(t *testing.T) {
+	for bus, want := range map[string]string{
+		"org.mpris.MediaPlayer2.spotify":                "Spotify",
+		"org.mpris.MediaPlayer2.firefox.instance_1_234": "Firefox",
+		"org.mpris.MediaPlayer2.":                       "",
+	} {
+		if got := playerName(bus); got != want {
+			t.Fatalf("playerName(%q) = %q, want %q", bus, got, want)
+		}
 	}
 }

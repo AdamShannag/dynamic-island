@@ -115,3 +115,39 @@ func TestUpdateBar(t *testing.T) {
 		t.Fatalf("reload failed: %v %v", err, Get().Bar)
 	}
 }
+
+func TestUpdateFavorites(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	mu.Lock()
+	cur = Defaults()
+	mu.Unlock()
+	if got := strings.Join(Get().Home.Favorites, ","); got != "docker,ports,clipboard,notes,agents" {
+		t.Fatalf("default favorites = %s", got)
+	}
+	s, err := Update([]byte(`{"home":{"favorites":["notes","home","notes","nope","inbox","play","search","activity","docker"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(s.Home.Favorites, ","); got != "notes,inbox,play,search,activity" {
+		t.Fatalf("favorites = %s", got)
+	}
+	if s, err = Update([]byte(`{"home":{}}`)); err != nil || len(s.Home.Favorites) != 5 {
+		t.Fatalf("a patch without favorites must keep them: %v %v", s.Home.Favorites, err)
+	}
+	if s, err = Update([]byte(`{"home":{"favorites":[]}}`)); err != nil || s.Home.Favorites == nil || len(s.Home.Favorites) != 0 {
+		t.Fatalf("an empty list must clear favorites: %v %v", s.Home.Favorites, err)
+	}
+	s.Home.Favorites = append(s.Home.Favorites, "mutated")
+	if len(Get().Home.Favorites) != 0 {
+		t.Fatal("Get must return a copy of the favorites")
+	}
+	if _, err = Update([]byte(`{"home":{"favorites":["agents","ports"]}}`)); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	cur = Defaults()
+	mu.Unlock()
+	if err := Load(); err != nil || strings.Join(Get().Home.Favorites, ",") != "agents,ports" {
+		t.Fatalf("reload failed: %v %v", err, Get().Home.Favorites)
+	}
+}

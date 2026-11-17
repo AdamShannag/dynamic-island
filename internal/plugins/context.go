@@ -24,10 +24,12 @@ type Context struct {
 
 	procs   map[int]*procInfo
 	notMine map[int]bool
+
+	took map[string]time.Duration
 }
 
 func NewContext() *Context {
-	return &Context{tracked: map[int]*tracked{}, procs: map[int]*procInfo{}, notMine: map[int]bool{}}
+	return &Context{tracked: map[int]*tracked{}, procs: map[int]*procInfo{}, notMine: map[int]bool{}, took: map[string]time.Duration{}}
 }
 
 const (
@@ -73,6 +75,7 @@ const (
 	scanEvery     = time.Second
 	showAfter     = 1200 * time.Millisecond
 	reportAfter   = 3 * time.Second
+	rememberRuns  = 128
 	portScanEvery = 3
 )
 
@@ -120,6 +123,7 @@ func (c *Context) scan() {
 	defer c.mu.Unlock()
 	for pid, t := range c.tracked {
 		if !seen[pid] {
+			c.remember(t)
 			delete(c.tracked, pid)
 			continue
 		}
@@ -139,6 +143,19 @@ type Item struct {
 	StartedAt int64  `json:"startedAt"`
 	Ports     []int  `json:"ports,omitempty"`
 	Focus     []int  `json:"focus,omitempty"`
+	Expected  int64  `json:"expectedMs,omitempty"`
+}
+
+func runKey(t *tracked) string { return t.project + "\x00" + t.title }
+
+func (c *Context) remember(t *tracked) {
+	if t.kind != kindTask || !t.shown {
+		return
+	}
+	if len(c.took) >= rememberRuns {
+		clear(c.took)
+	}
+	c.took[runKey(t)] = time.Since(t.start)
 }
 
 func (c *Context) List() []Item {
@@ -151,6 +168,8 @@ func (c *Context) List() []Item {
 		}
 		if t.kind == kindRun {
 			it.Kind = "service"
+		} else if d, ok := c.took[runKey(t)]; ok {
+			it.Expected = d.Milliseconds()
 		}
 		return it
 	}

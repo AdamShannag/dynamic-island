@@ -36,6 +36,8 @@ type MPRIS struct {
 	conn     *dbus.Conn
 	selected string
 	last     *island.View
+	resumeOn string
+	resumeAs string
 
 	artMu    sync.Mutex
 	inflight map[string]bool
@@ -89,6 +91,7 @@ func (p *MPRIS) Run(ctx context.Context, h island.Host) error {
 		method := mprisPlayer + "." + a.method
 		h.HandleAction(a.action, func() { p.call(method) })
 	}
+	h.HandleAction("media.resume", p.resume)
 
 	defer h.Clear(mediaID)
 	p.update(h)
@@ -112,6 +115,64 @@ func (p *MPRIS) Run(ctx context.Context, h island.Host) error {
 			p.update(h)
 		}
 	}
+}
+
+func (p *MPRIS) LastPlayer() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.resumeAs
+}
+
+func (p *MPRIS) resume() {
+	p.mu.Lock()
+	conn, name := p.conn, p.resumeOn
+	p.mu.Unlock()
+	if conn == nil || name == "" {
+		return
+	}
+	if err := conn.Object(name, mprisPath).Call(mprisPlayer+".Play", 0).Err; err != nil {
+		log.Printf("mpris: Play on %s: %v", name, err)
+	}
+}
+
+func (p *MPRIS) remember(players []player, best *player) {
+	if players == nil {
+		return
+	}
+	p.mu.Lock()
+	on := p.resumeOn
+	p.mu.Unlock()
+	if best != nil && best.name != on {
+		as := p.identity(best.name)
+		p.mu.Lock()
+		p.resumeOn, p.resumeAs = best.name, as
+		p.mu.Unlock()
+		return
+	}
+	for _, pl := range players {
+		if pl.name == on {
+			return
+		}
+	}
+	p.mu.Lock()
+	p.resumeOn, p.resumeAs = "", ""
+	p.mu.Unlock()
+}
+
+func (p *MPRIS) identity(name string) string {
+	v, err := p.conn.Object(name, mprisPath).GetProperty("org.mpris.MediaPlayer2.Identity")
+	if s, ok := v.Value().(string); err == nil && ok && s != "" {
+		return s
+	}
+	return playerName(name)
+}
+
+func playerName(bus string) string {
+	n, _, _ := strings.Cut(strings.TrimPrefix(bus, mprisPrefix), ".")
+	if n == "" {
+		return ""
+	}
+	return strings.ToUpper(n[:1]) + n[1:]
 }
 
 func (p *MPRIS) call(method string) {
@@ -140,7 +201,7 @@ func (p *MPRIS) players() []player {
 		log.Printf("mpris: ListNames: %v", err)
 		return nil
 	}
-	var out []player
+	out := []player{}
 	for _, n := range names {
 		if !strings.HasPrefix(n, mprisPrefix) {
 			continue
@@ -191,12 +252,17 @@ func (p *MPRIS) update(h island.Host) {
 	selected := p.selected
 	p.mu.Unlock()
 
-	best := pick(p.players(), selected)
+	players := p.players()
+	best := pick(players, selected)
 	var title string
 	if best != nil {
 		title, _ = best.meta["xesam:title"].Value().(string)
 	}
-	if best == nil || title == "" {
+	if best != nil && title == "" {
+		best = nil
+	}
+	p.remember(players, best)
+	if best == nil {
 		p.mu.Lock()
 		p.selected, p.last = "", nil
 		p.mu.Unlock()

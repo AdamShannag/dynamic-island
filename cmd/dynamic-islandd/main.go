@@ -79,6 +79,7 @@ func main() {
 			partyPort = n
 		}
 	}
+	mpris := plugins.NewMPRIS()
 	partyPlugin := plugins.NewParty(peerID, identity.Name(), "", partyPort)
 	if err := dbusapi.Serve(dbusapi.Deps{
 		Conn:      conn,
@@ -87,6 +88,7 @@ func main() {
 		Sites:     st,
 		Activity:  ctxw,
 		Party:     partyPlugin,
+		Media:     mpris,
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -105,7 +107,7 @@ func main() {
 	}
 
 	all := []island.Plugin{
-		plugins.NewMPRIS(),
+		mpris,
 		plugins.NewBattery(),
 		plugins.NewNotifications(cfg.Notifications.IgnoreApps),
 		plugins.NewPomodoro(cfg.Pomodoro.FocusMinutes, cfg.Pomodoro.BreakMinutes),
