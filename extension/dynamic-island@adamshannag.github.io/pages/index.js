@@ -6,14 +6,14 @@ import {HomePage} from './home.js';
 import {InboxPage} from './inbox.js';
 import {MorePage} from './more.js';
 import {NotesPage} from './notes.js';
+import {PlayPage} from './play.js';
 import {PortsPage} from './ports.js';
 import {QRPage} from './qr.js';
-import {RacePage} from './race.js';
 import {SearchPage} from './search.js';
 import {SettingsPage} from './settings.js';
 import {TransformPage} from './transform.js';
 
 export const PAGES = [
     HomePage, ActivityPage, AgentsPage, DockerPage, LogsPage, PortsPage, ClipboardPage,
-    TransformPage, NotesPage, InboxPage, QRPage, SearchPage, RacePage, MorePage, SettingsPage,
+    TransformPage, NotesPage, InboxPage, QRPage, SearchPage, PlayPage, MorePage, SettingsPage,
 ];

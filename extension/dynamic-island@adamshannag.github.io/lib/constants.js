@@ -33,9 +33,9 @@ export const TABS = [
     ['transform', 'Transform', 'edit-find-replace-symbolic'],
     ['notes', 'Notes', 'document-edit-symbolic'],
     ['search', 'Web', 'web-browser-symbolic'],
-    ['race', 'Race', 'input-keyboard-symbolic'],
+    ['play', 'Play', 'input-keyboard-symbolic'],
 ];
-export const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents'};
+export const TAB_ALIASES = {media: 'home', web: 'search', claude: 'agents', race: 'play', draw: 'play'};
 export const TAB_IDS = TABS.map(([id]) => id);
 export const MORE_TAB = ['more', 'More', 'view-more-horizontal-symbolic'];
 
@@ -74,7 +74,7 @@ export const FEATURES = [
     ['clipboardHistory', 'Clipboard history', 'Remember what you copy', 'edit-paste-symbolic'],
     ['usb', 'USB devices', 'Pop up when a device is plugged in', 'media-removable-symbolic'],
     ['battery', 'Battery', 'Charging and low-battery popups', 'battery-good-symbolic'],
-    ['race', 'LAN typing race', 'Race other Dynamic Island users on your network', 'input-keyboard-symbolic'],
+    ['play', 'LAN play', 'Race, draw and guess with other Dynamic Island users on your network', 'input-keyboard-symbolic'],
     ['transparentPanel', 'Transparent top bar', 'Let the wallpaper show through the top bar', 'video-display-symbolic'],
 ];
 export const SETTING_COLORS = {
@@ -87,6 +87,6 @@ export const SETTING_COLORS = {
     'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
     'input-keyboard-symbolic': '#ff9f0a', 'video-display-symbolic': '#5e5ce6',
 };
-export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {race: false}, bar: [...DEFAULT_BAR]};
+export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {play: false}, bar: [...DEFAULT_BAR]};
 export const featureOn = (st, key) => st?.features?.[key] !== false;
 export const tabOn = (st, id) => id === 'home' || st?.tabs?.[id] !== false;

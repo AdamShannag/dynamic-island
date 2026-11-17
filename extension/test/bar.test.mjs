@@ -5,11 +5,11 @@ import {
     BAR_FULL, BAR_MAX, DEFAULT_BAR, HOME_LOCKED, barTabs, normalizeBar, pinHint, togglePin,
 } from '../dynamic-island@adamshannag.github.io/lib/bar.js';
 
-const VALID = ['home', 'inbox', 'activity', 'docker', 'ports', 'notes', 'race'];
+const VALID = ['home', 'inbox', 'activity', 'docker', 'ports', 'notes', 'play'];
 
 test('normalizeBar puts home first, dedupes, filters and caps', () => {
     assert.deepEqual(normalizeBar(['notes', 'home', 'notes', 'bogus', 'inbox'], VALID), ['home', 'notes', 'inbox']);
-    assert.deepEqual(normalizeBar(['inbox', 'docker', 'ports', 'notes', 'race'], VALID), ['home', 'inbox', 'docker', 'ports']);
+    assert.deepEqual(normalizeBar(['inbox', 'docker', 'ports', 'notes', 'play'], VALID), ['home', 'inbox', 'docker', 'ports']);
     assert.deepEqual(normalizeBar(null), ['home']);
     assert.deepEqual(normalizeBar(['inbox', 7, {}]), ['home', 'inbox']);
 });

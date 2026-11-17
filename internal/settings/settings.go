@@ -30,9 +30,9 @@ const (
 var (
 	Accents      = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
 	Surfaces     = []string{"black", "graphite"}
-	TabIDs       = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "race"}
-	FeatureIDs   = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "race", "transparentPanel"}
-	offByDefault = map[string]bool{"race": true}
+	TabIDs       = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "play"}
+	FeatureIDs   = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "play", "transparentPanel"}
+	offByDefault = map[string]bool{"play": true}
 	DefaultBar   = []string{HomeTab, "inbox", "notes"}
 )
 

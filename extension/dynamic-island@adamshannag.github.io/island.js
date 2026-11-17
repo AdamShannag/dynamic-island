@@ -26,7 +26,7 @@ import {PAGES} from './pages/index.js';
 const OPEN_RETRY_MS = 150;
 const RELEASE_SWALLOW_MS = 1500;
 const PRIVATE_TABS = new Set(['clipboard', 'notes', 'inbox']);
-const KIND_TABS = {agent: 'agents', task: 'activity', service: 'activity', race: 'race'};
+const KIND_TABS = {agent: 'agents', task: 'activity', service: 'activity', party: 'play'};
 const MORE = MORE_TAB[0];
 const EXTRA_TABS = new Set(['settings', MORE]);
 
@@ -527,10 +527,6 @@ class Island extends St.BoxLayout {
     _shortTime() {
         const fmt = this._interface.get_string('clock-format') === '12h' ? '%l:%M' : '%H:%M';
         return GLib.DateTime.new_now_local().format(fmt).trim();
-    }
-
-    syncTicker() {
-        this._syncTicker();
     }
 
     _syncTicker() {

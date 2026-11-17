@@ -203,6 +203,8 @@
 .island-pill-btn:focus  { box-shadow: none; }
 .island-pill-btn.primary       { background-color: #0a84ff; }
 .island-pill-btn.primary:hover { background-color: #2a95ff; }
+.island-pill-btn.secondary        { background-color: transparent; border: 1px solid rgba(255, 255, 255, 0.16); }
+.island-pill-btn.secondary:hover  { background-color: rgba(255, 255, 255, 0.06); }
 .island-pill-btn.danger        { color: #ff6961; background-color: rgba(255, 69, 58, 0.14); padding: 5px 12px; border-radius: 999px; }
 .island-pill-btn.danger:hover  { background-color: rgba(255, 69, 58, 0.24); }
 .island-pill-btn.danger:armed  { color: #fff; background-color: #ff453a; }
@@ -859,15 +861,107 @@
 .island-race-card { spacing: 10px; }
 .island-race-passage {
   font-family: monospace;
-  font-size: 10.5pt;
-  line-height: 1.5;
+  font-size: 16pt;
+  line-height: 1.6;
   padding: 0;
-  min-height: 80px;
 }
 .island-race-caret {
-  width: 2px;
-  border-radius: 1px;
+  width: 3px;
+  border-radius: 1.5px;
 }
+
+.island-race-subtitle { font-size: 10pt; color: rgba(245, 245, 247, 0.5); padding: 2px 0 0; }
+.island-race-finish-title { font-size: 19.5pt; font-weight: 700; letter-spacing: -0.3px; }
+
+.island-idle-head { spacing: 12px; padding-bottom: 4px; }
+
+.island-race-host-row { spacing: 20px; }
+.island-race-host-panel {
+  width: 240px;
+  spacing: 4px;
+  padding: 0 4px;
+}
+
+.island-game-block { background-color: rgba(255, 255, 255, 0.04); border-radius: 14px; padding: 14px; }
+.island-segmented { spacing: 2px; padding: 2px; background-color: rgba(255, 255, 255, 0.06); border-radius: 9px; }
+.island-segmented .island-pill-btn {
+  background-color: transparent;
+  padding: 7px 0;
+  font-size: 9pt;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.55);
+  border-radius: 7px;
+}
+.island-segmented .island-pill-btn:checked { background-color: rgba(255, 255, 255, 0.14); color: #ffffff; font-weight: 700; }
+
+.island-rounds-row {
+  spacing: 0;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.island-rounds-label { font-size: 9.5pt; font-weight: 500; color: #f5f5f7; }
+.island-rounds-stepper {
+  spacing: 0;
+  height: 26px;
+  background-color: rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
+}
+.island-rounds-stepper-btn { width: 26px; height: 26px; }
+.island-rounds-stepper-btn StIcon { icon-size: 10px; }
+.island-rounds-stepper-div { width: 1px; background-color: rgba(255, 255, 255, 0.15); }
+.island-rounds-stepper-val { font-size: 9.5pt; font-weight: 700; width: 28px; padding: 0 2px; }
+
+.island-ready-note { font-size: 9pt; font-weight: 500; color: rgba(245, 245, 247, 0.4); padding-bottom: 10px; }
+.island-race-start-btn { width: 232px; padding: 13px 0; font-size: 10.5pt; }
+.island-race-full-btn { padding: 13px 0; font-size: 10.5pt; }
+
+.island-status { spacing: 6px; }
+.island-status-dot { width: 6px; height: 6px; border-radius: 3px; }
+.island-status-dot.ready    { background-color: #30d158; }
+.island-status-dot.waiting  { background-color: rgba(245, 245, 247, 0.35); }
+.island-status-dot.declined { background-color: #ff453a; }
+.island-status-dot.host     { background-color: #ffd60a; }
+.island-status-dot.you      { background-color: #0a84ff; }
+.island-status-text { font-size: 8pt; font-weight: 600; color: rgba(245, 245, 247, 0.5); }
+.island-status-text.ready    { color: #30d158; }
+.island-status-text.declined { color: #ff453a; }
+.island-status-text.host     { color: #ffd60a; }
+.island-status-text.you      { color: #0a84ff; }
+.island-row-note { font-size: 8.5pt; font-weight: 500; color: rgba(245, 245, 247, 0.32); }
+.island-badge.island-race-row-avatar { width: 34px; height: 34px; border-radius: 17px; }
+.island-race-row-avatar .island-badge-glyph { font-size: 9.5pt; }
+
+.island-badge.island-race-presence-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 15px;
+  border: 2px solid #000000;
+}
+.island-race-presence-avatar .island-badge-glyph { font-size: 8.5pt; }
+.island-race-presence-self { box-shadow: 0 0 0 2px #0a84ff; }
+
+.island-pill-btn.link {
+  background-color: transparent;
+  color: rgba(245, 245, 247, 0.4);
+  padding: 4px 6px;
+}
+.island-pill-btn.link:hover  { background-color: transparent; color: rgba(245, 245, 247, 0.65); }
+.island-pill-btn.link:active { background-color: transparent; }
+.island-pill-btn.link:focus  { box-shadow: none; }
+
+.island-irow.winner { background-color: rgba(255, 214, 10, 0.07); }
+.island-race-star { icon-size: 11px; color: #ffd60a; padding-left: 5px; }
+.island-badge.island-race-winner-avatar { width: 34px; height: 34px; border-radius: 17px; }
+.island-race-winner-avatar .island-badge-glyph { font-size: 9.5pt; }
+.island-race-winner-name { font-size: 10pt; font-weight: 700; }
+.island-race-winner-wpm  { font-size: 10pt; font-weight: 700; font-feature-settings: "tnum"; }
+.island-race-rank { width: 20px; font-size: 10pt; color: rgba(245, 245, 247, 0.35); font-weight: 700; }
+.island-badge.island-race-list-avatar { width: 30px; height: 30px; border-radius: 15px; }
+.island-race-list-avatar .island-badge-glyph { font-size: 9pt; }
+
+.island-result-roster { spacing: 12px; margin: 14px 2px; }
+.island-result-roster-note { font-size: 8pt; color: rgba(245, 245, 247, 0.36); }
 
 .island.theme-blue .island-xf-mini.accent { background-color: #0a84ff; }
 .island.theme-blue .island-xf-text { caret-color: #0a84ff; }
@@ -991,6 +1085,78 @@
 .island-proc-iconbin.initial { border-radius: 6px; background-color: rgba(255, 255, 255, 0.08); }
 .island-proc-icon { icon-size: 20px; }
 .island-proc-initial { font-size: 8pt; font-weight: 800; color: rgba(245, 245, 247, 0.6); }
+
+.island-race-timer { font-size: 10pt; font-weight: 700; color: rgba(245, 245, 247, 0.5); font-feature-settings: "tnum"; padding: 0 10px; }
+
+.island-race-racers { spacing: 2px; padding: 8px 0 12px; }
+.island-racer-row { spacing: 10px; padding: 4px 0; }
+.island-racer-name { font-size: 8.5pt; font-weight: 500; width: 82px; }
+.island-racer-track { width: 260px; height: 4px; border-radius: 2px; background-color: rgba(255, 255, 255, 0.08); }
+.island-racer-fill { height: 4px; border-radius: 2px; background-color: #0a84ff; }
+.island-racer-fill.self { background-color: #0a84ff; }
+.island-racer-pct { font-size: 8pt; color: rgba(245, 245, 247, 0.4); width: 30px; font-feature-settings: "tnum"; }
+
+.island-draw-word-pill { padding: 6px 0 0; }
+.island-draw-word-text { font-size: 15pt; font-weight: 800; letter-spacing: 1.2px; color: #0a84ff; }
+.island-draw-word-hint { font-size: 7.5pt; color: rgba(245, 245, 247, 0.3); padding-top: 3px; }
+
+.island-draw-canvas-wrap { padding-top: 12px; }
+.island-draw-canvas {
+  min-height: 180px;
+}
+
+.island-draw-tools { spacing: 10px; }
+.island-draw-swatch { width: 16px; height: 16px; border-radius: 9px; border: 2px solid rgba(255, 255, 255, 0.4); }
+.island-draw-swatch:checked { border-color: rgba(255, 255, 255, 0.9); }
+.island-draw-tool-div { width: 1px; background-color: rgba(255, 255, 255, 0.12); }
+.island-draw-eraser { background-color: rgba(255, 255, 255, 0.1); }
+.island-draw-eraser-icon { icon-size: 11px; color: rgba(245, 245, 247, 0.75); }
+
+.island-draw-drawer-row { spacing: 10px; padding-top: 10px; }
+.island-badge.island-draw-drawer-avatar { width: 26px; height: 26px; border-radius: 13px; }
+.island-draw-drawer-avatar .island-badge-glyph { font-size: 8.5pt; }
+.island-draw-drawer-label { font-size: 10pt; font-weight: 600; color: rgba(245, 245, 247, 0.6); }
+
+.island-badge.island-draw-presence-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 14px;
+  border: 2px solid #000000;
+}
+.island-draw-presence-avatar .island-badge-glyph { font-size: 7pt; }
+.island-draw-presence-guessed { box-shadow: 0 0 0 2px #30d158; }
+
+.island-draw-guess-entry {
+  margin-top: 12px;
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 11px 18px;
+  font-size: 10pt;
+}
+
+.island-snake-hud-label { font-size: 8pt; font-weight: 700; letter-spacing: 0.04em; color: rgba(245, 245, 247, 0.36); }
+.island-snake-hud-value { font-size: 13pt; font-weight: 700; font-feature-settings: "tnum"; }
+.island-snake-arena { border-radius: 16px; min-height: 180px; margin-top: 8px; }
+.island-snake-leaderboard {
+  width: 150px;
+  margin: 10px;
+  padding: 8px;
+  background-color: rgba(0, 0, 0, 0.55);
+  border-radius: 12px;
+}
+.island-snake-lb-row { spacing: 6px; padding: 3px 4px; border-radius: 6px; }
+.island-snake-lb-row.self { background-color: rgba(255, 255, 255, 0.08); }
+.island-snake-lb-rank { font-size: 9pt; color: rgba(245, 245, 247, 0.35); width: 12px; }
+.island-snake-lb-dot { width: 8px; height: 8px; border-radius: 4px; }
+.island-snake-lb-name { font-size: 9pt; font-weight: 600; }
+.island-snake-lb-score { font-size: 9pt; color: rgba(245, 245, 247, 0.45); font-feature-settings: "tnum"; }
+.island-snake-dead {
+  spacing: 6px;
+  padding: 18px 26px;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: 16px;
+}
 
 .island-more { spacing: 12px; padding: 2px 4px 6px; }
 .island-more-top { spacing: 10px; padding: 0 2px; }

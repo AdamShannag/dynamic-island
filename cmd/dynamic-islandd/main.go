@@ -73,20 +73,20 @@ func main() {
 		log.Printf("peer identity: %v (using a temporary one)", err)
 		peerID = identity.Ephemeral()
 	}
-	racePort := lobby.DefaultPort
-	if v := os.Getenv("ISLAND_RACE_PORT"); v != "" {
+	partyPort := lobby.DefaultPort
+	if v := os.Getenv("ISLAND_PARTY_PORT"); v != "" {
 		if n, perr := strconv.Atoi(v); perr == nil {
-			racePort = n
+			partyPort = n
 		}
 	}
-	racePlugin := plugins.NewRace(peerID, identity.Name(), "", racePort)
+	partyPlugin := plugins.NewParty(peerID, identity.Name(), "", partyPort)
 	if err := dbusapi.Serve(dbusapi.Deps{
 		Conn:      conn,
 		Manager:   m,
 		Clipboard: clip,
 		Sites:     st,
 		Activity:  ctxw,
-		Race:      racePlugin,
+		Party:     partyPlugin,
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func main() {
 		plugins.NewDocker(),
 		ctxw,
 		plugins.NewUSB(),
-		racePlugin,
+		partyPlugin,
 	}
 
 	var wg sync.WaitGroup

@@ -112,24 +112,40 @@ const introXML = `
     <signal name="ColorPicked">
       <arg name="hex" type="s"/>
     </signal>
-    <method name="RacePeers">
+    <method name="PartyPeers">
       <arg name="peers" type="s" direction="out"/>
     </method>
-    <method name="RaceState">
+    <method name="PartyState">
       <arg name="state" type="s" direction="out"/>
     </method>
-    <method name="RaceCreate"/>
-    <method name="RaceInvite">
+    <method name="PartyCreate"/>
+    <method name="PartyInvite">
       <arg name="peer_id" type="s" direction="in"/>
     </method>
-    <method name="RaceRespond">
+    <method name="PartyRespond">
       <arg name="accept" type="b" direction="in"/>
     </method>
-    <method name="RaceStart"/>
+    <method name="PartySetMode">
+      <arg name="mode" type="s" direction="in"/>
+    </method>
+    <method name="PartySetRounds">
+      <arg name="rounds" type="i" direction="in"/>
+    </method>
+    <method name="PartyStart"/>
+    <method name="PartyRematch"/>
+    <method name="PartyLeave"/>
     <method name="RaceProgress">
       <arg name="typed_chars" type="i" direction="in"/>
     </method>
-    <method name="RaceLeave"/>
+    <method name="DrawStroke">
+      <arg name="stroke" type="s" direction="in"/>
+    </method>
+    <method name="DrawGuess">
+      <arg name="text" type="s" direction="in"/>
+    </method>
+    <method name="SnakeInput">
+      <arg name="heading" type="d" direction="in"/>
+    </method>
     <method name="SetPresenting">
       <arg name="on" type="b" direction="in"/>
     </method>

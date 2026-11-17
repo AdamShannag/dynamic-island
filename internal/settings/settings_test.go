@@ -43,30 +43,30 @@ func TestUpdateDisplayName(t *testing.T) {
 	if _, err := Update([]byte(`{"displayName":"` + strings.Repeat("x", 41) + `"}`)); err == nil {
 		t.Fatal("expected error for an over-long display name")
 	}
-	if !TabOn("race") {
-		t.Fatal("race tab id must be registered and default on")
+	if !TabOn("play") {
+		t.Fatal("play tab id must be registered and default on")
 	}
 }
 
-func TestRaceFeatureOffByDefault(t *testing.T) {
+func TestPlayFeatureOffByDefault(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	mu.Lock()
 	cur = Defaults()
 	mu.Unlock()
-	if Enabled("race") || Defaults().Features["race"] {
-		t.Fatal("race opens a network listener, so it must stay off until the user opts in")
+	if Enabled("play") || Defaults().Features["play"] {
+		t.Fatal("play opens a network listener, so it must stay off until the user opts in")
 	}
 	if !Enabled("usb") {
 		t.Fatal("other features still default on")
 	}
 	mu.Lock()
-	delete(cur.Features, "race")
+	delete(cur.Features, "play")
 	mu.Unlock()
-	if Enabled("race") {
-		t.Fatal("a missing race key must read as off")
+	if Enabled("play") {
+		t.Fatal("a missing play key must read as off")
 	}
-	if _, err := Update([]byte(`{"features":{"race":true}}`)); err != nil || !Enabled("race") {
-		t.Fatalf("opting in must turn race on: %v", err)
+	if _, err := Update([]byte(`{"features":{"play":true}}`)); err != nil || !Enabled("play") {
+		t.Fatalf("opting in must turn play on: %v", err)
 	}
 }
 
@@ -77,7 +77,7 @@ func TestNormalizeBar(t *testing.T) {
 		{nil, []string{"home"}},
 		{[]string{"docker"}, []string{"home", "docker"}},
 		{[]string{"notes", "home", "bogus", "notes", "inbox"}, []string{"home", "notes", "inbox"}},
-		{[]string{"inbox", "docker", "ports", "notes", "race"}, []string{"home", "inbox", "docker", "ports"}},
+		{[]string{"inbox", "docker", "ports", "notes", "play"}, []string{"home", "inbox", "docker", "ports"}},
 	}
 	for _, c := range cases {
 		if got := NormalizeBar(c.in); strings.Join(got, ",") != strings.Join(c.want, ",") {
@@ -94,7 +94,7 @@ func TestUpdateBar(t *testing.T) {
 	if got := strings.Join(Get().Bar, ","); got != "home,inbox,notes" {
 		t.Fatalf("default bar = %s", got)
 	}
-	s, err := Update([]byte(`{"bar":["docker","docker","nope","ports","agents","race"]}`))
+	s, err := Update([]byte(`{"bar":["docker","docker","nope","ports","agents","play"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
