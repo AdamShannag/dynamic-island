@@ -48,13 +48,13 @@ func Start(selfID, selfName, addr string, port int) (*Discovery, error) {
 		cancel: cancel,
 		peers:  make(map[string]Peer),
 	}
-	go d.browseLoop(ctx, selfID)
+	go d.browseLoop(ctx, selfID, ip.String())
 	return d, nil
 }
 
-func (d *Discovery) browseLoop(ctx context.Context, selfID string) {
+func (d *Discovery) browseLoop(ctx context.Context, selfID, selfHost string) {
 	for {
-		d.browseOnce(selfID)
+		d.browseOnce(selfID, selfHost)
 		select {
 		case <-ctx.Done():
 			return
@@ -63,7 +63,7 @@ func (d *Discovery) browseLoop(ctx context.Context, selfID string) {
 	}
 }
 
-func (d *Discovery) browseOnce(selfID string) {
+func (d *Discovery) browseOnce(selfID, selfHost string) {
 	entriesCh := make(chan *mdns.ServiceEntry, 32)
 	var collected []*mdns.ServiceEntry
 	drained := make(chan struct{})
@@ -80,11 +80,24 @@ func (d *Discovery) browseOnce(selfID string) {
 	<-drained
 
 	scratch := make(map[string]Peer)
+	hostSeen := make(map[string]bool)
 	for _, entry := range collected {
 		peer, ok := parsePeer(entry)
 		if !ok || peer.ID == selfID {
 			continue
 		}
+		host, _, err := net.SplitHostPort(peer.Addr)
+		if err != nil {
+			continue
+		}
+		// Running more than one instance on the same machine (e.g. a real
+		// install plus a dev/nested one) gives each its own identity but
+		// the same host, so they'd otherwise show up as separate peers -
+		// to everyone, including the one running both.
+		if host == selfHost || hostSeen[host] {
+			continue
+		}
+		hostSeen[host] = true
 		scratch[peer.ID] = peer
 	}
 
