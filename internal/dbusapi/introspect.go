@@ -130,6 +130,27 @@ const introXML = `
       <arg name="typed_chars" type="i" direction="in"/>
     </method>
     <method name="RaceLeave"/>
+    <method name="DrawPeers">
+      <arg name="peers" type="s" direction="out"/>
+    </method>
+    <method name="DrawState">
+      <arg name="state" type="s" direction="out"/>
+    </method>
+    <method name="DrawCreate"/>
+    <method name="DrawInvite">
+      <arg name="peer_id" type="s" direction="in"/>
+    </method>
+    <method name="DrawRespond">
+      <arg name="accept" type="b" direction="in"/>
+    </method>
+    <method name="DrawStart"/>
+    <method name="DrawStroke">
+      <arg name="stroke" type="s" direction="in"/>
+    </method>
+    <method name="DrawGuess">
+      <arg name="text" type="s" direction="in"/>
+    </method>
+    <method name="DrawLeave"/>
     <method name="SetPresenting">
       <arg name="on" type="b" direction="in"/>
     </method>

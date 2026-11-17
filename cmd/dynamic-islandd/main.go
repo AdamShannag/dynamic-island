@@ -80,6 +80,13 @@ func main() {
 		}
 	}
 	racePlugin := plugins.NewRace(peerID, identity.Name(), "", racePort)
+	drawPort := lobby.DefaultPort + 1
+	if v := os.Getenv("ISLAND_DRAW_PORT"); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil {
+			drawPort = n
+		}
+	}
+	drawPlugin := plugins.NewDraw(peerID, identity.Name(), "", drawPort)
 	if err := dbusapi.Serve(dbusapi.Deps{
 		Conn:      conn,
 		Manager:   m,
@@ -87,6 +94,7 @@ func main() {
 		Sites:     st,
 		Activity:  ctxw,
 		Race:      racePlugin,
+		Draw:      drawPlugin,
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -113,6 +121,7 @@ func main() {
 		ctxw,
 		plugins.NewUSB(),
 		racePlugin,
+		drawPlugin,
 	}
 
 	var wg sync.WaitGroup

@@ -69,3 +69,25 @@ func TestRaceFeatureOffByDefault(t *testing.T) {
 		t.Fatalf("opting in must turn race on: %v", err)
 	}
 }
+
+func TestDrawFeatureOffByDefault(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	mu.Lock()
+	cur = Defaults()
+	mu.Unlock()
+	if !TabOn("draw") {
+		t.Fatal("draw tab id must be registered and default on")
+	}
+	if Enabled("draw") || Defaults().Features["draw"] {
+		t.Fatal("draw opens a network listener, so it must stay off until the user opts in")
+	}
+	mu.Lock()
+	delete(cur.Features, "draw")
+	mu.Unlock()
+	if Enabled("draw") {
+		t.Fatal("a missing draw key must read as off")
+	}
+	if _, err := Update([]byte(`{"features":{"draw":true}}`)); err != nil || !Enabled("draw") {
+		t.Fatalf("opting in must turn draw on: %v", err)
+	}
+}

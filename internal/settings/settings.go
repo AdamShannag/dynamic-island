@@ -24,9 +24,9 @@ type Settings struct {
 var (
 	Accents      = []string{"blue", "purple", "pink", "orange", "green", "teal", "graphite"}
 	Surfaces     = []string{"black", "graphite"}
-	TabIDs       = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "race"}
-	FeatureIDs   = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "race"}
-	offByDefault = map[string]bool{"race": true}
+	TabIDs       = []string{"inbox", "activity", "agents", "docker", "ports", "clipboard", "transform", "notes", "search", "race", "draw"}
+	FeatureIDs   = []string{"face", "osd", "hideBanners", "mediaPill", "mirrorNotifications", "clipboardHistory", "usb", "battery", "race", "draw"}
+	offByDefault = map[string]bool{"race": true, "draw": true}
 )
 
 func Defaults() Settings {
