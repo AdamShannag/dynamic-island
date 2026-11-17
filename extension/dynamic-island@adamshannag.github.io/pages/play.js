@@ -8,7 +8,7 @@ import {TILE_COLORS, featureOn} from '../lib/constants.js';
 import {correctPrefix, hashColor, hexToRgb} from '../lib/format.js';
 import {springTo} from '../lib/motion.js';
 import {
-    EmptyState, badge, column, fillList, group, label, page, pillButton, scrollView,
+    EmptyState, badge, column, fillList, group, iconButton, label, page, pillButton, scrollView,
     setText,
 } from '../lib/widgets.js';
 import {Page} from './page.js';
@@ -23,6 +23,8 @@ const ERASER_WIDTH = 16;
 const CANVAS_BG = '#f5f5f7';
 const STROKE_FLUSH_MS = 80;
 const SWATCH_COLORS = ['#1c1c1e', '#ff453a', '#0a84ff', '#30d158', '#ff9f0a'];
+const MIN_ROUNDS = 1;
+const MAX_ROUNDS = 10;
 
 function chipSpec(status) {
     if (status === 'accepted')
@@ -76,8 +78,15 @@ export class PlayPage extends Page {
 
     _buildIdle() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
+        const head = new St.BoxLayout({style_class: 'island-idle-head', x_expand: true});
+        const titles = column({x_expand: true});
         const eyebrow = label('island-igroup-title', {text: 'NEARBY'});
-        const subtitle = label('island-race-subtitle', {text: 'Tap someone to invite them to play'});
+        const subtitle = label('island-race-subtitle', {text: 'Open a lobby, then invite people to it'});
+        titles.add_child(eyebrow);
+        titles.add_child(subtitle);
+        this._newLobbyBtn = pillButton('New Lobby', () => this._openLobby(), 'primary');
+        head.add_child(titles);
+        head.add_child(this._newLobbyBtn);
         this._peerEmpty = new EmptyState();
         this._peerFlow = new St.Widget({
             layout_manager: new Clutter.FlowLayout({
@@ -88,11 +97,20 @@ export class PlayPage extends Page {
         const flowWrap = column({x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.CENTER});
         flowWrap.add_child(this._peerFlow);
         this._idleScroll = scrollView(flowWrap);
-        view.add_child(eyebrow);
-        view.add_child(subtitle);
+        view.add_child(head);
         view.add_child(this._peerEmpty.actor);
         view.add_child(this._idleScroll);
         return view;
+    }
+
+    _openLobby() {
+        this._newLobbyBtn.reactive = false;
+        this.call('PartyCreate', [], (_result, err) => {
+            this._newLobbyBtn.reactive = true;
+            if (err)
+                return;
+            this.refresh();
+        });
     }
 
     _peerAvatar(peer, onPick) {
@@ -114,13 +132,17 @@ export class PlayPage extends Page {
         return col;
     }
 
-    _peerRow(peer, onPick) {
+    _peerRow(peer, onPick, invited = false) {
         const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
         const badgeActor = badge({glyph: (peer.name[0] ?? '?').toUpperCase(), color: this._playerColor(peer.id)});
         row.add_child(badgeActor);
         row.add_child(label('island-irow-title', {text: peer.name, x_expand: true}));
-        const btn = pillButton('Invite', () => onPick(peer, btn));
-        row.add_child(btn);
+        if (invited) {
+            row.add_child(label('island-race-chip waiting', {text: 'Invited'}));
+        } else {
+            const btn = pillButton('Invite', () => onPick(peer, btn));
+            row.add_child(btn);
+        }
         return row;
     }
 
@@ -176,7 +198,7 @@ export class PlayPage extends Page {
 
     _toggleInvitePicker() {
         this._invitePickerOpen = !this._invitePickerOpen;
-        this._inviteToggleBtn.label = this._invitePickerOpen ? 'Close' : 'Invite more';
+        this._inviteToggleBtn.label = this._invitePickerOpen ? 'Back' : '+ Invite';
         this._invitePickerActor.visible = this._invitePickerOpen;
         if (this._invitePickerOpen)
             this._refreshInvitePicker();
@@ -187,8 +209,9 @@ export class PlayPage extends Page {
         this.fetch('PartyPeers', [], (peers, err) => {
             if (!this._invitePickerOpen)
                 return;
-            const list = (err ? [] : (peers ?? [])).filter(p => !invited?.has(p.id));
-            fillList(this._invitePickerList, list, p => this._peerRow(p, (peer, btn) => this._inviteOnly(peer, btn)));
+            const list = err ? [] : (peers ?? []);
+            fillList(this._invitePickerList, list,
+                p => this._peerRow(p, (peer, btn) => this._inviteOnly(peer, btn), invited?.has(p.id)));
         });
     }
 
@@ -200,7 +223,7 @@ export class PlayPage extends Page {
         const subtitle = label('island-race-subtitle', {text: 'Waiting for players to accept'});
 
         const row = new St.BoxLayout({style_class: 'island-race-host-row', x_expand: true, y_expand: true});
-        this._inviteToggleBtn = pillButton('Invite more', () => this._toggleInvitePicker());
+        this._inviteToggleBtn = pillButton('+ Invite', () => this._toggleInvitePicker());
         const playersGroup = group('PLAYERS', this._inviteToggleBtn);
         this._hostPlayerList = playersGroup.list;
         this._hostPlayerRefs = new Map();
@@ -223,6 +246,18 @@ export class PlayPage extends Page {
         modeRow.add_child(this._modeDrawBtn);
         this._modeHint = label('island-race-ready-label', {text: 'Pick a game', x_align: Clutter.ActorAlign.CENTER});
 
+        this._roundsRow = new St.BoxLayout({style_class: 'island-rounds-row'});
+        this._roundsRow.add_child(label('island-rounds-label', {text: 'Rounds', x_expand: true}));
+        const stepper = new St.BoxLayout({style_class: 'island-rounds-stepper'});
+        stepper.add_child(iconButton('list-remove-symbolic', 'island-rounds-stepper-btn',
+            () => this._changeRounds(-1), 'Fewer rounds'));
+        this._roundsVal = label('island-rounds-stepper-val', {text: '3', x_align: Clutter.ActorAlign.CENTER});
+        stepper.add_child(this._roundsVal);
+        stepper.add_child(iconButton('list-add-symbolic', 'island-rounds-stepper-btn',
+            () => this._changeRounds(1), 'More rounds'));
+        this._roundsRow.add_child(stepper);
+        this._roundsRow.hide();
+
         const ring = new St.Widget({
             style_class: 'island-race-ready-ring', layout_manager: new Clutter.BinLayout(),
             width: 86, height: 86, x_expand: false, y_expand: false, x_align: Clutter.ActorAlign.CENTER,
@@ -235,6 +270,7 @@ export class PlayPage extends Page {
         this._startBtn.reactive = false;
         panel.add_child(modeRow);
         panel.add_child(this._modeHint);
+        panel.add_child(this._roundsRow);
         panel.add_child(ring);
         panel.add_child(this._readyLabel);
         panel.add_child(this._startBtn);
@@ -250,6 +286,15 @@ export class PlayPage extends Page {
 
     _pickMode(mode) {
         this.call('PartySetMode', [mode], () => this.refresh());
+    }
+
+    _changeRounds(delta) {
+        const next = Math.min(MAX_ROUNDS, Math.max(MIN_ROUNDS, (this._rounds ?? 3) + delta));
+        if (next === this._rounds)
+            return;
+        this._rounds = next;
+        setText(this._roundsVal, `${next}`);
+        this.call('PartySetRounds', [next]);
     }
 
     _buildLobbyGuest() {
@@ -302,8 +347,9 @@ export class PlayPage extends Page {
 
     _renderLobbyHost(state) {
         const players = state.players ?? [];
+        const hostId = players[0]?.peerId;
         this._invitedIds = new Set(players.map(p => p.peerId));
-        this._hostSig = this._syncPlayerRows(this._hostPlayerList, this._hostPlayerRefs, this._hostSig, players, state.selfId);
+        this._hostSig = this._syncPlayerRows(this._hostPlayerList, this._hostPlayerRefs, this._hostSig, players, state.selfId, hostId);
         const ready = players.filter(p => p.status === 'accepted').length;
         setText(this._readyRingLabel, `${ready}/${players.length}`);
         setText(this._readyLabel, `${ready} of ${players.length} ready to play`);
@@ -312,11 +358,14 @@ export class PlayPage extends Page {
         setText(this._modeHint, state.mode ? `Playing ${state.mode === 'race' ? 'Race' : 'Draw'}` : 'Pick a game');
         this._startBtn.reactive = !!state.mode;
         this._startBtn.opacity = state.mode ? 255 : 110;
+        this._rounds = state.rounds ?? this._rounds ?? 3;
+        setText(this._roundsVal, `${this._rounds}`);
+        this._roundsRow.visible = state.mode === 'draw';
         if (this._invitePickerOpen)
             this._refreshInvitePicker();
     }
 
-    _syncPlayerRows(list, refs, prevSig, players, selfId) {
+    _syncPlayerRows(list, refs, prevSig, players, selfId, hostId) {
         const sig = players.map(p => `${p.peerId}:${p.status}`).join('|');
         if (sig !== prevSig) {
             list.destroy_all_children();
@@ -326,7 +375,7 @@ export class PlayPage extends Page {
                 const avatar = badge({glyph: (p.name[0] ?? '?').toUpperCase(), color: this._playerColor(p.peerId)});
                 avatar.add_style_class_name('island-race-row-avatar');
                 const name = label('island-irow-title', {text: p.peerId === selfId ? `${p.name} (You)` : p.name, x_expand: true});
-                const chip = this._chip(p.status);
+                const chip = p.peerId === hostId ? label('island-race-chip host', {text: 'Host'}) : this._chip(p.status);
                 row.add_child(avatar);
                 row.add_child(name);
                 row.add_child(chip);
@@ -349,8 +398,10 @@ export class PlayPage extends Page {
             ? 'Waiting for the host to start'
             : (host ? `Invited by ${host.name}` : ''));
         const players = state.players ?? [];
-        this._guestSig = this._syncPlayerRows(this._guestPlayerList, this._guestPlayerRefs, this._guestSig, players, state.selfId);
-        setText(this._guestModeLabel, state.mode ? `Playing ${state.mode === 'race' ? 'a typing race' : 'draw & guess'}` : 'Waiting for the host to pick a game');
+        this._guestSig = this._syncPlayerRows(this._guestPlayerList, this._guestPlayerRefs, this._guestSig, players, state.selfId, host?.peerId);
+        setText(this._guestModeLabel, state.mode
+            ? `Playing ${state.mode === 'race' ? 'a typing race' : 'draw & guess'}${state.mode === 'draw' ? ` · ${state.rounds ?? 3} rounds` : ''}`
+            : 'Waiting for the host to pick a game');
         this._respondBar.visible = !this._guestResponded;
         this._guestLeaveBar.visible = !!this._guestResponded;
     }
@@ -866,19 +917,26 @@ export class PlayPage extends Page {
         this._resultWaitingLabel = label('island-race-subtitle', {
             text: 'Waiting for the host to start a new round', x_align: Clutter.ActorAlign.CENTER,
         });
-        const doneBtn = this._leaveButton('Done', 'primary');
+        const doneBtn = this._leaveButton('Leave lobby', 'link');
         doneBtn.x_expand = true;
-        doneBtn.add_style_class_name('island-race-full-btn');
-        this._rematchBtn = pillButton('Play Again', () => this._rematch());
+        this._rematchBtn = pillButton('Play Again', () => this._rematch(), 'primary');
         this._rematchBtn.x_expand = true;
         this._rematchBtn.add_style_class_name('island-race-full-btn');
         const actionsRow = new St.BoxLayout({style_class: 'island-toolbar', x_expand: true});
         actionsRow.add_child(this._rematchBtn);
         actionsRow.add_child(doneBtn);
+        this._resultRoster = new St.BoxLayout({style_class: 'island-result-roster', x_expand: true});
+        this._resultRosterAvatars = this._buildPresenceRow();
+        this._resultRosterNote = label('island-result-roster-note', {
+            text: 'Still in the lobby — play again or invite more without leaving.', x_expand: true,
+        });
+        this._resultRoster.add_child(this._resultRosterAvatars);
+        this._resultRoster.add_child(this._resultRosterNote);
         view.add_child(this._resultTitle);
         view.add_child(this._resultHint);
         view.add_child(this._winnerCard);
         view.add_child(scrollView(resultGroup.actor));
+        view.add_child(this._resultRoster);
         view.add_child(this._resultWaitingLabel);
         view.add_child(actionsRow);
         return view;
@@ -899,6 +957,15 @@ export class PlayPage extends Page {
         const missed = state.phase === 'missed';
         this._rematchBtn.visible = finished && !!state.isHost;
         this._resultWaitingLabel.visible = finished && !state.isHost;
+        this._resultRoster.visible = finished;
+        if (finished) {
+            const players = state.players ?? [];
+            const rosterSig = players.map(p => p.peerId).join('|');
+            if (rosterSig !== this._resultRosterSig) {
+                this._resultRosterSig = rosterSig;
+                this._syncDrawPresence(this._resultRosterAvatars, players, new Set());
+            }
+        }
         if (state.mode === 'draw')
             this._renderDrawResult(state, finished, missed);
         else
@@ -1012,13 +1079,14 @@ export class PlayPage extends Page {
             this._guestResponded = false;
             this._invitePickerOpen = false;
             this._invitePickerActor.hide();
-            this._inviteToggleBtn.label = 'Invite more';
+            this._inviteToggleBtn.label = '+ Invite';
             this._lastSubmittedLen = 0;
             this._typed = '';
             this._hostSig = null;
             this._guestSig = null;
             this._racePresenceSig = null;
             this._resultSig = null;
+            this._resultRosterSig = null;
             this._peerSig = null;
             this._passage = null;
             this._strokes = [];

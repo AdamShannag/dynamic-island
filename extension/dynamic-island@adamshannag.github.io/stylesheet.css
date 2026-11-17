@@ -886,6 +886,8 @@
 .island-race-peer-name { font-size: 10.5pt; padding-top: 12px; }
 .island-race-peer-addr { font-size: 8pt; }
 
+.island-idle-head { spacing: 12px; padding-bottom: 4px; }
+
 .island-race-host-row { spacing: 20px; }
 .island-race-host-panel {
   width: 240px;
@@ -895,6 +897,18 @@
 .island-play-mode-row { spacing: 8px; padding-bottom: 6px; }
 .island-play-mode-row .island-pill-btn { background-color: rgba(255, 255, 255, 0.06); }
 .island-play-mode-row .island-pill-btn:checked { background-color: #0a84ff; color: #fff; }
+
+.island-rounds-row { spacing: 8px; padding-bottom: 10px; }
+.island-rounds-label { font-size: 8.5pt; font-weight: 600; color: rgba(245, 245, 247, 0.45); }
+.island-rounds-stepper { spacing: 10px; }
+.island-rounds-stepper-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background-color: rgba(255, 255, 255, 0.08);
+}
+.island-rounds-stepper-btn StIcon { icon-size: 11px; }
+.island-rounds-stepper-val { font-size: 9.5pt; font-weight: 700; width: 18px; }
 .island-race-ready-ring {
   width: 86px;
   height: 86px;
@@ -917,6 +931,7 @@
 .island-race-chip.ready  { color: #30d158; background-color: rgba(48, 209, 88, 0.16); }
 .island-race-chip.waiting { color: rgba(245, 245, 247, 0.5); background-color: rgba(255, 255, 255, 0.08); }
 .island-race-chip.declined { color: #ff453a; background-color: rgba(255, 69, 58, 0.16); }
+.island-race-chip.host { color: #ffd60a; background-color: rgba(255, 214, 10, 0.16); }
 .island-badge.island-race-row-avatar { width: 34px; height: 34px; border-radius: 17px; }
 .island-race-row-avatar .island-badge-glyph { font-size: 9.5pt; }
 
@@ -953,6 +968,16 @@
 .island-race-rank { width: 20px; font-size: 10pt; color: rgba(245, 245, 247, 0.35); font-weight: 700; }
 .island-badge.island-race-list-avatar { width: 30px; height: 30px; border-radius: 15px; }
 .island-race-list-avatar .island-badge-glyph { font-size: 9pt; }
+
+.island-result-roster {
+  spacing: 12px;
+  padding: 10px 14px;
+  margin-top: 10px;
+  background-color: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+}
+.island-result-roster-note { font-size: 8pt; color: rgba(245, 245, 247, 0.4); }
 
 .island.theme-blue .island-xf-mini.accent { background-color: #0a84ff; }
 .island.theme-blue .island-xf-text { caret-color: #0a84ff; }
@@ -1090,7 +1115,6 @@
 
 .island-draw-canvas-wrap { padding-top: 12px; }
 .island-draw-canvas {
-  border-radius: 18px;
   min-height: 180px;
 }
 
