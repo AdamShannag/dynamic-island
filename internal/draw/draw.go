@@ -196,7 +196,7 @@ func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[strin
 	e.mu.Unlock()
 	e.notify()
 
-	e.sendRoundStarts(peerAddrs, lobbyID, round, len(players), drawerID, drawerName, word, endsAt, playersCopy)
+	e.sendRoundStarts(peerAddrs, lobbyID, round, rounds, drawerID, drawerName, word, endsAt, playersCopy)
 
 	e.mu.Lock()
 	if e.lobbyID == lobbyID {
@@ -522,9 +522,20 @@ func (e *Engine) advanceRound(lobbyID string) {
 	e.mu.Unlock()
 }
 
+// nextDrawerLocked picks the drawer for round (1-based), cycling through
+// drawOrder round-robin once a round exceeds the player count - rounds only
+// equals len(drawOrder) when the host didn't configure more, so this must
+// wrap rather than stop at the end of the slice. It skips any peer who has
+// since left (no longer in e.state.Players), scanning at most one full lap
+// so it still reports false once everyone has left.
 func (e *Engine) nextDrawerLocked(round int) (string, bool) {
-	for i := round - 1; i >= 0 && i < len(e.drawOrder); i++ {
-		id := e.drawOrder[i]
+	n := len(e.drawOrder)
+	if n == 0 {
+		return "", false
+	}
+	start := (round - 1) % n
+	for k := 0; k < n; k++ {
+		id := e.drawOrder[(start+k)%n]
 		if e.playerIndexLocked(id) >= 0 {
 			return id, true
 		}

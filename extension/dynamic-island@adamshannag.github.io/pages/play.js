@@ -6,7 +6,7 @@ import Cairo from 'gi://cairo';
 
 import {TILE_COLORS, featureOn} from '../lib/constants.js';
 import {correctPrefix, hashColor, hexToRgb} from '../lib/format.js';
-import {springTo} from '../lib/motion.js';
+import {frameLoop, springTo} from '../lib/motion.js';
 import {
     EmptyState, badge, column, fillList, group, iconButton, label, page, pillButton, scrollView,
     setText,
@@ -25,9 +25,9 @@ const STROKE_FLUSH_MS = 80;
 const SWATCH_COLORS = ['#1c1c1e', '#ff453a', '#0a84ff', '#30d158', '#ff9f0a'];
 const MIN_ROUNDS = 1;
 const MAX_ROUNDS = 10;
-const RACER_TRACK_PX = 260;
 
 const SNAKE_INPUT_MS = 70;
+const SNAKE_INTERP_MS = 90;
 const SNAKE_BG = '#0b0e12';
 const SNAKE_FOOD_COLOR = '#ffd60a';
 const SNAKE_GRID_STEP = 28;
@@ -47,7 +47,7 @@ export class PlayPage extends Page {
     static id = 'play';
     static title = '';
     static autoHeight = false;
-    static interval = 150;
+    static interval = 70;
 
     build() {
         const actor = page();
@@ -427,8 +427,6 @@ export class PlayPage extends Page {
         top.add_child(eyebrow);
         top.add_child(this._racePresence);
 
-        this._racersList = column({style_class: 'island-race-racers'});
-
         const passageWrap = column({x_expand: true, y_expand: true, x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
         this._passageStack = new St.Widget({
             layout_manager: new Clutter.BinLayout(), width: 620,
@@ -455,51 +453,8 @@ export class PlayPage extends Page {
         leaveRow.add_child(this._leaveButton('Leave', 'link'));
         view.add_child(top);
         view.add_child(passageWrap);
-        view.add_child(this._racersList);
         view.add_child(leaveRow);
         return view;
-    }
-
-    _racerRow(r, selfId) {
-        const row = new St.BoxLayout({style_class: 'island-racer-row', x_expand: true});
-        const avatar = badge({glyph: (r.name[0] ?? '?').toUpperCase(), color: r.peerId === selfId ? SELF_CARET_COLOR : this._playerColor(r.peerId)});
-        avatar.add_style_class_name('island-race-presence-avatar');
-        const name = label('island-racer-name', {text: r.name});
-        const track = new St.Widget({style_class: 'island-racer-track', layout_manager: new Clutter.FixedLayout()});
-        const fill = new St.Widget({style_class: 'island-racer-fill', x: 0, y: 0, height: 4});
-        if (r.peerId === selfId)
-            fill.add_style_class_name('self');
-        track.add_child(fill);
-        const pct = label('island-racer-pct', {text: '0%', x_align: Clutter.ActorAlign.END});
-        row.add_child(avatar);
-        row.add_child(name);
-        row.add_child(track);
-        row.add_child(pct);
-        return {row, fill, pct};
-    }
-
-    _syncRacerRows(racers) {
-        const selfId = this._selfId;
-        const ordered = [...racers].sort((a, b) => (a.peerId === selfId ? -1 : b.peerId === selfId ? 1 : 0));
-        const sig = ordered.map(r => r.peerId).join('|');
-        if (sig !== this._racerRowSig) {
-            this._racerRowSig = sig;
-            this._racersList.destroy_all_children();
-            this._racerRowRefs = new Map();
-            for (const r of ordered) {
-                const {row, fill, pct} = this._racerRow(r, selfId);
-                this._racersList.add_child(row);
-                this._racerRowRefs.set(r.peerId, {fill, pct});
-            }
-        }
-        for (const r of ordered) {
-            const ref = this._racerRowRefs?.get(r.peerId);
-            if (!ref)
-                continue;
-            const pctVal = r.finishedAtMs ? 100 : Math.round((r.progress ?? 0) * 100);
-            ref.fill.width = Math.round(RACER_TRACK_PX * pctVal / 100);
-            setText(ref.pct, `${pctVal}%`);
-        }
     }
 
     _makeCaret(color) {
@@ -625,7 +580,6 @@ export class PlayPage extends Page {
         }
         this._syncRaceMarkers(race);
         this._syncRacePresence(race.racers ?? []);
-        this._syncRacerRows(race.racers ?? []);
     }
 
     _syncRacePresence(racers) {
@@ -1021,6 +975,15 @@ export class PlayPage extends Page {
         return Clutter.EVENT_PROPAGATE;
     }
 
+    _interpSnakeBody(curBody, prevBody, t) {
+        if (!prevBody || prevBody.length === 0 || t >= 1)
+            return curBody;
+        return curBody.map((c, i) => {
+            const pp = prevBody[i];
+            return pp ? {x: pp.x + (c.x - pp.x) * t, y: pp.y + (c.y - pp.y) * t} : c;
+        });
+    }
+
     _paintSnake(area) {
         const cr = area.get_context();
         try {
@@ -1033,9 +996,15 @@ export class PlayPage extends Page {
             const snake = this._snakeState;
             if (!snake)
                 return;
+            const prev = this._snakePrevState ?? snake;
+            const elapsed = GLib.get_monotonic_time() / 1000 - (this._snakeStateAt ?? 0);
+            const t = Math.max(0, Math.min(1, elapsed / SNAKE_INTERP_MS));
+            const prevByID = new Map((prev.players ?? []).map(p => [p.peerId, p]));
+
             const players = snake.players ?? [];
             const self = players.find(p => p.peerId === this._selfId);
-            const head = self?.body?.[0] ?? {x: (snake.worldW ?? w) / 2, y: (snake.worldH ?? h) / 2};
+            const selfBody = self ? this._interpSnakeBody(self.body ?? [], prevByID.get(this._selfId)?.body, t) : [];
+            const head = selfBody[0] ?? {x: (snake.worldW ?? w) / 2, y: (snake.worldH ?? h) / 2};
             const camX = head.x - w / 2, camY = head.y - h / 2;
 
             cr.setSourceRGBA(1, 1, 1, 0.07);
@@ -1058,8 +1027,9 @@ export class PlayPage extends Page {
             for (const p of players) {
                 if (!p.alive)
                     continue;
-                const pts = p.body ?? [];
-                if (pts.length === 0)
+                const pts = p.peerId === this._selfId
+                    ? selfBody : this._interpSnakeBody(p.body ?? [], prevByID.get(p.peerId)?.body, t);
+                if (!pts || pts.length === 0)
                     continue;
                 const [r, g, b] = hexToRgb(p.peerId === this._selfId ? SELF_CARET_COLOR : this._playerColor(p.peerId));
                 cr.setSourceRGB(r, g, b);
@@ -1079,7 +1049,9 @@ export class PlayPage extends Page {
     }
 
     _renderSnake(snake) {
+        this._snakePrevState = this._snakeState ?? snake;
         this._snakeState = snake;
+        this._snakeStateAt = GLib.get_monotonic_time() / 1000;
         const players = snake.players ?? [];
         const self = players.find(p => p.peerId === this._selfId);
         setText(this._snakeLengthLabel, `${self?.body?.length ?? 0}`);
@@ -1090,7 +1062,15 @@ export class PlayPage extends Page {
         if (self && !self.alive)
             setText(this._snakeDeadScore, `Final score: ${self.score}`);
         this._syncSnakeLeaderboard(players);
-        this._snakeCanvas.queue_repaint();
+        if (!this._snakeFrameLoop) {
+            this._snakeFrameLoop = frameLoop(this._snakeCanvas, () => {
+                this._snakeCanvas.queue_repaint();
+                const active = this._phase === 'playing' && this._mode === 'snake';
+                if (!active)
+                    this._snakeFrameLoop = null;
+                return active;
+            });
+        }
     }
 
     _syncSnakeLeaderboard(players) {
@@ -1332,11 +1312,12 @@ export class PlayPage extends Page {
             this._hostSig = null;
             this._guestSig = null;
             this._racePresenceSig = null;
-            this._racerRowSig = null;
             this._resultSig = null;
             this._resultRosterSig = null;
             this._snakeLbSig = null;
             this._snakeState = null;
+            this._snakePrevState = null;
+            this._snakeStateAt = 0;
             this._peerSig = null;
             this._passage = null;
             this._strokes = [];

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AdamShannag/dynamic-island/internal/draw"
 	"github.com/AdamShannag/dynamic-island/internal/lobby"
@@ -228,5 +229,70 @@ func TestOnlyTheDrawerCanSubmitAStroke(t *testing.T) {
 	}
 	if err := g.SubmitStroke(draw.Stroke{Points: []draw.Point{{X: 0, Y: 0}}}); err == nil {
 		t.Fatal("a non-drawer must not be able to submit a stroke")
+	}
+}
+
+// TestRoundsConfiguredAboveThePlayerCountActuallyPlayAllOfThem is a
+// regression test for a real bug: nextDrawerLocked scanned drawOrder
+// starting at round-1 without wrapping, so once round exceeded the player
+// count it fell straight off the end of the slice and finished the game
+// early - with 2 players, any host-configured round count above 2 was
+// silently ignored and the game always ended after exactly one turn each.
+func TestRoundsConfiguredAboveThePlayerCountActuallyPlayAllOfThem(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	tr := newFakeTransport()
+	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, 4, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+	if got := host.State().TotalRounds; got != 4 {
+		t.Fatalf("TotalRounds = %d, want 4", got)
+	}
+
+	wordFor := func(drawerIsHost bool) string {
+		if drawerIsHost {
+			return host.State().Word
+		}
+		tr.mu.Lock()
+		defer tr.mu.Unlock()
+		var sp struct {
+			Word string `json:"word"`
+		}
+		if err := json.Unmarshal(tr.started["127.0.0.1:2"], &sp); err != nil {
+			t.Fatal(err)
+		}
+		return sp.Word
+	}
+
+	for round := 1; round <= 4; round++ {
+		st := host.State()
+		if st.Round != round || st.Phase != draw.PhaseDrawing {
+			t.Fatalf("round %d: phase/round = %v/%d, want drawing/%d", round, st.Phase, st.Round, round)
+		}
+		drawerIsHost := st.DrawerID == "h1"
+		nonDrawer := "g1"
+		if !drawerIsHost {
+			nonDrawer = "h1"
+		}
+		word := wordFor(drawerIsHost)
+		if word == "" {
+			t.Fatalf("round %d: could not determine the word", round)
+		}
+		if err := host.HandleProgress(lobby.Progress{LobbyID: "lobby1", PeerID: nonDrawer, Payload: mustJSON(t, map[string]string{"type": "guess", "text": word})}); err != nil {
+			t.Fatal(err)
+		}
+		if round < 4 {
+			deadline := time.Now().Add(6 * time.Second)
+			for host.State().Phase != draw.PhaseDrawing && time.Now().Before(deadline) {
+				time.Sleep(50 * time.Millisecond)
+			}
+			if host.State().Phase != draw.PhaseDrawing {
+				t.Fatalf("round %d: never advanced to the next round (stuck at phase %v)", round, host.State().Phase)
+			}
+		}
+	}
+
+	if got := host.State().Phase; got != draw.PhaseFinished {
+		t.Fatalf("phase after round 4 = %v, want finished", got)
 	}
 }
