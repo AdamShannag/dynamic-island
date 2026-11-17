@@ -24,17 +24,22 @@ const (
 )
 
 const (
-	tickRate       = 15
-	tickInterval   = time.Second / tickRate
-	defaultMatch   = 90 * time.Second
-	worldW         = 2400.0
-	worldH         = 1800.0
+	tickRate     = 15
+	tickInterval = time.Second / tickRate
+	defaultMatch = 90 * time.Second
+	// The viewport only ever shows a window a few hundred units wide, so a
+	// world several times that lets players spend an entire short match
+	// without ever coming within sight of anyone else. Sized so a couple of
+	// players starting on opposite sides of the spawn circle cross paths
+	// within a few seconds rather than wandering a mostly empty map.
+	worldW         = 1200.0
+	worldH         = 900.0
 	moveSpeed      = 120.0
 	segmentSpacing = moveSpeed / tickRate
 	turnRate       = 2.5 * math.Pi
 
 	startSegments     = 20
-	foodCount         = 50
+	foodCount         = 30
 	foodRadius        = 14.0
 	collisionRadius   = 14.0
 	growthPerFood     = segmentSpacing * 3
@@ -487,7 +492,7 @@ func spawnSnakes(players []Player) []*runtimeSnake {
 	out := make([]*runtimeSnake, len(players))
 	n := len(players)
 	cx, cy := worldW/2, worldH/2
-	radius := math.Min(worldW, worldH) * 0.3
+	radius := math.Min(worldW, worldH) * 0.25
 	for i, p := range players {
 		angle := 2 * math.Pi * float64(i) / float64(n)
 		hx := cx + radius*math.Cos(angle)

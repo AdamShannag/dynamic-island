@@ -1088,14 +1088,6 @@
 
 .island-race-timer { font-size: 10pt; font-weight: 700; color: rgba(245, 245, 247, 0.5); font-feature-settings: "tnum"; padding: 0 10px; }
 
-.island-race-racers { spacing: 2px; padding: 8px 0 12px; }
-.island-racer-row { spacing: 10px; padding: 4px 0; }
-.island-racer-name { font-size: 8.5pt; font-weight: 500; width: 82px; }
-.island-racer-track { width: 260px; height: 4px; border-radius: 2px; background-color: rgba(255, 255, 255, 0.08); }
-.island-racer-fill { height: 4px; border-radius: 2px; background-color: #0a84ff; }
-.island-racer-fill.self { background-color: #0a84ff; }
-.island-racer-pct { font-size: 8pt; color: rgba(245, 245, 247, 0.4); width: 30px; font-feature-settings: "tnum"; }
-
 .island-draw-word-pill { padding: 6px 0 0; }
 .island-draw-word-text { font-size: 15pt; font-weight: 800; letter-spacing: 1.2px; color: #0a84ff; }
 .island-draw-word-hint { font-size: 7.5pt; color: rgba(245, 245, 247, 0.3); padding-top: 3px; }
