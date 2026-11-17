@@ -389,7 +389,8 @@ export class DrawPage extends Page {
         const [ok, lx, ly] = actor.transform_stage_point(sx, sy);
         if (!ok)
             return null;
-        const [w, h] = actor.get_surface_size();
+        const box = actor.get_allocation_box();
+        const w = box.get_width(), h = box.get_height();
         if (w <= 0 || h <= 0)
             return null;
         return {x: Math.min(1, Math.max(0, lx / w)), y: Math.min(1, Math.max(0, ly / h))};
