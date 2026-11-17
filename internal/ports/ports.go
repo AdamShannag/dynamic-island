@@ -24,6 +24,7 @@ type Listener struct {
 	Cmd         string `json:"cmd,omitempty"`
 	Container   string `json:"container,omitempty"`
 	ContainerID string `json:"containerId,omitempty"`
+	Mine        bool   `json:"mine"`
 }
 
 var procRe = regexp.MustCompile(`\("([^"]+)",pid=(\d+)`)
@@ -84,6 +85,7 @@ func Sockets(ctx context.Context) ([]Listener, error) {
 			l.Process = m[1]
 			l.PID, _ = strconv.Atoi(m[2])
 			l.Cmd = cmdline(l.PID)
+			l.Mine = ownedBy(l.PID, os.Getuid())
 		}
 		key := fmt.Sprintf("%d/%d", port, l.PID)
 		if seen[key] {
@@ -94,6 +96,18 @@ func Sockets(ctx context.Context) ([]Listener, error) {
 	}
 	sort.Slice(res, func(i, j int) bool { return res[i].Port < res[j].Port })
 	return res, nil
+}
+
+func ownedBy(pid, uid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	fi, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == uid
 }
 
 func cmdline(pid int) string {
