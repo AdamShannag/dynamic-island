@@ -4,7 +4,7 @@ import Pango from 'gi://Pango';
 
 import {ALL_TABS, MORE_TAB, tabOn} from '../lib/constants.js';
 import {fmtClock} from '../lib/format.js';
-import {NOTHING_RUNNING, continueItems, focusSubtitle, homeFavorites, signature, taskProgress} from '../lib/home.js';
+import {NOTHING_RUNNING, continueItems, favoriteCells, focusSubtitle, homeFavorites, signature, taskProgress} from '../lib/home.js';
 import {PRESS_TILE, column, iconButton, label, setText, tactile} from '../lib/widgets.js';
 import {Page} from './page.js';
 
@@ -131,6 +131,7 @@ class Favorites {
         this._page = page;
         this._sig = null;
         this.actor = column({style_class: 'island-hm-favs', x_expand: true, y_expand: true, y_align: Clutter.ActorAlign.FILL});
+        this.actor.layout_manager.homogeneous = true;
         this._rows = [0, 1].map(() => {
             const r = row('island-hm-favs-row', {x_expand: true, y_expand: true});
             this.actor.add_child(r);
@@ -146,11 +147,10 @@ class Favorites {
             return;
         this._sig = sig;
         this._rows.forEach(r => r.destroy_all_children());
-        for (let i = 0; i < TILE_SLOTS; i++) {
-            const entry = i === TILE_SLOTS - 1 ? MORE_TAB : tabs.get(ids[i]);
+        favoriteCells(ids.map(id => tabs.get(id)).filter(Boolean), MORE_TAB, TILE_SLOTS).forEach((entry, i) => {
             const r = this._rows[Math.floor(i / TILES_PER_ROW)];
             r.add_child(entry ? this._tile(entry) : new St.Widget({x_expand: true, y_expand: true}));
-        }
+        });
     }
 
     _tile([id, name, icon]) {

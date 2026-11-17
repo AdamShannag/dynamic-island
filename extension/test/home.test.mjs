@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
     DEFAULT_FAVORITES, FAVORITES_MAX, FOCUS_IDLE, continueItems, focusSubtitle, homeFavorites, signature, taskProgress,
-    toggleFavorite,
+    favoriteCells, toggleFavorite,
 } from '../dynamic-island@adamshannag.github.io/lib/home.js';
 
 const VALID = ['home', 'inbox', 'docker', 'ports', 'clipboard', 'notes', 'agents', 'play'];
@@ -53,4 +53,11 @@ test('toggleFavorite adds, removes and refuses a sixth favourite', () => {
     assert.deepEqual(toggleFavorite(full, 'ports'), {favorites: ['docker', 'clipboard', 'notes', 'agents'], refused: false});
     assert.deepEqual(toggleFavorite([], 'settings'), {favorites: ['settings'], refused: false});
     assert.deepEqual(toggleFavorite(null, 'home'), {favorites: [], refused: true});
+});
+
+test('favoriteCells packs favourites in order, More right after, empties at the end', () => {
+    assert.deepEqual(favoriteCells(['notes'], 'more'), ['notes', 'more', null, null, null, null]);
+    assert.deepEqual(favoriteCells([], 'more'), ['more', null, null, null, null, null]);
+    assert.deepEqual(favoriteCells(['a', 'b', 'c'], 'more'), ['a', 'b', 'c', 'more', null, null]);
+    assert.deepEqual(favoriteCells(['a', 'b', 'c', 'd', 'e'], 'more'), ['a', 'b', 'c', 'd', 'e', 'more']);
 });

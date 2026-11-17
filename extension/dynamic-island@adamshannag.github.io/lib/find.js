@@ -76,7 +76,7 @@ export function actionItems({ports = [], containers = []} = {}) {
     ];
     const seen = new Set();
     for (const p of ports) {
-        if (!p?.port || seen.has(p.port))
+        if (!p?.port || !p.mine || seen.has(p.port))
             continue;
         seen.add(p.port);
         const owner = p.container || p.process || '';

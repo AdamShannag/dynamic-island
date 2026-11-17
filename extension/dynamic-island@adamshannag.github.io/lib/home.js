@@ -19,6 +19,13 @@ export function homeFavorites(settings, valid = null) {
     return out;
 }
 
+export function favoriteCells(ids, more, cells = 6) {
+    const out = [...ids.slice(0, cells - 1), more];
+    while (out.length < cells)
+        out.push(null);
+    return out;
+}
+
 export function toggleFavorite(favorites, id) {
     const current = homeFavorites({home: {favorites: Array.isArray(favorites) ? favorites : []}});
     if (current.includes(id))

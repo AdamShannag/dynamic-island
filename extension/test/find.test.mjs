@@ -71,7 +71,8 @@ test('selection moves and clamps', () => {
 
 test('actions: fixed ones first, then one per port and running container', () => {
     const out = actionItems({
-        ports: [{port: 3000, process: 'node'}, {port: 3000, process: 'node'}, {port: 5432, container: 'db'}],
+        ports: [{port: 3000, process: 'node', mine: true}, {port: 3000, process: 'node', mine: true},
+            {port: 5432, container: 'db', mine: true}, {port: 53, process: 'systemd-resolve', mine: false}, {port: 631}],
         containers: [{id: 'a1', name: 'api', image: 'api:1', state: 'running'}, {id: 'b2', name: 'old', state: 'exited'}],
     });
     assert.deepEqual(out.map(i => i.title), [
