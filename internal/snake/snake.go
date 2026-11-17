@@ -24,9 +24,11 @@ const (
 )
 
 const (
-	tickRate     = 15
+	// 30Hz keeps turning and collisions responsive: at 15Hz a mouse turn
+	// could take up to ~66ms just to be picked up by the next tick, on top
+	// of the input throttle, which read as sluggish.
+	tickRate     = 30
 	tickInterval = time.Second / tickRate
-	defaultMatch = 90 * time.Second
 	// The viewport only ever shows a window a few hundred units wide, so a
 	// world several times that lets players spend an entire short match
 	// without ever coming within sight of anyone else. Sized so a couple of
@@ -34,16 +36,18 @@ const (
 	// within a few seconds rather than wandering a mostly empty map.
 	worldW         = 1200.0
 	worldH         = 900.0
-	moveSpeed      = 120.0
+	moveSpeed      = 170.0
 	segmentSpacing = moveSpeed / tickRate
-	turnRate       = 2.5 * math.Pi
+	turnRate       = 3.6 * math.Pi
 
-	startSegments     = 20
-	foodCount         = 30
-	foodRadius        = 14.0
-	collisionRadius   = 14.0
-	growthPerFood     = segmentSpacing * 3
-	selfCollisionSkip = 8
+	startSegments   = 20
+	foodCount       = 30
+	foodRadius      = 14.0
+	collisionRadius = 14.0
+	growthPerFood   = segmentSpacing * 3
+	// ~60 world units of neck, in segments at the current spacing - how far
+	// the head must travel before its own body becomes collidable.
+	selfCollisionSkip = 12
 	deathFoodEvery    = 5
 )
 
@@ -72,12 +76,11 @@ type SnakePlayer struct {
 }
 
 type State struct {
-	Phase    Phase         `json:"phase"`
-	EndsAtMs int64         `json:"endsAtMs"`
-	WorldW   float64       `json:"worldW"`
-	WorldH   float64       `json:"worldH"`
-	Food     []Food        `json:"food"`
-	Players  []SnakePlayer `json:"players"`
+	Phase   Phase         `json:"phase"`
+	WorldW  float64       `json:"worldW"`
+	WorldH  float64       `json:"worldH"`
+	Food    []Food        `json:"food"`
+	Players []SnakePlayer `json:"players"`
 }
 
 type inputPayload struct {
@@ -99,18 +102,15 @@ type Engine struct {
 	selfID   string
 	selfName string
 
-	matchDuration time.Duration
-
-	mu         sync.Mutex
-	state      State
-	host       bool
-	hostAddr   string
-	lobbyID    string
-	peerAddrs  map[string]string
-	snakes     []*runtimeSnake
-	matchTimer *time.Timer
-	stopTick   chan struct{}
-	onChange   func(State)
+	mu        sync.Mutex
+	state     State
+	host      bool
+	hostAddr  string
+	lobbyID   string
+	peerAddrs map[string]string
+	snakes    []*runtimeSnake
+	stopTick  chan struct{}
+	onChange  func(State)
 
 	publish   func(disband bool, lobbyID string, payload json.RawMessage)
 	sendStart func(addr, lobbyID string, payload json.RawMessage) error
@@ -118,20 +118,10 @@ type Engine struct {
 
 func NewEngine(selfID, selfName string) *Engine {
 	return &Engine{
-		selfID:        selfID,
-		selfName:      selfName,
-		matchDuration: defaultMatch,
-		state:         State{Phase: PhaseIdle},
+		selfID:   selfID,
+		selfName: selfName,
+		state:    State{Phase: PhaseIdle},
 	}
-}
-
-// SetMatchDuration overrides the default 90s match length; it exists so
-// tests can shrink a match without waiting on the real clock, and must be
-// called before BeginHost.
-func (e *Engine) SetMatchDuration(d time.Duration) {
-	e.mu.Lock()
-	e.matchDuration = d
-	e.mu.Unlock()
 }
 
 func (e *Engine) OnChange(fn func(State)) {
@@ -175,16 +165,14 @@ func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[strin
 	e.sendStart = sendStart
 	e.snakes = spawnSnakes(players)
 	e.state = State{
-		Phase:    PhasePlaying,
-		EndsAtMs: time.Now().Add(e.matchDuration).UnixMilli(),
-		WorldW:   worldW,
-		WorldH:   worldH,
-		Food:     spawnFood(),
-		Players:  snapshotPlayers(e.snakes),
+		Phase:   PhasePlaying,
+		WorldW:  worldW,
+		WorldH:  worldH,
+		Food:    spawnFood(),
+		Players: snapshotPlayers(e.snakes),
 	}
 	stop := make(chan struct{})
 	e.stopTick = stop
-	e.matchTimer = time.AfterFunc(e.matchDuration, func() { e.expireMatch(lobbyID) })
 	snap := cloneState(e.state)
 	e.mu.Unlock()
 	e.notify()
@@ -357,8 +345,7 @@ func (e *Engine) stepLocked() bool {
 			alive++
 		}
 	}
-	now := time.Now().UnixMilli()
-	if now >= e.state.EndsAtMs || (len(e.snakes) > 1 && alive <= 1) {
+	if alive == 0 || (len(e.snakes) > 1 && alive <= 1) {
 		e.finishLocked()
 		return true
 	}
@@ -399,22 +386,6 @@ func (e *Engine) killLocked(s *runtimeSnake) {
 
 func (e *Engine) finishLocked() {
 	e.state.Phase = PhaseFinished
-	if e.matchTimer != nil {
-		e.matchTimer.Stop()
-		e.matchTimer = nil
-	}
-}
-
-func (e *Engine) expireMatch(lobbyID string) {
-	e.mu.Lock()
-	if !e.host || e.lobbyID != lobbyID || e.state.Phase != PhasePlaying {
-		e.mu.Unlock()
-		return
-	}
-	e.finishLocked()
-	e.publishLocked(false)
-	e.mu.Unlock()
-	e.notify()
 }
 
 func (e *Engine) publishLocked(disband bool) {
@@ -470,10 +441,6 @@ func (e *Engine) Leave() {
 }
 
 func (e *Engine) resetLocked() {
-	if e.matchTimer != nil {
-		e.matchTimer.Stop()
-		e.matchTimer = nil
-	}
 	if e.stopTick != nil {
 		close(e.stopTick)
 		e.stopTick = nil

@@ -26,8 +26,8 @@ const SWATCH_COLORS = ['#1c1c1e', '#ff453a', '#0a84ff', '#30d158', '#ff9f0a'];
 const MIN_ROUNDS = 1;
 const MAX_ROUNDS = 10;
 
-const SNAKE_INPUT_MS = 70;
-const SNAKE_INTERP_MS = 90;
+const SNAKE_INPUT_MS = 30;
+const SNAKE_INTERP_MS = 45;
 const SNAKE_BG = '#0b0e12';
 const SNAKE_FOOD_COLOR = '#ffd60a';
 const SNAKE_GRID_STEP = 28;
@@ -47,7 +47,7 @@ export class PlayPage extends Page {
     static id = 'play';
     static title = '';
     static autoHeight = false;
-    static interval = 70;
+    static interval = 40;
 
     build() {
         const actor = page();
@@ -911,13 +911,13 @@ export class PlayPage extends Page {
         hudLeft.add_child(label('island-snake-hud-label', {text: 'LENGTH'}));
         this._snakeLengthLabel = label('island-snake-hud-value', {text: '0'});
         hudLeft.add_child(this._snakeLengthLabel);
-        this._snakeTimer = label('island-race-timer', {text: '', x_align: Clutter.ActorAlign.CENTER, x_expand: true});
+        const hudSpacer = new St.Widget({x_expand: true});
         const hudRight = column({x_align: Clutter.ActorAlign.END});
         hudRight.add_child(label('island-snake-hud-label', {text: 'SCORE', x_align: Clutter.ActorAlign.END}));
         this._snakeScoreLabel = label('island-snake-hud-value', {text: '0', x_align: Clutter.ActorAlign.END});
         hudRight.add_child(this._snakeScoreLabel);
         top.add_child(hudLeft);
-        top.add_child(this._snakeTimer);
+        top.add_child(hudSpacer);
         top.add_child(hudRight);
 
         const stack = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
@@ -1073,8 +1073,6 @@ export class PlayPage extends Page {
         const self = players.find(p => p.peerId === this._selfId);
         setText(this._snakeLengthLabel, `${self?.body?.length ?? 0}`);
         setText(this._snakeScoreLabel, `${self?.score ?? 0}`);
-        const secsLeft = Math.max(0, Math.round(((snake.endsAtMs ?? 0) - Date.now()) / 1000));
-        setText(this._snakeTimer, `${Math.floor(secsLeft / 60)}:${String(secsLeft % 60).padStart(2, '0')}`);
         this._snakeDeadOverlay.visible = !!self && !self.alive;
         if (self && !self.alive)
             setText(this._snakeDeadScore, `Final score: ${self.score}`);

@@ -183,20 +183,36 @@ func TestCollisionMarksTheOtherSnakeDeadAndDropsFood(t *testing.T) {
 	}
 }
 
-func TestMatchFinishesAfterTheConfiguredDuration(t *testing.T) {
+func TestSoloMatchRunsUntilThePlayerDiesRatherThanOnATimer(t *testing.T) {
 	host := snake.NewEngine("h1", "Host")
-	host.SetMatchDuration(150 * time.Millisecond)
 	tr := newFakeTransport()
 	players := []snake.Player{{PeerID: "h1", Name: "Host"}}
 	if err := host.BeginHost("lobby1", players, map[string]string{}, tr.publish, tr.sendStart); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 3*time.Second, func() bool { return host.State().Phase == snake.PhaseFinished })
+
+	st := host.State()
+	p, _ := playerByID(st, "h1")
+	wallHeading := 0.0
+	if p.Body[0].X < st.WorldW/2 {
+		wallHeading = math.Pi
+	}
+	if err := host.HandleInput("h1", wallHeading); err != nil {
+		t.Fatal(err)
+	}
+
+	// Still alive and playing well past where a 90s match timer would never
+	// even have had a chance to fire; the match must only end on death.
+	time.Sleep(200 * time.Millisecond)
+	if host.State().Phase != snake.PhasePlaying {
+		t.Fatal("expected the match to still be playing before the snake has died")
+	}
+
+	waitFor(t, 10*time.Second, func() bool { return host.State().Phase == snake.PhaseFinished })
 }
 
 func TestLastSnakeStandingEndsTheMatchEarly(t *testing.T) {
 	host := snake.NewEngine("h1", "Host")
-	host.SetMatchDuration(time.Minute)
 	tr := newFakeTransport()
 	players := []snake.Player{{PeerID: "h1", Name: "Host"}, {PeerID: "g1", Name: "Guest"}}
 	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:1"}, tr.publish, tr.sendStart); err != nil {
