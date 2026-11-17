@@ -1097,6 +1097,8 @@
 .island-draw-tools { spacing: 10px; }
 .island-draw-swatch { width: 18px; height: 18px; border-radius: 11px; border: 2px solid rgba(255, 255, 255, 0.4); }
 .island-draw-swatch:checked { border-color: rgba(255, 255, 255, 0.9); }
+.island-draw-eraser { background-color: rgba(255, 255, 255, 0.1); }
+.island-draw-eraser-icon { icon-size: 11px; color: rgba(245, 245, 247, 0.75); }
 
 .island-draw-drawer-row { spacing: 10px; padding-top: 10px; }
 .island-badge.island-draw-drawer-avatar { width: 26px; height: 26px; border-radius: 13px; }

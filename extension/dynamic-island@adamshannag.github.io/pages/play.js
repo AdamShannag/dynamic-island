@@ -19,6 +19,7 @@ const PEER_CARET_MS = 350;
 
 const INK_COLOR = '#1c1c1e';
 const INK_WIDTH = 3;
+const ERASER_WIDTH = 16;
 const CANVAS_BG = '#f5f5f7';
 const STROKE_FLUSH_MS = 80;
 const SWATCH_COLORS = ['#1c1c1e', '#ff453a', '#0a84ff', '#30d158', '#ff9f0a'];
@@ -253,8 +254,20 @@ export class PlayPage extends Page {
 
     _buildLobbyGuest() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
-        this._guestEmpty = new EmptyState();
-        this._guestModeLabel = label('island-race-subtitle', {x_align: Clutter.ActorAlign.CENTER});
+        const eyebrow = label('island-igroup-title', {text: 'LOBBY'});
+        this._guestSubtitle = label('island-race-subtitle', {text: ''});
+
+        const row = new St.BoxLayout({style_class: 'island-race-host-row', x_expand: true, y_expand: true});
+        const playersGroup = group('PLAYERS');
+        this._guestPlayerList = playersGroup.list;
+        this._guestPlayerRefs = new Map();
+        const groups = column({style_class: 'island-groups'});
+        groups.add_child(playersGroup.actor);
+        const left = scrollView(groups);
+        left.x_expand = true;
+
+        const panel = column({style_class: 'island-race-host-panel', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+        this._guestModeLabel = label('island-race-ready-label', {text: '', x_align: Clutter.ActorAlign.CENTER});
         this._acceptBtn = pillButton('Accept', () => this._respond(true), 'primary');
         this._declineBtn = pillButton('Decline', () => this._respond(false));
         this._respondBar = new St.BoxLayout({style_class: 'island-toolbar'});
@@ -262,10 +275,15 @@ export class PlayPage extends Page {
         this._respondBar.add_child(this._declineBtn);
         this._guestLeaveBar = new St.BoxLayout({style_class: 'island-toolbar'});
         this._guestLeaveBar.add_child(this._leaveButton('Leave'));
-        view.add_child(this._guestEmpty.actor);
-        view.add_child(this._guestModeLabel);
-        view.add_child(this._respondBar);
-        view.add_child(this._guestLeaveBar);
+        panel.add_child(this._guestModeLabel);
+        panel.add_child(this._respondBar);
+        panel.add_child(this._guestLeaveBar);
+
+        row.add_child(left);
+        row.add_child(panel);
+        view.add_child(eyebrow);
+        view.add_child(this._guestSubtitle);
+        view.add_child(row);
         return view;
     }
 
@@ -285,7 +303,7 @@ export class PlayPage extends Page {
     _renderLobbyHost(state) {
         const players = state.players ?? [];
         this._invitedIds = new Set(players.map(p => p.peerId));
-        this._syncHostPlayerRows(players);
+        this._hostSig = this._syncPlayerRows(this._hostPlayerList, this._hostPlayerRefs, this._hostSig, players, state.selfId);
         const ready = players.filter(p => p.status === 'accepted').length;
         setText(this._readyRingLabel, `${ready}/${players.length}`);
         setText(this._readyLabel, `${ready} of ${players.length} ready to play`);
@@ -298,46 +316,40 @@ export class PlayPage extends Page {
             this._refreshInvitePicker();
     }
 
-    _syncHostPlayerRows(players) {
-        const sig = players.map(p => p.peerId).join('|');
-        if (sig !== this._hostSig) {
-            this._hostSig = sig;
-            this._hostPlayerList.destroy_all_children();
-            this._hostPlayerRefs.clear();
+    _syncPlayerRows(list, refs, prevSig, players, selfId) {
+        const sig = players.map(p => `${p.peerId}:${p.status}`).join('|');
+        if (sig !== prevSig) {
+            list.destroy_all_children();
+            refs.clear();
             for (const p of players) {
                 const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
                 const avatar = badge({glyph: (p.name[0] ?? '?').toUpperCase(), color: this._playerColor(p.peerId)});
                 avatar.add_style_class_name('island-race-row-avatar');
-                const name = label('island-irow-title', {text: p.name, x_expand: true});
+                const name = label('island-irow-title', {text: p.peerId === selfId ? `${p.name} (You)` : p.name, x_expand: true});
                 const chip = this._chip(p.status);
                 row.add_child(avatar);
                 row.add_child(name);
                 row.add_child(chip);
-                this._hostPlayerList.add_child(row);
-                this._hostPlayerRefs.set(p.peerId, {name, row, chip, status: p.status});
+                list.add_child(row);
+                refs.set(p.peerId, {name, chip});
             }
-            return;
-        }
-        for (const p of players) {
-            const refs = this._hostPlayerRefs.get(p.peerId);
-            if (!refs)
-                continue;
-            setText(refs.name, p.name);
-            if (refs.status !== p.status) {
-                refs.status = p.status;
-                refs.row.remove_child(refs.chip);
-                refs.chip = this._chip(p.status);
-                refs.row.add_child(refs.chip);
+        } else {
+            for (const p of players) {
+                const r = refs.get(p.peerId);
+                if (r)
+                    setText(r.name, p.peerId === selfId ? `${p.name} (You)` : p.name);
             }
         }
+        return sig;
     }
 
     _renderLobbyGuest(state) {
         const host = (state.players ?? [])[0];
-        this._guestEmpty.show({
-            icon: 'input-keyboard-symbolic', title: 'Waiting for the host to start',
-            hint: host ? `Invited by ${host.name}` : '',
-        });
+        setText(this._guestSubtitle, this._guestResponded
+            ? 'Waiting for the host to start'
+            : (host ? `Invited by ${host.name}` : ''));
+        const players = state.players ?? [];
+        this._guestSig = this._syncPlayerRows(this._guestPlayerList, this._guestPlayerRefs, this._guestSig, players, state.selfId);
         setText(this._guestModeLabel, state.mode ? `Playing ${state.mode === 'race' ? 'a typing race' : 'draw & guess'}` : 'Waiting for the host to pick a game');
         this._respondBar.visible = !this._guestResponded;
         this._guestLeaveBar.visible = !!this._guestResponded;
@@ -593,14 +605,22 @@ export class PlayPage extends Page {
         this._swatchRow = new St.BoxLayout({style_class: 'island-draw-tools'});
         this._swatchButtons = [];
         this._inkColor = SWATCH_COLORS[0];
+        this._inkWidth = INK_WIDTH;
         for (const color of SWATCH_COLORS) {
             const sw = new St.Button({style_class: 'island-draw-swatch', can_focus: true});
             sw.set_style(`background-color: ${color};`);
-            sw.connect('clicked', () => this._selectColor(color, sw));
+            sw.connect('clicked', () => this._selectColor(color, sw, INK_WIDTH));
             this._swatchRow.add_child(sw);
             this._swatchButtons.push({btn: sw, color});
         }
-        this._selectColor(this._inkColor, this._swatchButtons[0].btn);
+        const eraser = new St.Button({
+            style_class: 'island-draw-swatch island-draw-eraser', can_focus: true,
+            child: new St.Icon({icon_name: 'edit-clear-symbolic', style_class: 'island-draw-eraser-icon'}),
+        });
+        eraser.connect('clicked', () => this._selectColor(CANVAS_BG, eraser, ERASER_WIDTH));
+        this._swatchRow.add_child(eraser);
+        this._swatchButtons.push({btn: eraser, color: CANVAS_BG});
+        this._selectColor(this._inkColor, this._swatchButtons[0].btn, INK_WIDTH);
         const drawLeave = this._leaveButton('Leave', 'link');
         toolsRow.add_child(this._swatchRow);
         const spacer = new St.Widget({x_expand: true});
@@ -615,8 +635,9 @@ export class PlayPage extends Page {
         return view;
     }
 
-    _selectColor(color, btn) {
+    _selectColor(color, btn, width) {
         this._inkColor = color;
+        this._inkWidth = width;
         for (const s of this._swatchButtons)
             s.btn.checked = s.btn === btn;
     }
@@ -733,7 +754,7 @@ export class PlayPage extends Page {
         const p = this._localPoint(actor, event);
         if (!p)
             return Clutter.EVENT_PROPAGATE;
-        this._liveStroke = {points: [p], color: this._inkColor, width: INK_WIDTH};
+        this._liveStroke = {points: [p], color: this._inkColor, width: this._inkWidth};
         this._lastFlushAt = GLib.get_monotonic_time() / 1000;
         actor.queue_repaint();
         return Clutter.EVENT_STOP;
@@ -973,6 +994,7 @@ export class PlayPage extends Page {
             this._lastSubmittedLen = 0;
             this._typed = '';
             this._hostSig = null;
+            this._guestSig = null;
             this._racePresenceSig = null;
             this._resultSig = null;
             this._peerSig = null;
