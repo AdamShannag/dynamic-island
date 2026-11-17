@@ -3,6 +3,7 @@ import Clutter from 'gi://Clutter';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 
 import {BAR_MAX, DEFAULT_BAR} from './bar.js';
+import {DEFAULT_FAVORITES} from './home.js';
 
 export {BAR_MAX, DEFAULT_BAR};
 
@@ -87,6 +88,6 @@ export const SETTING_COLORS = {
     'applications-graphics-symbolic': '#bf5af2', 'weather-clear-night-symbolic': '#5e5ce6',
     'input-keyboard-symbolic': '#ff9f0a', 'video-display-symbolic': '#5e5ce6',
 };
-export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {play: false}, bar: [...DEFAULT_BAR]};
+export const DEFAULT_SETTINGS = {accent: 'blue', surface: 'black', tabs: {}, features: {play: false}, bar: [...DEFAULT_BAR], home: {favorites: [...DEFAULT_FAVORITES]}};
 export const featureOn = (st, key) => st?.features?.[key] !== false;
 export const tabOn = (st, id) => id === 'home' || st?.tabs?.[id] !== false;

@@ -79,7 +79,7 @@
 }
 
 .island-page { spacing: 10px; }
-.island-home { spacing: 10px; }
+.island-home { spacing: 0; }
 
 .island-card {
   background-color: #0d0d0f;
@@ -90,80 +90,78 @@
 .island-list-card { padding: 6px; }
 .island-sites-card { padding: 12px 14px; spacing: 8px; }
 
-.island-media-top { spacing: 14px; }
-.island-media-art {
-  width: 64px;
-  height: 64px;
-  border-radius: 14px;
-  background-color: rgba(255, 255, 255, 0.05);
-}
-.island-media-art-img { border-radius: 14px; background-size: cover; }
-.island-media-art-icon { icon-size: 26px; color: rgba(245, 245, 247, 0.35); }
-.island-media-title { font-size: 12.5pt; font-weight: 700; }
-.island-media-sub { font-size: 10pt; color: rgba(245, 245, 247, 0.55); padding-top: 2px; }
-
-.island-progress { spacing: 12px; padding-top: 16px; }
-.island-time {
-  min-width: 40px;
-  font-size: 8.5pt;
-  font-weight: 600;
-  font-feature-settings: "tnum";
-  color: rgba(245, 245, 247, 0.5);
-}
-.island-time-right { text-align: right; }
 .island-track { height: 4px; border-radius: 2px; background-color: rgba(255, 255, 255, 0.12); }
 .island-fill  { border-radius: 2px; background-color: #e5e5ea; }
 
-.island-controls { spacing: 34px; padding-top: 10px; }
-.island-btn {
-  padding: 6px;
+.island-hm-top { spacing: 10px; }
+.island-hm-card {
+  background-color: #1a1722;
+  border: 1px solid #25212e;
+  border-radius: 16px;
+  color: #f2eff8;
+}
+.island-hm-media { padding: 14px; }
+.island-hm-media-head { spacing: 12px; }
+.island-hm-art { width: 56px; height: 56px; border-radius: 11px; background-color: #25212e; }
+.island-hm-art-img { border-radius: 11px; background-size: cover; }
+.island-hm-art-icon { icon-size: 22px; color: #9d96ab; }
+.island-hm-title { font-size: 14px; font-weight: 700; color: #f2eff8; }
+.island-hm-muted { font-size: 12px; color: #9d96ab; padding-top: 2px; }
+.island-hm-media-live { spacing: 8px; padding-top: 12px; }
+.island-hm-progress { spacing: 10px; }
+.island-hm-time { min-width: 34px; font-size: 11px; font-weight: 600; font-feature-settings: "tnum"; color: #9d96ab; }
+.island-hm-time-right { text-align: right; }
+.island-hm-controls { spacing: 22px; }
+.island-hm-ctl { width: 32px; height: 32px; border-radius: 16px; color: #f2eff8; transition-duration: 120ms; }
+.island-hm-ctl StIcon { icon-size: 16px; }
+.island-hm-ctl:hover { background-color: rgba(255, 255, 255, 0.08); }
+.island-hm-ctl:focus { box-shadow: none; }
+.island-hm-play { width: 38px; height: 38px; border-radius: 19px; }
+.island-hm-play StIcon { icon-size: 18px; color: #ffffff; }
+.island-hm-resume {
+  margin-top: 12px;
+  padding: 7px 14px;
   border-radius: 999px;
-  color: #f5f5f7;
-  transition-duration: 120ms;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
 }
-.island-btn StIcon { icon-size: 22px; }
-.island-btn-big StIcon { icon-size: 28px; }
-.island-btn:hover  { background-color: rgba(255, 255, 255, 0.10); }
-.island-btn:active { background-color: rgba(255, 255, 255, 0.18); }
-.island-btn:focus  { box-shadow: none; }
-
-.island-today-card { width: 250px; spacing: 6px; }
-.island-today-date {
-  font-size: 8.5pt;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: #ff6961;
-}
-.island-today-title { font-size: 12.5pt; font-weight: 700; padding-bottom: 6px; }
-
-.island-action {
-  background-color: rgba(255, 255, 255, 0.035);
+.island-hm-favs { spacing: 8px; }
+.island-hm-favs-row { spacing: 8px; }
+.island-hm-tile {
+  background-color: #1a1722;
+  border: 1px solid #25212e;
   border-radius: 14px;
-  padding: 9px 10px;
-  spacing: 10px;
-}
-.island-action-bar { width: 4px; border-radius: 2px; }
-.island-action-bar.green { background-color: #30d158; }
-.island-action-bar.blue  { background-color: #0a84ff; }
-.island-action-title { font-size: 9.5pt; font-weight: 600; }
-.island-action-sub {
-  font-size: 8.5pt;
-  font-feature-settings: "tnum";
-  color: rgba(245, 245, 247, 0.5);
-}
-.island-action-btn {
-  border-radius: 999px;
-  padding: 5px 14px;
-  font-size: 9pt;
-  font-weight: 700;
-  color: #fff;
+  padding: 8px 4px;
+  color: #f2eff8;
   transition-duration: 120ms;
 }
-.island-action-btn.green { background-color: #30d158; color: #00230b; }
-.island-action-btn.green:hover { background-color: #4ade72; }
-.island-action-btn.blue  { background-color: rgba(10, 132, 255, 0.22); color: #6cb6ff; }
-.island-action-btn.blue:hover { background-color: rgba(10, 132, 255, 0.32); }
-.island-action-btn:focus { box-shadow: none; }
+.island-hm-tile:hover { background-color: #211d2b; border-color: #332e3e; }
+.island-hm-tile:active { background-color: #26222f; }
+.island-hm-tile:focus { border-color: #4a4458; }
+.island-hm-tile-body { spacing: 6px; }
+.island-hm-tile-icon { icon-size: 20px; color: #f2eff8; }
+.island-hm-tile-name { font-size: 12px; font-weight: 500; color: #f2eff8; }
+.island-hm-label { font-size: 12.5px; color: #9d96ab; margin-top: 14px; padding-bottom: 8px; }
+.island-hm-cont { spacing: 8px; }
+.island-hm-cc { padding: 10px 12px; spacing: 10px; }
+.island-hm-cc-icon { width: 32px; height: 32px; border-radius: 10px; background-color: #25212e; }
+.island-hm-cc-icon StIcon { icon-size: 16px; color: #f2eff8; }
+.island-hm-cc-title { font-size: 13px; font-weight: 600; color: #f2eff8; }
+.island-hm-cc-sub { font-size: 11.5px; }
+.island-hm-cc-bar { height: 3px; margin-top: 6px; }
+.island-hm-cc-btn { width: 30px; height: 30px; border-radius: 15px; background-color: #25212e; color: #f2eff8; }
+.island-hm-cc-btn StIcon { icon-size: 14px; }
+.island-hm-cc-btn:hover { background-color: #332e3e; }
+.island-hm-cc-btn:focus { box-shadow: none; }
+.island-hm-accent { background-color: #0a84ff; color: #ffffff; }
+.island.theme-blue .island-hm-accent { background-color: #0a84ff; }
+.island.theme-purple .island-hm-accent { background-color: #bf5af2; }
+.island.theme-pink .island-hm-accent { background-color: #ff375f; }
+.island.theme-orange .island-hm-accent { background-color: #ff9f0a; }
+.island.theme-green .island-hm-accent { background-color: #30d158; }
+.island.theme-teal .island-hm-accent { background-color: #40c8e0; }
+.island.theme-graphite .island-hm-accent { background-color: #8e8e93; }
 
 .island-entry {
   background-color: #0d0d0f;
@@ -731,7 +729,6 @@
 .island.surface-graphite .island-entry,
 .island.surface-graphite .island-pill-btn,
 .island.surface-graphite .island-chip { background-color: #2a2a2e; }
-.island.surface-graphite .island-action { background-color: rgba(255, 255, 255, 0.05); }
 
 .island-settings { spacing: 10px; padding-right: 4px; }
 .island-settings-card { padding: 12px 8px 8px; spacing: 2px; }

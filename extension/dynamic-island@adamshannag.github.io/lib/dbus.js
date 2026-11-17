@@ -34,6 +34,7 @@ export const INTERFACE_XML = `
     <method name="ClipboardClear"/>
     <method name="AgentsList"><arg name="sessions" type="s" direction="out"/></method>
     <method name="ActivityList"><arg name="items" type="s" direction="out"/></method>
+    <method name="MediaLastPlayer"><arg name="player" type="s" direction="out"/></method>
     <method name="SystemStats"><arg name="stats" type="s" direction="out"/></method>
     <method name="GetSettings"><arg name="settings" type="s" direction="out"/></method>
     <method name="SetSettings">

@@ -65,7 +65,8 @@ extension/
     extension.js        Extension entry: lifecycle, wiring, settings, clipboard, presenting
     island.js           Island actor: pill, dashboard shell, morph, state → widgets, input
     lib/                constants, dbus (interface XML + DaemonClient), widgets, motion,
-                        format (pure helpers), tools (pure Transform tools), bar (pinned tabs), shell (GNOME
+                        format (pure helpers), tools (pure Transform tools), bar (pinned tabs), home (Home favourites and
+                        Continue items), shell (GNOME
                         helpers), gnome (OSD/banner/panel patches), shoulders (notch fillets),
                         clipboard, personality, tabbar, face
     pages/              one Page subclass per dashboard tab (more.js: the tile grid behind More); index.js registers them
@@ -107,6 +108,8 @@ Helpers on `Page`: `this.ext` (the Extension), `this.island`, `this.active`, `th
 To add a tab: create the page, add it to `PAGES` in `pages/index.js`, add `[id, name, icon]` to `TABS` in `lib/constants.js` (and a badge colour in `SETTING_COLORS`), add styles to `stylesheet.css`. Sub-pages (Logs, QR) aren't in `TABS`. Open them with `island.page('logs').open(...)`.
 
 The header bar shows only the pinned tabs plus a **More** button. The pinned list is the daemon-owned `bar` setting (`internal/settings`: default `home, inbox, notes`, `home` always first, at most 4, unknown ids dropped). `lib/bar.js` holds the pure pin logic (`barTabs`, `togglePin`). `pages/more.js` shows every enabled tab except Home as a grid of tiles; its Edit mode wiggles the tiles and pins with ★, saving through `ext.updateSettings({bar})`. A tab that isn't pinned highlights More while it's open. A new tab shows up in More automatically; add its id to `settings.TabIDs` in Go so it can be pinned.
+
+**Home** (`pages/home.js`) is a media card and a 3×2 favourites grid side by side (the row's layout is homogeneous and both columns are `y_expand` + `FILL`, so they always share one height), then a Continue row of up to 3 cards. Favourites are the daemon-owned `home.favorites` setting (default `docker, ports, clipboard, notes, agents`, at most 5, `home` and unknown ids dropped); the 6th tile is always More. Continue shows, in order, a running build or dev server (`ActivityList`; `expectedMs` is how long the last run of the same command in the same project took, which gives the percentage and time left), the Docker count, and the Pomodoro timer; with none it shows a "Nothing running" card. The pure parts live in `lib/home.js`. Live values update in place every second; the Continue row is rebuilt only when its item ids change. When nothing is playing, `MediaLastPlayer` names the last MPRIS player and the Resume button sends `media.resume`.
 
 ### Reusable widgets (`lib/widgets.js`)
 
