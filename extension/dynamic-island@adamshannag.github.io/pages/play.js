@@ -293,6 +293,7 @@ export class PlayPage extends Page {
         this._modeDrawBtn.checked = state.mode === 'draw';
         setText(this._modeHint, state.mode ? `Playing ${state.mode === 'race' ? 'Race' : 'Draw'}` : 'Pick a game');
         this._startBtn.reactive = !!state.mode;
+        this._startBtn.opacity = state.mode ? 255 : 110;
         if (this._invitePickerOpen)
             this._refreshInvitePicker();
     }
