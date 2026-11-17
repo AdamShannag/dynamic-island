@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    DEFAULT_FAVORITES, FOCUS_IDLE, continueItems, focusSubtitle, homeFavorites, signature, taskProgress,
+    DEFAULT_FAVORITES, FAVORITES_MAX, FOCUS_IDLE, continueItems, focusSubtitle, homeFavorites, signature, taskProgress,
+    toggleFavorite,
 } from '../dynamic-island@adamshannag.github.io/lib/home.js';
 
 const VALID = ['home', 'inbox', 'docker', 'ports', 'clipboard', 'notes', 'agents', 'play'];
@@ -41,4 +42,15 @@ test('continueItems orders run, docker, focus and handles 0 to 3 items', () => {
     assert.equal(signature(continueItems({tasks: [server, build], docker: 4})), 'run:7|docker|focus');
     assert.equal(signature(continueItems({tasks: [server], docker: 0, focus: false})), 'run:8');
     assert.equal(continueItems({docker: 3})[0].count, 3);
+});
+
+test('toggleFavorite adds, removes and refuses a sixth favourite', () => {
+    assert.deepEqual(toggleFavorite(['docker'], 'notes'), {favorites: ['docker', 'notes'], refused: false});
+    assert.deepEqual(toggleFavorite(['docker', 'notes'], 'docker'), {favorites: ['notes'], refused: false});
+    const full = ['docker', 'ports', 'clipboard', 'notes', 'agents'];
+    assert.equal(full.length, FAVORITES_MAX);
+    assert.deepEqual(toggleFavorite(full, 'inbox'), {favorites: full, refused: true});
+    assert.deepEqual(toggleFavorite(full, 'ports'), {favorites: ['docker', 'clipboard', 'notes', 'agents'], refused: false});
+    assert.deepEqual(toggleFavorite([], 'settings'), {favorites: ['settings'], refused: false});
+    assert.deepEqual(toggleFavorite(null, 'home'), {favorites: [], refused: true});
 });

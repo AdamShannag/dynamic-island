@@ -4,6 +4,7 @@ export const FAVORITES_MAX = 5;
 export const DEFAULT_FAVORITES = ['docker', 'ports', 'clipboard', 'notes', 'agents'];
 export const CONTINUE_MAX = 3;
 export const FOCUS_IDLE = '25 min';
+export const FAVORITES_FULL = `Up to ${FAVORITES_MAX} favourites`;
 export const NOTHING_RUNNING = 'Builds, timers and servers show up here.';
 
 export function homeFavorites(settings, valid = null) {
@@ -16,6 +17,15 @@ export function homeFavorites(settings, valid = null) {
             out.push(id);
     }
     return out;
+}
+
+export function toggleFavorite(favorites, id) {
+    const current = homeFavorites({home: {favorites: Array.isArray(favorites) ? favorites : []}});
+    if (current.includes(id))
+        return {favorites: current.filter(f => f !== id), refused: false};
+    if (current.length >= FAVORITES_MAX || id === 'home')
+        return {favorites: current, refused: true};
+    return {favorites: [...current, id], refused: false};
 }
 
 export function taskProgress(task, now) {
