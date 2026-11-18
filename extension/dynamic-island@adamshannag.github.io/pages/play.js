@@ -211,6 +211,10 @@ export class PlayPage extends Page {
             if (!this._invitePickerOpen)
                 return;
             const list = err ? [] : (peers ?? []);
+            const sig = list.map(p => `${p.id}:${invited?.has(p.id) ?? false}`).join('|');
+            if (sig === this._invitePickerSig)
+                return;
+            this._invitePickerSig = sig;
             fillList(this._invitePickerList, list,
                 p => this._peerRow(p, (peer, btn) => this._inviteOnly(peer, btn), invited?.has(p.id)));
         });
@@ -1375,6 +1379,7 @@ export class PlayPage extends Page {
             this._typed = '';
             this._hostSig = null;
             this._guestSig = null;
+            this._invitePickerSig = null;
             this._racePresenceSig = null;
             this._resultSig = null;
             this._resultRosterSig = null;
