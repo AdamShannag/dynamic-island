@@ -46,6 +46,7 @@ const SNAKE_PHYS_TURN_RATE = 3.6 * Math.PI;
 // reported head before snapping back to it outright (growth, death, or a
 // dropped update can all desync prediction from truth).
 const SNAKE_RECONCILE_DIST = 40;
+const SNAKE_CORRECTION_TAU = 0.12;
 
 const STACK_AVATAR_SIZE = 40;
 const STACK_STEP = 28;
@@ -1396,24 +1397,38 @@ export class PlayPage extends Page {
         const lastAt = pred.at ?? nowMs;
         const dt = Math.max(0, Math.min((nowMs - lastAt) / 1000, 0.2));
         pred.at = nowMs;
-        if (dt === 0)
+        if (dt > 0) {
+            const maxTurn = SNAKE_PHYS_TURN_RATE * dt;
+            let diff = targetHeading - pred.heading;
+            while (diff > Math.PI) diff -= 2 * Math.PI;
+            while (diff < -Math.PI) diff += 2 * Math.PI;
+            diff = Math.max(-maxTurn, Math.min(maxTurn, diff));
+            pred.heading += diff;
+            while (pred.heading > Math.PI) pred.heading -= 2 * Math.PI;
+            while (pred.heading < -Math.PI) pred.heading += 2 * Math.PI;
+            const dist = SNAKE_PHYS_MOVE_SPEED * dt;
+            const head = pred.body[0];
+            const next = {
+                x: head.x + Math.cos(pred.heading) * dist,
+                y: head.y + Math.sin(pred.heading) * dist,
+            };
+            pred.body = [next, ...pred.body];
+            // Melt away any pending reconciliation correction (see
+            // _reconcilePlayerPrediction) rather than holding it at full
+            // strength until the next snapshot arrives.
+            if (pred.offsetX || pred.offsetY) {
+                const decay = Math.exp(-dt / SNAKE_CORRECTION_TAU);
+                pred.offsetX *= decay;
+                pred.offsetY *= decay;
+                if (Math.hypot(pred.offsetX, pred.offsetY) < 0.5) {
+                    pred.offsetX = 0;
+                    pred.offsetY = 0;
+                }
+            }
+        }
+        if (!pred.offsetX && !pred.offsetY)
             return pred.body;
-        const maxTurn = SNAKE_PHYS_TURN_RATE * dt;
-        let diff = targetHeading - pred.heading;
-        while (diff > Math.PI) diff -= 2 * Math.PI;
-        while (diff < -Math.PI) diff += 2 * Math.PI;
-        diff = Math.max(-maxTurn, Math.min(maxTurn, diff));
-        pred.heading += diff;
-        while (pred.heading > Math.PI) pred.heading -= 2 * Math.PI;
-        while (pred.heading < -Math.PI) pred.heading += 2 * Math.PI;
-        const dist = SNAKE_PHYS_MOVE_SPEED * dt;
-        const head = pred.body[0];
-        const next = {
-            x: head.x + Math.cos(pred.heading) * dist,
-            y: head.y + Math.sin(pred.heading) * dist,
-        };
-        pred.body = [next, ...pred.body];
-        return pred.body;
+        return pred.body.map(p => ({x: p.x + pred.offsetX, y: p.y + pred.offsetY}));
     }
 
     // Looks up (or lazily starts) peerId's prediction and advances it to
@@ -1442,8 +1457,16 @@ export class PlayPage extends Page {
     // server's reported one is expected (the snapshot is already slightly
     // old by the time it arrives) and is simply left alone, so the snake
     // keeps gliding smoothly instead of snapping back every poll. Only a
-    // large gap - death, food growth, a dropped update - resets prediction
-    // to the authoritative body outright.
+    // large gap - death, food growth, a dropped update, or (under real
+    // network jitter, never reproducible on one machine) just an
+    // ordinarily late poll - resets prediction to the authoritative body.
+    // That reset itself used to be instant, which was the "sometimes it
+    // teleports" bug: under real LAN latency a guest's predicted head
+    // drifts past this threshold often enough for the snap-back to be the
+    // visible bug, not a rare recovery from something broken. Folding the
+    // jump into offsetX/offsetY - a render-only correction that
+    // _advancePrediction decays to zero over a fraction of a second -
+    // turns the same correction into a brief glide instead of a pop.
     _reconcilePlayerPrediction(peerId, player, nowMs) {
         if (!player?.alive || !player.body?.length) {
             this._snakePred.delete(peerId);
@@ -1454,7 +1477,7 @@ export class PlayPage extends Page {
             this._snakePred.set(peerId, {
                 body: this._cloneSnakePoints(player.body),
                 heading: this._headingFromSnakeBody(player.body),
-                at: nowMs,
+                at: nowMs, offsetX: 0, offsetY: 0,
             });
             return;
         }
@@ -1462,6 +1485,8 @@ export class PlayPage extends Page {
         const serverHead = player.body[0];
         const desync = Math.hypot(predictedHead.x - serverHead.x, predictedHead.y - serverHead.y);
         if (desync > SNAKE_RECONCILE_DIST) {
+            pred.offsetX = (pred.offsetX ?? 0) + (predictedHead.x - serverHead.x);
+            pred.offsetY = (pred.offsetY ?? 0) + (predictedHead.y - serverHead.y);
             pred.body = this._cloneSnakePoints(player.body);
             pred.heading = this._headingFromSnakeBody(player.body);
             pred.at = nowMs;
