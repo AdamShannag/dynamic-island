@@ -4,10 +4,23 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AdamShannag/dynamic-island/internal/draw"
 	"github.com/AdamShannag/dynamic-island/internal/lobby"
 )
+
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("condition not met within deadline")
+}
 
 type fakeTransport struct {
 	mu        sync.Mutex
@@ -273,6 +286,109 @@ func TestAPlayerWhoNeverSubmitsIsAutoFilledOnceEveryoneElseIsDone(t *testing.T) 
 	}
 	if host.State().Phase != draw.PhaseDrawing {
 		t.Fatal("must not advance until every current worker has submitted or timed out")
+	}
+}
+
+// TestATimedOutStepFillsOnlyTheSlowPlayerAndNeverOverwritesRealSubmissions
+// is a regression test for a real bug: fillMissingLocked ranged over
+// turnOf (ownerID -> workerID) with the loop variables named backwards,
+// so it checked and set e.done for the wrong player. With 3+ players that
+// could mark a chain's owner "done" because of some unrelated submission
+// they made as someone else's worker, overwrite a different chain's real,
+// already-submitted entry with a blank placeholder, and leave the chain
+// the slow player actually owed an entry to completely untouched - one
+// chain silently a step short. That showed up as "the other guy takes
+// too long and it tells me I already guessed" even though the local
+// player never submitted anything that step.
+func TestATimedOutStepFillsOnlyTheSlowPlayerAndNeverOverwritesRealSubmissions(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	host.SetStepDurations(50*time.Millisecond, 120*time.Millisecond)
+	tr := newFakeTransport()
+	players := []draw.Player{
+		{PeerID: "h1", Name: "Host", Status: "accepted"},
+		{PeerID: "g1", Name: "Guest1", Status: "accepted"},
+		{PeerID: "g2", Name: "Guest2", Status: "accepted"},
+	}
+	peerAddrs := map[string]string{"g1": "127.0.0.1:2", "g2": "127.0.0.1:3"}
+	if err := host.BeginHost("lobby1", players, peerAddrs, 1, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+
+	// Round 1's draw is always self, so everyone submits their own word's
+	// drawing and the step advances into guessing (reassigned).
+	if err := host.SubmitDrawing(nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"g1", "g2"} {
+		if err := host.HandleProgress(lobby.Progress{LobbyID: "lobby1", PeerID: p, Payload: mustJSON(t, map[string]any{"kind": "drawing"})}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, 2*time.Second, func() bool { return host.State().Phase == draw.PhaseGuessing })
+
+	// Figure out who is assigned to guess whom: each guessing prompt's
+	// FromPeerID names the chain owner (round 1's drawer is always that
+	// chain's owner), which reveals the real worker/chain pairing.
+	fromPeerOf := func(peerID string) string {
+		if peerID == "h1" {
+			return host.State().Prompt.FromPeerID
+		}
+		var p struct {
+			Prompt *draw.Prompt `json:"prompt"`
+		}
+		if err := json.Unmarshal(tr.lastStart("127.0.0.1:"+map[string]string{"g1": "2", "g2": "3"}[peerID]), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p.Prompt.FromPeerID
+	}
+	// ownerToWorker[ownerID] = the peer assigned to guess that owner's
+	// drawing this step (the inverse of fromPeerOf, which maps worker ->
+	// chain owner).
+	ownerToWorker := map[string]string{}
+	for _, worker := range []string{"h1", "g1", "g2"} {
+		ownerToWorker[fromPeerOf(worker)] = worker
+	}
+
+	// h1 and g1 submit distinguishable guesses; g2 is the slow one and
+	// never submits, so it must time out on its own.
+	if err := host.SubmitGuess("host-guess"); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.HandleProgress(lobby.Progress{LobbyID: "lobby1", PeerID: "g1", Payload: mustJSON(t, map[string]any{"kind": "word", "word": "g1-guess"})}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 2*time.Second, func() bool { return host.State().Phase == draw.PhaseFinished })
+
+	chains := host.State().Chains
+	if len(chains) != 3 {
+		t.Fatalf("got %d chains, want 3", len(chains))
+	}
+	placeholders := 0
+	for _, c := range chains {
+		if len(c.Entries) != 3 {
+			t.Fatalf("chain %q has %d entries, want exactly 3 (word, drawing, guess) - a chain must never be left short", c.OwnerID, len(c.Entries))
+		}
+		last := c.Entries[2]
+		wantWorker := ownerToWorker[c.OwnerID]
+		switch wantWorker {
+		case "h1":
+			if last.PeerID != "h1" || last.Word != "host-guess" {
+				t.Fatalf("chain %q (worked by h1) final entry = %+v, want h1's real guess intact", c.OwnerID, last)
+			}
+		case "g1":
+			if last.PeerID != "g1" || last.Word != "g1-guess" {
+				t.Fatalf("chain %q (worked by g1) final entry = %+v, want g1's real guess intact", c.OwnerID, last)
+			}
+		case "g2":
+			if last.PeerID != "g2" || last.Word != "…" {
+				t.Fatalf("chain %q (worked by g2, who timed out) final entry = %+v, want a g2-attributed placeholder", c.OwnerID, last)
+			}
+			placeholders++
+		}
+	}
+	if placeholders != 1 {
+		t.Fatalf("got %d placeholder entries, want exactly 1 (only the slow player's)", placeholders)
 	}
 }
 

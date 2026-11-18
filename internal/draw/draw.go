@@ -462,7 +462,15 @@ func (e *Engine) fillOneLocked(workerID, ownerID string) {
 }
 
 func (e *Engine) fillMissingLocked() {
-	for workerID, ownerID := range e.turnOf {
+	// turnOf is ownerID -> workerID; range gives (key, value) in that same
+	// order, so the loop variables must be named to match or this ends up
+	// checking/marking e.done for the wrong player entirely - e.g. marking
+	// a chain's owner "done" because of some unrelated submission they
+	// made as someone else's worker, while the player who actually timed
+	// out is never filled in. That showed up as "the other guy takes too
+	// long and it tells me I already guessed" - the self player's done
+	// flag could get set by this miswiring despite never submitting.
+	for ownerID, workerID := range e.turnOf {
 		if !e.done[workerID] {
 			e.fillOneLocked(workerID, ownerID)
 		}
