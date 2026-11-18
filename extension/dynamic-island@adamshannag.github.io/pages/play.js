@@ -1730,10 +1730,22 @@ export class PlayPage extends Page {
         }
     }
 
-    _renderSnake(snake) {
+    _renderSnake(snake, isNewMatch) {
         const now = GLib.get_monotonic_time() / 1000;
         this._snakeState = snake;
         this._snakeStateAt = now;
+        // A rematch keeps the same lobbyId, so the lobbyId-change reset
+        // above never runs between rounds. Without this, the previous
+        // round's predicted body - wherever it died, often far from the new
+        // spawn point - was still sitting in _selfPred, and the next
+        // reconcile read that as a single huge desync, glossing it into one
+        // giant decaying offset that then glided clear across the map in
+        // under half a second. Fast, but still very much a visible glitch.
+        if (isNewMatch) {
+            this._selfPred = null;
+            this._snakeRemoteBuf = new Map();
+            this._snakeCamReady = false;
+        }
         const players = snake.players ?? [];
         const self = players.find(p => p.peerId === this._selfId);
         this._reconcileSelfPrediction(self, now);
@@ -2067,7 +2079,8 @@ export class PlayPage extends Page {
             }
         } else if (state.phase === 'playing' && state.mode === 'snake') {
             this._showView('snake');
-            this._renderSnake(state.snake ?? {});
+            const isNewMatch = !(prevPhase === 'playing' && prevMode === 'snake');
+            this._renderSnake(state.snake ?? {}, isNewMatch);
         } else if (state.phase === 'finished' && state.mode === 'draw') {
             this._showView('reveal');
             this._renderDrawReveal(state);
