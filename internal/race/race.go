@@ -126,7 +126,7 @@ func (e *Engine) BeginHost(lobbyID string, racers []Racer, peerAddrs map[string]
 		wg.Add(1)
 		go func(addr string) {
 			defer wg.Done()
-			_ = sendStart(addr, lobbyID, mustMarshal(passage))
+			sendWithRetry(sendStart, addr, lobbyID, mustMarshal(passage))
 		}(addr)
 	}
 	wg.Wait()
@@ -364,6 +364,26 @@ func mustMarshal(v any) json.RawMessage {
 		panic(err)
 	}
 	return b
+}
+
+var sendStartRetryDelays = []time.Duration{150 * time.Millisecond, 400 * time.Millisecond}
+
+// sendWithRetry tries sendStart up to len(sendStartRetryDelays)+1 times,
+// pausing briefly between attempts, before giving up silently (the same
+// best-effort contract the caller already had). The initial /start carrying
+// the passage is the only way a guest ever learns it - ApplyEvent
+// deliberately never restores Passage from the broadcast - so a single
+// dropped call left a guest racing nothing forever.
+func sendWithRetry(sendStart func(addr, lobbyID string, payload json.RawMessage) error, addr, lobbyID string, payload json.RawMessage) {
+	if sendStart(addr, lobbyID, payload) == nil {
+		return
+	}
+	for _, delay := range sendStartRetryDelays {
+		time.Sleep(delay)
+		if sendStart(addr, lobbyID, payload) == nil {
+			return
+		}
+	}
 }
 
 func allRacersFinished(racers []Racer) bool {

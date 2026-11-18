@@ -2,6 +2,7 @@ package draw_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -182,6 +183,67 @@ func TestGuestDrawingThenGuessAdvancesToTheNextPass(t *testing.T) {
 	}
 	if st.Prompt == nil || st.Prompt.Kind != "word" {
 		t.Fatalf("pass 2's prompt = %+v, want a word (someone's guess) to draw", st.Prompt)
+	}
+}
+
+// flakyTransport fails a sendStart call to a given addr exactly failN times
+// (simulating a transient LAN hiccup - a dropped packet, a brief Wi-Fi
+// retry) before letting it through, so a test can assert the guest still
+// receives their turn instead of being stranded by a single bad call.
+type flakyTransport struct {
+	*fakeTransport
+	mu    sync.Mutex
+	failN map[string]int
+}
+
+func newFlakyTransport() *flakyTransport {
+	return &flakyTransport{fakeTransport: newFakeTransport(), failN: map[string]int{}}
+}
+
+func (f *flakyTransport) failNextStart(addr string, n int) {
+	f.mu.Lock()
+	f.failN[addr] = n
+	f.mu.Unlock()
+}
+
+func (f *flakyTransport) sendStart(addr, lobbyID string, payload json.RawMessage) error {
+	f.mu.Lock()
+	if f.failN[addr] > 0 {
+		f.failN[addr]--
+		f.mu.Unlock()
+		return fmt.Errorf("simulated transient failure")
+	}
+	f.mu.Unlock()
+	return f.fakeTransport.sendStart(addr, lobbyID, payload)
+}
+
+// TestAGuestStillReceivesItsTurnAfterOneDroppedStartCall guards against the
+// "no step to start guessing" bug: sendTurnMessages personalizes and
+// delivers each peer's turn over a single HTTP POST (lobby.SendStart) and,
+// before this test's fix, never retried a failed one - ApplyEvent
+// deliberately never updates Phase/Prompt from the broadcast (see its
+// comment), so a guest whose one and only turn message for a step was lost
+// to a transient network error had no way to ever learn the game had moved
+// on, and stayed on the previous phase forever.
+func TestAGuestStillReceivesItsTurnAfterOneDroppedStartCall(t *testing.T) {
+	host := draw.NewEngine("h1", "Host")
+	tr := newFlakyTransport()
+	players := []draw.Player{{PeerID: "h1", Name: "Host", Status: "accepted"}, {PeerID: "g1", Name: "Guest", Status: "accepted"}}
+	tr.failNextStart("127.0.0.1:2", 1)
+	if err := host.BeginHost("lobby1", players, map[string]string{"g1": "127.0.0.1:2"}, 2, tr.publish, tr.sendStart); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, time.Second, func() bool { return tr.lastStart("127.0.0.1:2") != nil })
+	var p struct {
+		Phase  draw.Phase   `json:"phase"`
+		Prompt *draw.Prompt `json:"prompt"`
+	}
+	if err := json.Unmarshal(tr.lastStart("127.0.0.1:2"), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Phase != draw.PhaseDrawing || p.Prompt == nil || p.Prompt.Kind != "word" {
+		t.Fatalf("guest's turn after a dropped first attempt = %+v, want to still receive phase drawing with their word", p)
 	}
 }
 

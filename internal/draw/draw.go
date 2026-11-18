@@ -594,6 +594,13 @@ func (e *Engine) buildPromptsLocked() map[string]*Prompt {
 // committed to e.state, applies the host's own Prompt directly, and
 // publishes the shared (prompt-redacted) snapshot. Must be called without
 // the lock held.
+//
+// Each peer's turn is the only message that ever carries their Prompt and
+// Phase for this step - ApplyEvent deliberately never applies either from
+// the broadcast (see its comment), so there is no fallback if this one
+// HTTP POST is lost. A guest that never got it just sits on the previous
+// phase indefinitely ("no step to start guessing"). sendWithRetry gives a
+// transient LAN drop a couple of quick extra chances before giving up.
 func (e *Engine) sendTurnMessages(lobbyID string) {
 	e.mu.Lock()
 	if !e.host || e.lobbyID != lobbyID {
@@ -623,7 +630,7 @@ func (e *Engine) sendTurnMessages(lobbyID string) {
 				Phase: phase, Pass: pass, TotalPasses: total, PassEndsAtMs: endsAt,
 				Prompt: prompts[peerID], Players: players,
 			}
-			_ = sendStart(addr, lobbyID, mustMarshal(payload))
+			sendWithRetry(sendStart, addr, lobbyID, mustMarshal(payload))
 		}(peerID, addr)
 	}
 	wg.Wait()
@@ -810,6 +817,24 @@ func removeStr(list []string, v string) []string {
 		}
 	}
 	return out
+}
+
+var sendStartRetryDelays = []time.Duration{150 * time.Millisecond, 400 * time.Millisecond}
+
+// sendWithRetry tries sendStart up to len(sendStartRetryDelays)+1 times,
+// pausing briefly between attempts, and gives up silently after the last
+// one - the same best-effort contract the caller already had, just with a
+// couple of extra chances for a transient failure to clear on its own.
+func sendWithRetry(sendStart func(addr, lobbyID string, payload json.RawMessage) error, addr, lobbyID string, payload json.RawMessage) {
+	if sendStart(addr, lobbyID, payload) == nil {
+		return
+	}
+	for _, delay := range sendStartRetryDelays {
+		time.Sleep(delay)
+		if sendStart(addr, lobbyID, payload) == nil {
+			return
+		}
+	}
 }
 
 func mustMarshal(v any) json.RawMessage {
