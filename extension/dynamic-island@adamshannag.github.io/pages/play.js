@@ -344,16 +344,28 @@ export class PlayPage extends Page {
         this._lobbyPasses = new St.BoxLayout({style_class: 'island-lobby-passes-pill', x_align: Clutter.ActorAlign.CENTER});
         this._lobbyPasses.add_child(label('island-lobby-passes-label', {text: 'Passes'}));
         const stepper = new St.BoxLayout({style_class: 'island-rounds-stepper'});
-        stepper.add_child(iconButton('list-remove-symbolic', 'island-rounds-stepper-btn',
-            () => this._changeRounds(-1), 'Fewer rounds'));
+        this._roundsDownBtn = iconButton('list-remove-symbolic', 'island-rounds-stepper-btn',
+            () => this._changeRounds(-1), 'Fewer rounds');
+        stepper.add_child(this._roundsDownBtn);
         stepper.add_child(new St.Widget({style_class: 'island-rounds-stepper-div'}));
         this._roundsVal = label('island-rounds-stepper-val', {text: '3', x_align: Clutter.ActorAlign.CENTER});
         stepper.add_child(this._roundsVal);
         stepper.add_child(new St.Widget({style_class: 'island-rounds-stepper-div'}));
-        stepper.add_child(iconButton('list-add-symbolic', 'island-rounds-stepper-btn',
-            () => this._changeRounds(1), 'More rounds'));
+        this._roundsUpBtn = iconButton('list-add-symbolic', 'island-rounds-stepper-btn',
+            () => this._changeRounds(1), 'More rounds');
+        stepper.add_child(this._roundsUpBtn);
         this._lobbyPasses.add_child(stepper);
-        this._lobbyPasses.hide();
+        this._lobbyPasses.opacity = 0;
+        this._lobbyPasses.reactive = false;
+        this._roundsDownBtn.reactive = false;
+        this._roundsUpBtn.reactive = false;
+        // Kept in the layout at all times - a Bin sizes to its child's
+        // natural size regardless of opacity, unlike hide()/visible, which
+        // drops the child from the column's flow entirely. Only this mode's
+        // stepper used to come and go, so switching to or from Draw changed
+        // the lobby's total height and, since the whole column is
+        // vertically centered, visibly shifted the mode arrows above it.
+        const passesSlot = new St.Bin({x_align: Clutter.ActorAlign.CENTER, child: this._lobbyPasses});
 
         // -- avatar stack --
         const stackWrap = column({style_class: 'island-lobby-stack-wrap', x_align: Clutter.ActorAlign.CENTER});
@@ -370,7 +382,7 @@ export class PlayPage extends Page {
         this._heroView.add_child(this._heroName);
         this._heroView.add_child(this._heroTag);
         this._heroView.add_child(dots);
-        this._heroView.add_child(this._lobbyPasses);
+        this._heroView.add_child(passesSlot);
         this._heroView.add_child(stackWrap);
         this._heroView.add_child(this._startBtn);
 
@@ -535,7 +547,11 @@ export class PlayPage extends Page {
                     d.add_style_class_name('on');
             });
         }
-        this._lobbyPasses.visible = mode === 'draw';
+        const showPasses = mode === 'draw';
+        this._lobbyPasses.opacity = showPasses ? 255 : 0;
+        this._lobbyPasses.reactive = showPasses;
+        this._roundsDownBtn.reactive = showPasses;
+        this._roundsUpBtn.reactive = showPasses;
         this._rounds = state.rounds ?? this._rounds ?? 3;
         setText(this._roundsVal, `${this._rounds}`);
 
@@ -2000,7 +2016,7 @@ export class PlayPage extends Page {
             this._snakeCamReady = false;
             this._selfPred = null;
             this._snakeRemoteBuf = new Map();
-            this._snakeTargetHeading = 0;
+            this._snakeTargetHeading = null;
             this._peerSig = null;
             this._passage = null;
             this._strokes = [];
