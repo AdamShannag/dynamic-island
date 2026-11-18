@@ -48,6 +48,54 @@ const SNAKE_PHYS_TURN_RATE = 3.6 * Math.PI;
 // dropped update can all desync prediction from truth).
 const SNAKE_RECONCILE_DIST = 40;
 
+const STACK_AVATAR_SIZE = 40;
+const STACK_STEP = 28;
+
+const MODE_ORDER = ['race', 'draw', 'snake'];
+const MODE_INFO = {
+    race: {
+        name: 'Race', color: '#0a84ff',
+        tag: 'First to finish typing the passage wins.',
+        paint(cr, cx, cy, w, h) {
+            const kw = w * 0.56, kh = h * 0.34;
+            cr.rectangle(cx - kw / 2, cy - kh / 2, kw, kh);
+            cr.stroke();
+            const dotR = w * 0.022;
+            for (const fx of [-0.3, -0.1, 0.1, 0.3]) {
+                cr.arc(cx + fx * kw, cy - kh * 0.16, dotR, 0, 2 * Math.PI);
+                cr.fill();
+            }
+            cr.moveTo(cx - kw * 0.28, cy + kh * 0.22);
+            cr.lineTo(cx + kw * 0.28, cy + kh * 0.22);
+            cr.stroke();
+        },
+    },
+    draw: {
+        name: 'Draw', color: '#ff9f0a',
+        tag: 'Everyone draws, then guesses — the word drifts with every pass.',
+        paint(cr, cx, cy, w, h) {
+            cr.moveTo(cx - w * 0.16, cy + h * 0.2);
+            cr.lineTo(cx + w * 0.16, cy - h * 0.2);
+            cr.stroke();
+            cr.moveTo(cx - w * 0.2, cy + h * 0.24);
+            cr.lineTo(cx - w * 0.1, cy + h * 0.24);
+            cr.lineTo(cx - w * 0.16, cy + h * 0.14);
+            cr.closePath();
+            cr.fill();
+        },
+    },
+    snake: {
+        name: 'Snake', color: '#30d158',
+        tag: 'Grow the longest, survive the others.',
+        paint(cr, cx, cy, w, h) {
+            cr.moveTo(cx - w * 0.22, cy - h * 0.18);
+            cr.curveTo(cx - w * 0.05, cy - h * 0.3, cx - w * 0.05, cy - h * 0.06, cx + w * 0.12, cy - h * 0.06);
+            cr.curveTo(cx + w * 0.28, cy - h * 0.06, cx + w * 0.28, cy + h * 0.18, cx + w * 0.1, cy + h * 0.18);
+            cr.stroke();
+        },
+    },
+};
+
 function statusSpec(status) {
     if (status === 'accepted')
         return {text: 'Ready', kind: 'ready'};
@@ -209,8 +257,9 @@ export class PlayPage extends Page {
 
     _toggleInvitePicker() {
         this._invitePickerOpen = !this._invitePickerOpen;
-        this._inviteToggleBtn.label = this._invitePickerOpen ? 'Back' : '+ Invite';
-        this._invitePickerActor.visible = this._invitePickerOpen;
+        this._heroView.visible = !this._invitePickerOpen;
+        this._inviteView.visible = this._invitePickerOpen;
+        setText(this._lobbyTitle, this._invitePickerOpen ? 'Invite' : 'Lobby');
         if (this._invitePickerOpen)
             this._refreshInvitePicker();
     }
@@ -232,43 +281,60 @@ export class PlayPage extends Page {
 
     // ---- Lobby (host picks a mode; guest watches) --------------------
 
+    _lobbyHeader(closeAccessibleName) {
+        const head = new St.BoxLayout({style_class: 'island-lobby-head', x_expand: true});
+        const title = label('island-lobby-head-title', {text: 'Lobby', x_expand: true});
+        const close = iconButton('window-close-symbolic', 'island-lobby-close',
+            () => this._onLobbyClose(), closeAccessibleName);
+        head.add_child(title);
+        head.add_child(close);
+        return {head, title};
+    }
+
+    _onLobbyClose() {
+        if (this._invitePickerOpen) {
+            this._toggleInvitePicker();
+            return;
+        }
+        this.call('PartyLeave', [], () => this.refresh());
+    }
+
     _buildLobbyHost() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
-        const eyebrow = label('island-igroup-title', {text: 'LOBBY'});
-        const subtitle = label('island-race-subtitle', {text: 'Waiting for players to accept'});
+        const {head, title} = this._lobbyHeader('Leave lobby');
+        this._lobbyTitle = title;
 
-        const row = new St.BoxLayout({style_class: 'island-race-host-row', x_expand: true, y_expand: true});
-        this._inviteToggleBtn = pillButton('+ Invite', () => this._toggleInvitePicker());
-        const playersGroup = group('PLAYERS', this._inviteToggleBtn);
-        this._hostPlayerList = playersGroup.list;
-        this._hostPlayerRefs = new Map();
-        const pickerGroup = group('INVITE');
-        this._invitePickerActor = pickerGroup.actor;
-        this._invitePickerList = pickerGroup.list;
-        this._invitePickerActor.hide();
-        const groups = column({style_class: 'island-groups'});
-        groups.add_child(playersGroup.actor);
-        groups.add_child(pickerGroup.actor);
-        const left = scrollView(groups);
-        left.x_expand = true;
+        const center = column({
+            style_class: 'island-lobby-center', x_expand: true, y_expand: true,
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+        });
 
-        const panel = column({style_class: 'island-race-host-panel', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+        // -- mode carousel --
+        this._heroView = column({x_align: Clutter.ActorAlign.CENTER});
+        const heroRow = new St.BoxLayout({style_class: 'island-lobby-hero-row', x_align: Clutter.ActorAlign.CENTER});
+        heroRow.add_child(iconButton('go-previous-symbolic', 'island-lobby-hero-arrow',
+            () => this._cycleMode(-1), 'Previous game'));
+        const badgeWrap = new St.Widget({style_class: 'island-lobby-hero-badge', layout_manager: new Clutter.BinLayout()});
+        this._heroBadge = new St.DrawingArea({x_expand: true, y_expand: true});
+        this._heroBadge.connect('repaint', area => this._paintModeBadge(area));
+        badgeWrap.add_child(this._heroBadge);
+        heroRow.add_child(badgeWrap);
+        heroRow.add_child(iconButton('go-next-symbolic', 'island-lobby-hero-arrow',
+            () => this._cycleMode(1), 'Next game'));
 
-        const gameLabel = label('island-igroup-title', {text: 'GAME'});
-        const gameBlock = column({style_class: 'island-game-block'});
-        const segmented = new St.BoxLayout({style_class: 'island-segmented'});
-        this._modeRaceBtn = pillButton('Race', () => this._pickMode('race'));
-        this._modeDrawBtn = pillButton('Draw', () => this._pickMode('draw'));
-        this._modeSnakeBtn = pillButton('Snake', () => this._pickMode('snake'));
-        this._modeRaceBtn.x_expand = true;
-        this._modeDrawBtn.x_expand = true;
-        this._modeSnakeBtn.x_expand = true;
-        segmented.add_child(this._modeRaceBtn);
-        segmented.add_child(this._modeDrawBtn);
-        segmented.add_child(this._modeSnakeBtn);
+        this._heroName = label('island-lobby-hero-name', {text: 'Race', x_align: Clutter.ActorAlign.CENTER});
+        this._heroTag = label('island-lobby-hero-tag', {text: '', x_align: Clutter.ActorAlign.CENTER});
+        this._heroTag.clutter_text.line_wrap = true;
+        this._heroTag.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        const dots = new St.BoxLayout({style_class: 'island-lobby-dots', x_align: Clutter.ActorAlign.CENTER});
+        this._heroDotWidgets = MODE_ORDER.map(() => {
+            const d = new St.Widget({style_class: 'island-lobby-dot'});
+            dots.add_child(d);
+            return d;
+        });
 
-        this._roundsRow = new St.BoxLayout({style_class: 'island-rounds-row'});
-        this._roundsRow.add_child(label('island-rounds-label', {text: 'Passes', x_expand: true}));
+        this._lobbyPasses = new St.BoxLayout({style_class: 'island-lobby-passes-pill', x_align: Clutter.ActorAlign.CENTER});
+        this._lobbyPasses.add_child(label('island-lobby-passes-label', {text: 'Passes'}));
         const stepper = new St.BoxLayout({style_class: 'island-rounds-stepper'});
         stepper.add_child(iconButton('list-remove-symbolic', 'island-rounds-stepper-btn',
             () => this._changeRounds(-1), 'Fewer rounds'));
@@ -278,29 +344,69 @@ export class PlayPage extends Page {
         stepper.add_child(new St.Widget({style_class: 'island-rounds-stepper-div'}));
         stepper.add_child(iconButton('list-add-symbolic', 'island-rounds-stepper-btn',
             () => this._changeRounds(1), 'More rounds'));
-        this._roundsRow.add_child(stepper);
-        this._roundsRow.hide();
+        this._lobbyPasses.add_child(stepper);
+        this._lobbyPasses.hide();
 
-        gameBlock.add_child(segmented);
-        gameBlock.add_child(this._roundsRow);
+        // -- avatar stack --
+        const stackWrap = column({style_class: 'island-lobby-stack-wrap', x_align: Clutter.ActorAlign.CENTER});
+        this._hostStack = new St.Widget({layout_manager: new Clutter.FixedLayout(), height: STACK_AVATAR_SIZE});
+        this._hostReadyLine = label('island-lobby-ready-line', {text: '', x_align: Clutter.ActorAlign.CENTER});
+        stackWrap.add_child(this._hostStack);
+        stackWrap.add_child(this._hostReadyLine);
 
-        this._readyLabel = label('island-ready-note', {text: 'Pick a game', x_align: Clutter.ActorAlign.CENTER});
         this._startBtn = pillButton('Start', () => this.call('PartyStart', [], () => this.refresh()), 'primary');
-        this._startBtn.add_style_class_name('island-race-start-btn');
+        this._startBtn.add_style_class_name('island-lobby-start-btn');
         this._startBtn.reactive = false;
-        panel.add_child(gameLabel);
-        panel.add_child(gameBlock);
-        panel.add_child(new St.Widget({y_expand: true}));
-        panel.add_child(this._readyLabel);
-        panel.add_child(this._startBtn);
-        panel.add_child(this._leaveButton('Cancel', 'link'));
 
-        row.add_child(left);
-        row.add_child(panel);
-        view.add_child(eyebrow);
-        view.add_child(subtitle);
-        view.add_child(row);
+        this._heroView.add_child(heroRow);
+        this._heroView.add_child(this._heroName);
+        this._heroView.add_child(this._heroTag);
+        this._heroView.add_child(dots);
+        this._heroView.add_child(this._lobbyPasses);
+        this._heroView.add_child(stackWrap);
+        this._heroView.add_child(this._startBtn);
+
+        // -- invite overlay (takes over the same column) --
+        this._inviteView = column({style_class: 'island-lobby-invite', x_expand: true, y_expand: true});
+        const inviteHead = label('island-lobby-invite-head', {text: 'ON YOUR NETWORK'});
+        inviteHead.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this._invitePickerList = column({style_class: 'island-lobby-invite-list'});
+        this._inviteView.add_child(inviteHead);
+        this._inviteView.add_child(scrollView(this._invitePickerList));
+        this._inviteView.hide();
+
+        center.add_child(this._heroView);
+        center.add_child(this._inviteView);
+
+        view.add_child(head);
+        view.add_child(center);
         return view;
+    }
+
+    _cycleMode(delta) {
+        const cur = Math.max(0, MODE_ORDER.indexOf(this._mode));
+        const next = (cur + delta + MODE_ORDER.length) % MODE_ORDER.length;
+        this._pickMode(MODE_ORDER[next]);
+    }
+
+    _paintModeBadge(area) {
+        const cr = area.get_context();
+        try {
+            const [w, h] = area.get_surface_size();
+            const info = MODE_INFO[this._lobbyHeroMode ?? 'race'];
+            const cx = w / 2, cy = h / 2;
+            const [r, g, b] = hexToRgb(info.color);
+            cr.setSourceRGB(r, g, b);
+            cr.arc(cx, cy, Math.min(w, h) / 2, 0, 2 * Math.PI);
+            cr.fill();
+            cr.setSourceRGB(1, 1, 1);
+            cr.setLineWidth(2.6);
+            cr.setLineCap(Cairo.LineCap.ROUND);
+            cr.setLineJoin(Cairo.LineJoin.ROUND);
+            info.paint(cr, cx, cy, w, h);
+        } finally {
+            cr.$dispose();
+        }
     }
 
     _pickMode(mode) {
@@ -316,40 +422,72 @@ export class PlayPage extends Page {
         this.call('PartySetRounds', [next]);
     }
 
+    // Shared by the host's (editable) and the guest's (read-only) lobby
+    // screens: an overlapping row of avatars with a ring colour per status,
+    // positioned explicitly (FixedLayout, not negative margins - St
+    // miscomputes width with those) rather than drawn as a list.
+    _syncAvatarStack(row, players, hostId, prevSig, onAdd) {
+        const sig = `${players.map(p => `${p.peerId}:${p.status}`).join('|')}:${!!onAdd}`;
+        if (sig === prevSig)
+            return sig;
+        row.destroy_all_children();
+        let x = 0;
+        for (const p of players) {
+            const kind = p.peerId === hostId ? 'host' : p.status === 'accepted' ? 'ready' : 'waiting';
+            const av = badge({glyph: (p.name[0] ?? '?').toUpperCase(), color: this._playerColor(p.peerId)});
+            av.add_style_class_name(`island-lobby-stack-avatar ${kind}`);
+            av.x = x;
+            av.y = 0;
+            row.add_child(av);
+            x += STACK_STEP;
+        }
+        if (onAdd) {
+            const add = new St.Button({style_class: 'island-lobby-stack-add', can_focus: true, label: '+', accessible_name: 'Invite'});
+            add.connect('clicked', onAdd);
+            add.x = x;
+            add.y = 0;
+            row.add_child(add);
+            x += STACK_STEP;
+        }
+        row.width = players.length || onAdd ? x + (STACK_AVATAR_SIZE - STACK_STEP) : 1;
+        return sig;
+    }
+
     _buildLobbyGuest() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
-        const eyebrow = label('island-igroup-title', {text: 'LOBBY'});
-        this._guestSubtitle = label('island-race-subtitle', {text: ''});
+        const {head} = this._lobbyHeader('Leave lobby');
 
-        const row = new St.BoxLayout({style_class: 'island-race-host-row', x_expand: true, y_expand: true});
-        const playersGroup = group('PLAYERS');
-        this._guestPlayerList = playersGroup.list;
-        this._guestPlayerRefs = new Map();
-        const groups = column({style_class: 'island-groups'});
-        groups.add_child(playersGroup.actor);
-        const left = scrollView(groups);
-        left.x_expand = true;
+        const center = column({
+            style_class: 'island-lobby-center', x_expand: true, y_expand: true,
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._guestInviteLabel = label('island-lobby-hero-tag', {text: '', x_align: Clutter.ActorAlign.CENTER});
+        this._guestModeLabel = label('island-lobby-guest-mode', {text: '', x_align: Clutter.ActorAlign.CENTER});
 
-        const panel = column({style_class: 'island-race-host-panel', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
-        this._guestModeLabel = label('island-race-ready-label', {text: '', x_align: Clutter.ActorAlign.CENTER});
+        const stackWrap = column({style_class: 'island-lobby-stack-wrap', x_align: Clutter.ActorAlign.CENTER});
+        this._guestStack = new St.Widget({layout_manager: new Clutter.FixedLayout(), height: STACK_AVATAR_SIZE});
+        this._guestReadyLine = label('island-lobby-ready-line', {text: '', x_align: Clutter.ActorAlign.CENTER});
+        stackWrap.add_child(this._guestStack);
+        stackWrap.add_child(this._guestReadyLine);
+
         this._acceptBtn = pillButton('Accept', () => this._respond(true), 'primary');
         this._declineBtn = pillButton('Decline', () => this._respond(false), 'secondary');
         this._acceptBtn.x_expand = true;
         this._declineBtn.x_expand = true;
-        this._respondBar = new St.BoxLayout({style_class: 'island-toolbar'});
+        this._respondBar = new St.BoxLayout({style_class: 'island-toolbar', x_expand: true});
         this._respondBar.add_child(this._declineBtn);
         this._respondBar.add_child(this._acceptBtn);
         this._guestLeaveBar = new St.BoxLayout({style_class: 'island-toolbar'});
         this._guestLeaveBar.add_child(this._leaveButton('Leave'));
-        panel.add_child(this._guestModeLabel);
-        panel.add_child(this._respondBar);
-        panel.add_child(this._guestLeaveBar);
 
-        row.add_child(left);
-        row.add_child(panel);
-        view.add_child(eyebrow);
-        view.add_child(this._guestSubtitle);
-        view.add_child(row);
+        center.add_child(this._guestInviteLabel);
+        center.add_child(this._guestModeLabel);
+        center.add_child(stackWrap);
+        center.add_child(this._respondBar);
+        center.add_child(this._guestLeaveBar);
+
+        view.add_child(head);
+        view.add_child(center);
         return view;
     }
 
@@ -370,61 +508,48 @@ export class PlayPage extends Page {
         const players = state.players ?? [];
         const hostId = players[0]?.peerId;
         this._invitedIds = new Set(players.map(p => p.peerId));
-        this._hostSig = this._syncPlayerRows(this._hostPlayerList, this._hostPlayerRefs, this._hostSig, players, state.selfId, hostId);
         const ready = players.filter(p => p.status === 'accepted').length;
-        setText(this._readyLabel, `${ready} of ${players.length} ready to play`);
-        this._modeRaceBtn.checked = state.mode === 'race';
-        this._modeDrawBtn.checked = state.mode === 'draw';
-        this._modeSnakeBtn.checked = state.mode === 'snake';
-        this._startBtn.reactive = !!state.mode;
-        this._startBtn.opacity = state.mode ? 255 : 110;
+        setText(this._hostReadyLine, `${ready} of ${players.length} ready to play`);
+        this._hostStackSig = this._syncAvatarStack(this._hostStack, players, hostId, this._hostStackSig,
+            () => this._toggleInvitePicker());
+
+        const mode = state.mode || 'race';
+        if (this._lobbyHeroMode !== mode) {
+            this._lobbyHeroMode = mode;
+            const info = MODE_INFO[mode];
+            setText(this._heroName, info.name);
+            setText(this._heroTag, info.tag);
+            this._heroBadge.queue_repaint();
+            const idx = MODE_ORDER.indexOf(mode);
+            this._heroDotWidgets.forEach((d, i) => {
+                d.remove_style_class_name('on');
+                if (i === idx)
+                    d.add_style_class_name('on');
+            });
+        }
+        this._lobbyPasses.visible = mode === 'draw';
         this._rounds = state.rounds ?? this._rounds ?? 3;
         setText(this._roundsVal, `${this._rounds}`);
-        this._roundsRow.visible = state.mode === 'draw';
+
+        this._startBtn.reactive = !!state.mode;
+        this._startBtn.opacity = state.mode ? 255 : 140;
         if (this._invitePickerOpen)
             this._refreshInvitePicker();
     }
 
-    _syncPlayerRows(list, refs, prevSig, players, selfId, hostId) {
-        const sig = players.map(p => `${p.peerId}:${p.status}`).join('|');
-        if (sig !== prevSig) {
-            list.destroy_all_children();
-            refs.clear();
-            for (const p of players) {
-                const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
-                const avatar = badge({glyph: (p.name[0] ?? '?').toUpperCase(), color: this._playerColor(p.peerId)});
-                avatar.add_style_class_name('island-race-row-avatar');
-                const name = label('island-irow-title', {text: p.peerId === selfId ? `${p.name} (You)` : p.name, x_expand: true});
-                const chip = p.peerId === hostId ? this._statusRow('host', 'Host') : this._statusChip(p.status);
-                row.add_child(avatar);
-                row.add_child(name);
-                row.add_child(chip);
-                list.add_child(row);
-                refs.set(p.peerId, {name, chip});
-            }
-        } else {
-            for (const p of players) {
-                const r = refs.get(p.peerId);
-                if (r)
-                    setText(r.name, p.peerId === selfId ? `${p.name} (You)` : p.name);
-            }
-        }
-        return sig;
-    }
-
     _renderLobbyGuest(state) {
-        const host = (state.players ?? [])[0];
-        setText(this._guestSubtitle, this._guestResponded
+        const players = state.players ?? [];
+        const host = players[0];
+        setText(this._guestInviteLabel, this._guestResponded
             ? 'Waiting for the host to start'
             : (host ? `Invited by ${host.name}` : ''));
-        const players = state.players ?? [];
-        this._guestSig = this._syncPlayerRows(this._guestPlayerList, this._guestPlayerRefs, this._guestSig, players, state.selfId, host?.peerId);
-        const modeText = state.mode === 'race' ? 'a typing race'
-            : state.mode === 'snake' ? 'snake'
-                : state.mode === 'draw' ? 'a drawing chain' : '';
+        const modeText = state.mode === 'race' ? 'Race' : state.mode === 'snake' ? 'Snake' : state.mode === 'draw' ? 'Draw' : '';
         setText(this._guestModeLabel, state.mode
             ? `Playing ${modeText}${state.mode === 'draw' ? ` · ${state.rounds ?? 3} passes` : ''}`
             : 'Waiting for the host to pick a game');
+        this._guestStackSig = this._syncAvatarStack(this._guestStack, players, host?.peerId, this._guestStackSig, null);
+        const ready = players.filter(p => p.status === 'accepted').length;
+        setText(this._guestReadyLine, `${ready} of ${players.length} ready to play`);
         this._respondBar.visible = !this._guestResponded;
         this._guestLeaveBar.visible = !!this._guestResponded;
     }
@@ -1751,12 +1876,14 @@ export class PlayPage extends Page {
             this._lobbyId = state.lobbyId;
             this._guestResponded = false;
             this._invitePickerOpen = false;
-            this._invitePickerActor.hide();
-            this._inviteToggleBtn.label = '+ Invite';
+            this._inviteView.hide();
+            this._heroView.show();
+            setText(this._lobbyTitle, 'Lobby');
             this._lastSubmittedLen = 0;
             this._typed = '';
-            this._hostSig = null;
-            this._guestSig = null;
+            this._hostStackSig = null;
+            this._guestStackSig = null;
+            this._lobbyHeroMode = null;
             this._invitePickerSig = null;
             this._racePresenceSig = null;
             this._resultSig = null;
