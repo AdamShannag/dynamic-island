@@ -68,14 +68,11 @@ func TestCreateLobbyIsNoOpWhileBusy(t *testing.T) {
 	}
 }
 
-func TestStartRequiresAModeFirst(t *testing.T) {
+func TestLobbyDefaultsToRaceSoStartWorksImmediately(t *testing.T) {
 	host := engine(t, "h1", 19002)
 	host.CreateLobby()
-	if err := host.Start(); err == nil {
-		t.Fatal("Start without a mode selected must fail")
-	}
-	if err := host.SetMode(party.ModeRace); err != nil {
-		t.Fatal(err)
+	if host.State().Mode != party.ModeRace {
+		t.Fatalf("got mode %q, want a freshly created lobby to default to race", host.State().Mode)
 	}
 	if err := host.Start(); err != nil {
 		t.Fatal(err)

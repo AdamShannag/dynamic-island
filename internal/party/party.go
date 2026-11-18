@@ -331,6 +331,7 @@ func (e *Engine) CreateLobby() string {
 		LobbyID: id,
 		IsHost:  true,
 		Phase:   PhaseLobby,
+		Mode:    ModeRace,
 		Rounds:  DefaultRounds,
 		Players: []Player{
 			{PeerID: e.selfID, Name: e.selfName, Status: "accepted"},
