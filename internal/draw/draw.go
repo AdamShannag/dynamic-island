@@ -664,6 +664,21 @@ func (e *Engine) publishLocked() {
 // subscription, for a guest tracking the host's game. The host always
 // redacts Prompt in what it broadcasts, so a player's own locally-learned
 // prompt (from BeginGuest/HandleStart) must survive these snapshots.
+// ApplyEvent absorbs a broadcast snapshot received over the shared lobby
+// subscription, for a guest tracking the host's game. Phase, Pass and
+// Prompt deliberately do NOT come from here: the broadcast (SSE) and the
+// personalized per-peer turn message (a separate direct HTTP POST, see
+// sendTurnMessages) travel over two independent connections with no
+// ordering guarantee between them. If a phase/pass change were applied
+// from the broadcast, a guest could render a new phase (say, "guessing")
+// paired with the previous step's stale Prompt (still "word") until the
+// personalized message caught up moments later - exactly the kind of
+// "shows me nothing to draw or guess" bug this must never produce. Only
+// HandleStart changes Phase/Pass/Prompt, and it always does so from one
+// atomically-parsed payload, so the three can never be out of sync. The
+// one exception is PhaseFinished, which carries no per-player prompt to
+// desync and must reach every guest even if a personalized send to them
+// was ever dropped.
 func (e *Engine) ApplyEvent(payload json.RawMessage) {
 	var snap State
 	if err := json.Unmarshal(payload, &snap); err != nil {
@@ -674,17 +689,12 @@ func (e *Engine) ApplyEvent(payload json.RawMessage) {
 		e.mu.Unlock()
 		return
 	}
-	prompt := e.state.Prompt
-	e.state.Phase = snap.Phase
-	e.state.Pass = snap.Pass
-	e.state.TotalPasses = snap.TotalPasses
-	e.state.PassEndsAtMs = snap.PassEndsAtMs
 	e.state.Waiting = snap.Waiting
 	e.state.Players = clonePlayers(snap.Players)
-	e.state.Chains = snap.Chains
-	e.state.Prompt = prompt
 	if snap.Phase == PhaseFinished {
+		e.state.Phase = PhaseFinished
 		e.state.Prompt = nil
+		e.state.Chains = snap.Chains
 	}
 	e.mu.Unlock()
 	e.notify()

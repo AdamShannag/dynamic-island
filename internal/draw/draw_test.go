@@ -342,6 +342,53 @@ func TestApplyEventDoesNotOverwriteTheLocallyKnownPrompt(t *testing.T) {
 	}
 }
 
+// TestApplyEventNeverAdvancesPhaseAheadOfTheMatchingPrompt is a regression
+// test for a real bug: the broadcast (SSE) and each player's personalized
+// turn message (a separate direct HTTP POST) travel over independent
+// connections with no ordering guarantee between them. If a broadcast
+// announcing a new phase/pass were applied immediately, a player could
+// render the new phase (e.g. "guessing") paired with the previous step's
+// stale Prompt (still "word") until the personalized message caught up -
+// showing nothing to draw or guess, or the wrong kind of prompt entirely.
+func TestApplyEventNeverAdvancesPhaseAheadOfTheMatchingPrompt(t *testing.T) {
+	g := draw.NewEngine("g1", "Guest")
+	payload := mustJSON(t, map[string]any{
+		"phase": "drawing", "pass": 1, "totalPasses": 3,
+		"prompt":  map[string]any{"kind": "word", "word": "umbrella"},
+		"players": []draw.Player{{PeerID: "g1", Name: "Guest", Status: "accepted"}},
+	})
+	if err := g.BeginGuest("lobby1", "127.0.0.1:1", payload); err != nil {
+		t.Fatal(err)
+	}
+
+	// A broadcast arrives announcing pass 2, guessing - but no personalized
+	// HandleStart for it has arrived yet.
+	g.ApplyEvent(mustJSON(t, draw.State{
+		Phase: draw.PhaseGuessing, Pass: 2, TotalPasses: 3,
+		Players: []draw.Player{{PeerID: "g1", Name: "Guest", Status: "accepted"}},
+	}))
+	st := g.State()
+	if st.Phase != draw.PhaseDrawing || st.Pass != 1 {
+		t.Fatalf("broadcast alone must not advance phase/pass, got phase=%v pass=%d", st.Phase, st.Pass)
+	}
+	if st.Prompt == nil || st.Prompt.Word != "umbrella" {
+		t.Fatalf("prompt must stay whatever was locally known, got %+v", st.Prompt)
+	}
+
+	// Only the matching personalized message may advance it, atomically.
+	if err := g.HandleStart(mustJSON(t, map[string]any{
+		"phase": "guessing", "pass": 2, "totalPasses": 3,
+		"prompt":  map[string]any{"kind": "drawing", "fromName": "Host"},
+		"players": []draw.Player{{PeerID: "g1", Name: "Guest", Status: "accepted"}},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	st = g.State()
+	if st.Phase != draw.PhaseGuessing || st.Pass != 2 || st.Prompt == nil || st.Prompt.Kind != "drawing" {
+		t.Fatalf("HandleStart should atomically advance phase+pass+prompt together, got %+v", st)
+	}
+}
+
 func TestLeaveDuringMatchResetsToIdle(t *testing.T) {
 	g := draw.NewEngine("g1", "Guest")
 	payload := mustJSON(t, map[string]any{
