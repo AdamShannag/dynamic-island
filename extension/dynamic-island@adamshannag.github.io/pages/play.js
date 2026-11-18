@@ -1595,7 +1595,29 @@ export class PlayPage extends Page {
     }
 
     refresh() {
-        this.fetch('PartyState', [], (state, err) => this._render(err ? null : state));
+        // The dash's refresh timer fires on a fixed interval regardless of
+        // whether the previous PartyState call has actually returned yet.
+        // Under real gameplay load the daemon's response time isn't always
+        // under the poll interval, and firing a new fetch every tick
+        // regardless let requests pile up and come back in uneven bursts -
+        // several ticks' worth of movement landing almost at once, which
+        // is exactly what reads as the snake jumping or skipping. Skipping
+        // a tick while one is already in flight bounds the effective poll
+        // rate to however fast the daemon can actually answer, so updates
+        // arrive one at a time instead of in bursts.
+        if (!this._statePending) {
+            this._statePending = true;
+            // Page.fetch only invokes its callback while the tab is still
+            // active, so using it here could leave _statePending stuck at
+            // true forever if the tab is switched away mid-flight. Call
+            // the daemon directly so the flag always clears, and gate the
+            // render on activeness ourselves instead.
+            this.ext.callJson('PartyState', [], (state, err) => {
+                this._statePending = false;
+                if (this.active)
+                    this._render(err ? null : state);
+            });
+        }
         if (this._phase === 'idle' || this._phase === undefined)
             this.fetch('PartyPeers', [], (peers, err) => this._renderIdle(err ? [] : (peers ?? [])));
     }
