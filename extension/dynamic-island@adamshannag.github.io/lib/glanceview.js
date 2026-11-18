@@ -18,7 +18,7 @@ export class GlanceView {
 
         this.actor = new St.BoxLayout({
             style_class: 'island-glance', ...VERTICAL, visible: false, opacity: 0,
-            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.START,
+            x_align: Clutter.ActorAlign.START, y_align: Clutter.ActorAlign.START,
         });
         const top = new St.BoxLayout({style_class: 'island-glance-top', x_expand: true});
         const art = new St.Widget({style_class: 'island-glance-art', layout_manager: new Clutter.BinLayout(), y_align: Clutter.ActorAlign.CENTER});

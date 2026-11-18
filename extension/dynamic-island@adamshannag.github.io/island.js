@@ -94,7 +94,7 @@ class Island extends St.BoxLayout {
         this._interface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
 
         this._clip = new St.Widget({
-            layout_manager: new Clutter.BinLayout(),
+            layout_manager: new Clutter.FixedLayout(),
             clip_to_allocation: true,
             x_expand: true,
             y_expand: true,
@@ -148,7 +148,7 @@ class Island extends St.BoxLayout {
             ...VERTICAL,
             visible: false,
             opacity: 0,
-            x_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.START,
             y_align: Clutter.ActorAlign.START,
         });
         this._clip.add_child(this._dash);
@@ -1086,6 +1086,13 @@ class Island extends St.BoxLayout {
         const h = Math.max(1, Math.round(m.value('height')));
         this.set_position(mon.x + Math.round((mon.width - w) / 2), mon.y);
         this.set_size(w, h);
+        this._clip.set_size(w, h);
+        this._bg.set_size(w, h);
+        for (const layer of [this._dash, this._glance.actor, this._content]) {
+            const tx = Math.round((w - layer.width) / 2);
+            if (layer.translation_x !== tx)
+                layer.translation_x = tx;
+        }
 
         const r = Math.max(0, Math.round(m.value('radius')));
         if (r !== this._radius) {

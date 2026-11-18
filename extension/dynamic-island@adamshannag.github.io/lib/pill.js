@@ -11,7 +11,7 @@ export class Pill {
         this._osd = null;
         this.actor = new St.BoxLayout({
             style_class: 'island-content',
-            x_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.START,
             y_align: Clutter.ActorAlign.START,
         });
         this._art = new St.Bin({style_class: 'island-art', y_align: Clutter.ActorAlign.CENTER});
