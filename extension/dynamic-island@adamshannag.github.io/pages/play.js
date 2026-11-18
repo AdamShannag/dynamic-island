@@ -535,6 +535,8 @@ export class PlayPage extends Page {
             return Clutter.EVENT_STOP;
         if (typedLen > correctPrefix(this._typed, this._passage))
             return Clutter.EVENT_STOP;
+        if (unicode === ' ' && this._typed.endsWith(' '))
+            return Clutter.EVENT_STOP;
         this._typed += unicode;
         this._applyTyped();
         return Clutter.EVENT_STOP;
@@ -579,11 +581,18 @@ export class PlayPage extends Page {
         }
     }
 
-    _renderRacing(race) {
+    _renderRacing(race, isNewRace) {
         const incoming = race.passage ?? '';
-        if (this._passage !== incoming) {
+        if (this._passage !== incoming || isNewRace) {
             this._passage = incoming;
             this._selfCaret._lastIndex = undefined;
+            // A rematch keeps the same lobby, so the lobbyId-change reset
+            // never fires for it - without this, a typed-out previous race
+            // left _typed at (at least) the old passage's full length,
+            // which snapped the caret to the end of the new passage and
+            // made every keypress get rejected as "already done".
+            this._typed = '';
+            this._lastSubmittedLen = 0;
             this._applyTyped();
         }
         this._syncRaceMarkers(race);
@@ -1233,8 +1242,16 @@ export class PlayPage extends Page {
     _interpSnakeBody(curBody, prevBody, t) {
         if (!prevBody || prevBody.length === 0 || t >= 1)
             return curBody;
+        // The server prepends exactly one new head point per tick, so
+        // every older point shifts up by one index - curBody[i] is the
+        // same physical point as prevBody[i-1], not prevBody[i]. Pairing
+        // same-index points (the old code) interpolated every trail point
+        // toward a point one segment-spacing further back each tick, a
+        // periodic lurch that looked like the whole body jumping/skipping.
+        // Only the new head (i === 0) actually moved between snapshots;
+        // every other point is physically static and must stay put.
         return curBody.map((c, i) => {
-            const pp = prevBody[i];
+            const pp = prevBody[Math.max(0, i - 1)];
             return pp ? {x: pp.x + (c.x - pp.x) * t, y: pp.y + (c.y - pp.y) * t} : c;
         });
     }
@@ -1645,8 +1662,9 @@ export class PlayPage extends Page {
             this._renderLobbyGuest(state);
         } else if (state.phase === 'playing' && state.mode === 'race') {
             this._showView('racing');
-            this._renderRacing(state.race ?? {});
-            if (!(prevPhase === 'playing' && prevMode === 'race'))
+            const isNewRace = !(prevPhase === 'playing' && prevMode === 'race');
+            this._renderRacing(state.race ?? {}, isNewRace);
+            if (isNewRace)
                 this._passageStack.grab_key_focus();
         } else if (state.phase === 'playing' && state.mode === 'draw') {
             const draw = state.draw ?? {};
