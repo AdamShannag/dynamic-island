@@ -6,7 +6,7 @@ import Cairo from 'gi://cairo';
 
 import {TILE_COLORS, featureOn} from '../lib/constants.js';
 import {correctPrefix, hashColor, hexToRgb} from '../lib/format.js';
-import {frameLoop, springTo} from '../lib/motion.js';
+import {CriticalSpring, frameLoop, springTo} from '../lib/motion.js';
 import {
     EmptyState, badge, column, fillList, group, iconButton, label, page, pillButton, scrollView,
     setText,
@@ -37,6 +37,7 @@ const SNAKE_FOOD_RADIUS = 3;
 const SNAKE_WALL_COLOR = '#ff453a';
 const SNAKE_WALL_LINE_WIDTH = 3;
 const SNAKE_WALL_STRIPE_STEP = 24;
+const SNAKE_CAM_STIFFNESS = 14;
 
 function statusSpec(status) {
     if (status === 'accepted')
@@ -1059,14 +1060,23 @@ export class PlayPage extends Page {
                 return;
             const prev = this._snakePrevState ?? snake;
             const elapsed = GLib.get_monotonic_time() / 1000 - (this._snakeStateAt ?? 0);
-            const t = Math.max(0, Math.min(1, elapsed / SNAKE_INTERP_MS));
+            const t = Math.max(0, Math.min(1, elapsed / (this._snakeInterpMs ?? SNAKE_INTERP_MS)));
             const prevByID = new Map((prev.players ?? []).map(p => [p.peerId, p]));
 
             const players = snake.players ?? [];
             const self = players.find(p => p.peerId === this._selfId);
             const selfBody = self ? this._interpSnakeBody(self.body ?? [], prevByID.get(this._selfId)?.body, t) : [];
             const head = selfBody[0] ?? {x: (snake.worldW ?? w) / 2, y: (snake.worldH ?? h) / 2};
-            const camX = head.x - w / 2, camY = head.y - h / 2;
+            if (!this._snakeCamSpring)
+                this._snakeCamSpring = new CriticalSpring(2, SNAKE_CAM_STIFFNESS);
+            if (!this._snakeCamReady) {
+                this._snakeCamSpring.jump([head.x, head.y]);
+                this._snakeCamReady = true;
+            } else {
+                this._snakeCamSpring.step([head.x, head.y]);
+            }
+            const [camCx, camCy] = this._snakeCamSpring.pos;
+            const camX = camCx - w / 2, camY = camCy - h / 2;
             const worldW = snake.worldW ?? w, worldH = snake.worldH ?? h;
             this._paintSnakeWalls(cr, w, h, -camX, -camY, worldW - camX, worldH - camY);
 
@@ -1112,9 +1122,16 @@ export class PlayPage extends Page {
     }
 
     _renderSnake(snake) {
+        const now = GLib.get_monotonic_time() / 1000;
+        // Interpolate toward each new snapshot over however long the last
+        // gap between snapshots actually was, not a fixed guess: polling
+        // and the server's tick don't line up exactly, so a fixed window
+        // either finishes early (the snake visibly pauses before the next
+        // update) or lags behind when a poll is briefly late.
+        this._snakeInterpMs = Math.max(16, Math.min(200, now - (this._snakeStateAt ?? now)));
         this._snakePrevState = this._snakeState ?? snake;
         this._snakeState = snake;
-        this._snakeStateAt = GLib.get_monotonic_time() / 1000;
+        this._snakeStateAt = now;
         const players = snake.players ?? [];
         const self = players.find(p => p.peerId === this._selfId);
         setText(this._snakeLengthLabel, `${self?.body?.length ?? 0}`);
@@ -1387,6 +1404,7 @@ export class PlayPage extends Page {
             this._snakeState = null;
             this._snakePrevState = null;
             this._snakeStateAt = 0;
+            this._snakeCamReady = false;
             this._peerSig = null;
             this._passage = null;
             this._strokes = [];

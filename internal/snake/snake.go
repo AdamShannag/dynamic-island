@@ -40,10 +40,16 @@ const (
 	segmentSpacing = moveSpeed / tickRate
 	turnRate       = 3.6 * math.Pi
 
-	startSegments   = 20
-	foodCount       = 30
-	foodRadius      = 14.0
-	collisionRadius = 14.0
+	startSegments = 20
+	foodCount     = 30
+	foodRadius    = 14.0
+	// World units map 1:1 to screen pixels (the client applies no zoom), so
+	// this has to track what's actually drawn to feel fair: a 6px head
+	// radius plus a 9px-wide body line is an edge-to-edge touch at ~10.5
+	// units between centers. The old 14 gave snakes an effectively 33%
+	// wider hitbox than their rendered width, which is why collisions could
+	// look like they happened with empty space in between.
+	collisionRadius = 10.5
 	growthPerFood   = segmentSpacing * 3
 	// ~60 world units of neck, in segments at the current spacing - how far
 	// the head must travel before its own body becomes collidable.
