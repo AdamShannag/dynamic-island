@@ -1323,11 +1323,35 @@ export class PlayPage extends Page {
         }
         // Keep predicting, but don't let the locally-grown trail drift
         // arbitrarily longer than what the server says this snake's
-        // length actually is - trim stale tail points, keeping the
-        // recently-predicted head end intact.
-        const maxLen = self.body.length + 12;
-        if (this._snakeLocalBody.length > maxLen)
-            this._snakeLocalBody.length = maxLen;
+        // length actually is. Compare by arc length, not point count: the
+        // local body is far finer-grained (a new point every repaint
+        // frame, ~60/sec, vs. the server's one per tick, ~30/sec), so for
+        // the same physical trail it naturally holds roughly twice as many
+        // points. Trimming to the server's raw point count chopped a
+        // large, varying chunk off the tail on nearly every poll, which is
+        // what made the tail specifically look stuttery even once the
+        // head (freshly predicted every frame) was smooth.
+        const targetLen = this._snakeArcLength(self.body) + 20;
+        let acc = 0, cut = this._snakeLocalBody.length;
+        for (let i = 1; i < this._snakeLocalBody.length; i++) {
+            acc += Math.hypot(
+                this._snakeLocalBody[i].x - this._snakeLocalBody[i - 1].x,
+                this._snakeLocalBody[i].y - this._snakeLocalBody[i - 1].y);
+            if (acc > targetLen) {
+                cut = i;
+                break;
+            }
+        }
+        if (cut < this._snakeLocalBody.length)
+            this._snakeLocalBody.length = cut;
+    }
+
+    _snakeArcLength(body) {
+        let acc = 0;
+        for (let i = 1; i < body.length; i++) {
+            acc += Math.hypot(body[i].x - body[i - 1].x, body[i].y - body[i - 1].y);
+        }
+        return acc;
     }
 
     _interpSnakeBody(curBody, prevBody, t) {
