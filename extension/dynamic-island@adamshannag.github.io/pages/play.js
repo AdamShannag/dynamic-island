@@ -47,6 +47,14 @@ const SNAKE_PHYS_TURN_RATE = 3.6 * Math.PI;
 // dropped update can all desync prediction from truth).
 const SNAKE_RECONCILE_DIST = 40;
 const SNAKE_CORRECTION_TAU = 0.12;
+// How far behind "now" remote players are rendered: enough that the two
+// real snapshots bracketing that moment have almost always both arrived
+// (polling is ~40ms, so two buffer slots plus margin), so a remote snake
+// is always drawn at an actual reported position, just slightly delayed,
+// never a guessed one.
+const SNAKE_REMOTE_DELAY_MS = 90;
+const SNAKE_REMOTE_BUFFER_MS = 400;
+const SNAKE_REMOTE_RESAMPLE_N = 24;
 
 const STACK_AVATAR_SIZE = 40;
 const STACK_STEP = 28;
@@ -1377,29 +1385,39 @@ export class PlayPage extends Page {
         return Clutter.EVENT_PROPAGATE;
     }
 
-    // Advances one player's predicted body forward by real elapsed time
-    // using the same physics the server uses. Originally self-only (so your
-    // own snake responds to the mouse instantly instead of waiting on a
-    // network round trip); now applied to every player, because remote
-    // snakes interpolated only between whatever two snapshots polling
-    // happened to catch, and polling (~40ms, _statePending-gated) and the
-    // server's tick (~33ms) don't line up - some polls catch one tick's
-    // movement, some catch two, so the apparent speed between renders
-    // varied even though each individual snapshot was correct, which read
-    // as the same kind of stutter self had before prediction. For a remote
-    // player there is no known target heading to steer toward (no local
-    // input), so targetHeading is simply their own current predicted
-    // heading - dead reckoning in a straight line until the next snapshot's
-    // reconciliation corrects course, same as a real turn would.
-    _advancePrediction(pred, nowMs, targetHeading) {
-        if (!pred.body || pred.body.length === 0)
+    // Advances the LOCAL player's own predicted body forward by real
+    // elapsed time, using the same physics the server uses and steering
+    // toward the live, unthrottled mouse heading, so your own snake
+    // responds instantly instead of waiting on a network round trip.
+    //
+    // This is deliberately self-only. An earlier version applied the same
+    // extrapolation to every player, reasoning that remote snakes only
+    // interpolated between whatever two snapshots polling happened to
+    // catch and that polling (~40ms) and the server's tick (~33ms) don't
+    // line up. That part was true, but the fix was wrong for this game:
+    // extrapolation has to guess a target heading, and for a remote player
+    // the only available guess is "keep going the way they were" - dead
+    // reckoning. Snake is mouse-steered and players are turning more or
+    // less continuously, so that guess was wrong almost every tick, not
+    // occasionally - it corrected constantly, and each correction's
+    // decaying offset (see _advancePrediction's old form) could still be
+    // unwinding when the next one landed, which is what made it feel
+    // actively worse than the plain interpolation it replaced. Remote
+    // players now use _remoteBodyAt below instead - interpolating between
+    // two *known* real positions is always correct, just slightly delayed;
+    // extrapolating a turn no one told you about is a guess that can be
+    // wrong in either direction, and wrong looks far worse than late.
+    _advanceSelfPrediction(nowMs) {
+        const pred = this._selfPred;
+        if (!pred?.body || pred.body.length === 0)
             return null;
         const lastAt = pred.at ?? nowMs;
         const dt = Math.max(0, Math.min((nowMs - lastAt) / 1000, 0.2));
         pred.at = nowMs;
         if (dt > 0) {
+            const target = this._snakeTargetHeading ?? pred.heading;
             const maxTurn = SNAKE_PHYS_TURN_RATE * dt;
-            let diff = targetHeading - pred.heading;
+            let diff = target - pred.heading;
             while (diff > Math.PI) diff -= 2 * Math.PI;
             while (diff < -Math.PI) diff += 2 * Math.PI;
             diff = Math.max(-maxTurn, Math.min(maxTurn, diff));
@@ -1413,9 +1431,6 @@ export class PlayPage extends Page {
                 y: head.y + Math.sin(pred.heading) * dist,
             };
             pred.body = [next, ...pred.body];
-            // Melt away any pending reconciliation correction (see
-            // _reconcilePlayerPrediction) rather than holding it at full
-            // strength until the next snapshot arrives.
             if (pred.offsetX || pred.offsetY) {
                 const decay = Math.exp(-dt / SNAKE_CORRECTION_TAU);
                 pred.offsetX *= decay;
@@ -1431,17 +1446,6 @@ export class PlayPage extends Page {
         return pred.body.map(p => ({x: p.x + pred.offsetX, y: p.y + pred.offsetY}));
     }
 
-    // Looks up (or lazily starts) peerId's prediction and advances it to
-    // nowMs. Self steers toward the live, unthrottled mouse heading; every
-    // other player just continues at their own last-known heading.
-    _advancePredictionFor(peerId, nowMs) {
-        const pred = this._snakePred.get(peerId);
-        if (!pred)
-            return null;
-        const target = peerId === this._selfId ? (this._snakeTargetHeading ?? pred.heading) : pred.heading;
-        return this._advancePrediction(pred, nowMs, target);
-    }
-
     _cloneSnakePoints(body) {
         return body.map(p => ({x: p.x, y: p.y}));
     }
@@ -1452,43 +1456,38 @@ export class PlayPage extends Page {
         return Math.atan2(body[0].y - body[1].y, body[0].x - body[1].x);
     }
 
-    // Grounds peerId's prediction in each new server snapshot without
-    // destroying it: a small gap between the predicted head and the
-    // server's reported one is expected (the snapshot is already slightly
-    // old by the time it arrives) and is simply left alone, so the snake
-    // keeps gliding smoothly instead of snapping back every poll. Only a
-    // large gap - death, food growth, a dropped update, or (under real
-    // network jitter, never reproducible on one machine) just an
-    // ordinarily late poll - resets prediction to the authoritative body.
-    // That reset itself used to be instant, which was the "sometimes it
-    // teleports" bug: under real LAN latency a guest's predicted head
-    // drifts past this threshold often enough for the snap-back to be the
-    // visible bug, not a rare recovery from something broken. Folding the
-    // jump into offsetX/offsetY - a render-only correction that
-    // _advancePrediction decays to zero over a fraction of a second -
-    // turns the same correction into a brief glide instead of a pop.
-    _reconcilePlayerPrediction(peerId, player, nowMs) {
-        if (!player?.alive || !player.body?.length) {
-            this._snakePred.delete(peerId);
+    // Grounds the local player's prediction in each new server snapshot
+    // without destroying it: a small gap between the predicted head and
+    // the server's reported one is expected (the snapshot is already
+    // slightly old by the time it arrives) and is simply left alone, so
+    // the snake keeps gliding smoothly instead of snapping back every
+    // poll. Only a large gap - death, food growth, a dropped update -
+    // resets prediction to the authoritative body, and even then the jump
+    // itself is folded into a decaying render-only offset (see
+    // _advanceSelfPrediction) rather than applied outright, so it reads as
+    // a brief glide instead of a pop.
+    _reconcileSelfPrediction(self, nowMs) {
+        if (!self?.alive || !self.body?.length) {
+            this._selfPred = null;
             return;
         }
-        let pred = this._snakePred.get(peerId);
-        if (!pred || !pred.body || pred.body.length === 0) {
-            this._snakePred.set(peerId, {
-                body: this._cloneSnakePoints(player.body),
-                heading: this._headingFromSnakeBody(player.body),
+        if (!this._selfPred?.body || this._selfPred.body.length === 0) {
+            this._selfPred = {
+                body: this._cloneSnakePoints(self.body),
+                heading: this._headingFromSnakeBody(self.body),
                 at: nowMs, offsetX: 0, offsetY: 0,
-            });
+            };
             return;
         }
+        const pred = this._selfPred;
         const predictedHead = pred.body[0];
-        const serverHead = player.body[0];
+        const serverHead = self.body[0];
         const desync = Math.hypot(predictedHead.x - serverHead.x, predictedHead.y - serverHead.y);
         if (desync > SNAKE_RECONCILE_DIST) {
             pred.offsetX = (pred.offsetX ?? 0) + (predictedHead.x - serverHead.x);
             pred.offsetY = (pred.offsetY ?? 0) + (predictedHead.y - serverHead.y);
-            pred.body = this._cloneSnakePoints(player.body);
-            pred.heading = this._headingFromSnakeBody(player.body);
+            pred.body = this._cloneSnakePoints(self.body);
+            pred.heading = this._headingFromSnakeBody(self.body);
             pred.at = nowMs;
             return;
         }
@@ -1502,7 +1501,7 @@ export class PlayPage extends Page {
         // large, varying chunk off the tail on nearly every poll, which is
         // what made the tail specifically look stuttery even once the
         // head (freshly predicted every frame) was smooth.
-        const targetLen = this._snakeArcLength(player.body) + 20;
+        const targetLen = this._snakeArcLength(self.body) + 20;
         let acc = 0, cut = pred.body.length;
         for (let i = 1; i < pred.body.length; i++) {
             acc += Math.hypot(
@@ -1523,6 +1522,89 @@ export class PlayPage extends Page {
             acc += Math.hypot(body[i].x - body[i - 1].x, body[i].y - body[i - 1].y);
         }
         return acc;
+    }
+
+    // Resamples a body to n points evenly spaced by arc length (head to
+    // tail), so two bodies of different point counts or lengths - the
+    // normal case, since the server only reports whole segments and
+    // length changes whenever a snake eats - can still be blended
+    // point-for-point in _blendSnakeBodies below.
+    _resampleByArcLength(body, n) {
+        if (body.length === 0)
+            return [];
+        if (body.length === 1)
+            return new Array(n).fill(body[0]);
+        const total = this._snakeArcLength(body);
+        const out = [];
+        let segIdx = 0, segStart = 0;
+        for (let i = 0; i < n; i++) {
+            const targetDist = total * (n === 1 ? 0 : i / (n - 1));
+            while (segIdx < body.length - 2) {
+                const segLen = Math.hypot(
+                    body[segIdx + 1].x - body[segIdx].x, body[segIdx + 1].y - body[segIdx].y);
+                if (segStart + segLen >= targetDist)
+                    break;
+                segStart += segLen;
+                segIdx++;
+            }
+            const p0 = body[segIdx], p1 = body[Math.min(segIdx + 1, body.length - 1)];
+            const segLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+            const segFrac = segLen > 0 ? Math.min(1, Math.max(0, (targetDist - segStart) / segLen)) : 0;
+            out.push({x: p0.x + (p1.x - p0.x) * segFrac, y: p0.y + (p1.y - p0.y) * segFrac});
+        }
+        return out;
+    }
+
+    _blendSnakeBodies(a, b, frac) {
+        const ra = this._resampleByArcLength(a, SNAKE_REMOTE_RESAMPLE_N);
+        const rb = this._resampleByArcLength(b, SNAKE_REMOTE_RESAMPLE_N);
+        const out = [];
+        for (let i = 0; i < SNAKE_REMOTE_RESAMPLE_N; i++)
+            out.push({x: ra[i].x + (rb[i].x - ra[i].x) * frac, y: ra[i].y + (rb[i].y - ra[i].y) * frac});
+        return out;
+    }
+
+    // Records peerId's reported body with a timestamp, for _remoteBodyAt
+    // to interpolate between later, and drops anything old enough it can
+    // never be interpolated *from* again (older than the render delay
+    // plus one buffer's worth of margin).
+    _pushRemoteSnapshot(peerId, body, nowMs) {
+        let buf = this._snakeRemoteBuf.get(peerId);
+        if (!buf) {
+            buf = [];
+            this._snakeRemoteBuf.set(peerId, buf);
+        }
+        buf.push({t: nowMs, body: this._cloneSnakePoints(body)});
+        const cutoff = nowMs - SNAKE_REMOTE_BUFFER_MS;
+        while (buf.length > 2 && buf[1].t < cutoff)
+            buf.shift();
+    }
+
+    // Renders every remote player a fixed, small delay behind "now",
+    // interpolating between the two real snapshots that bracket that
+    // render time rather than guessing ahead of the latest one. Never
+    // wrong, just briefly (and imperceptibly, at ~90ms) behind - the
+    // standard way to render entities you don't control in an
+    // authoritative-server game, same idea GDC netcode talks describe for
+    // Source/Overwatch-style interpolation.
+    _remoteBodyAt(peerId, renderTime) {
+        const buf = this._snakeRemoteBuf.get(peerId);
+        if (!buf || buf.length === 0)
+            return null;
+        if (renderTime <= buf[0].t || buf.length === 1)
+            return buf[0].body;
+        const last = buf[buf.length - 1];
+        if (renderTime >= last.t)
+            return last.body;
+        for (let i = 1; i < buf.length; i++) {
+            if (buf[i].t >= renderTime) {
+                const a = buf[i - 1], b = buf[i];
+                const span = b.t - a.t;
+                const frac = span > 0 ? (renderTime - a.t) / span : 0;
+                return this._blendSnakeBodies(a.body, b.body, frac);
+            }
+        }
+        return last.body;
     }
 
     // Paints the world edge as a hazard border - a diagonally striped band
@@ -1575,8 +1657,9 @@ export class PlayPage extends Page {
             if (!snake)
                 return;
             const nowMs = GLib.get_monotonic_time() / 1000;
+            const renderTime = nowMs - SNAKE_REMOTE_DELAY_MS;
             const players = snake.players ?? [];
-            const selfBody = this._advancePredictionFor(this._selfId, nowMs) ?? [];
+            const selfBody = this._advanceSelfPrediction(nowMs) ?? [];
             const head = selfBody[0] ?? {x: (snake.worldW ?? w) / 2, y: (snake.worldH ?? h) / 2};
             if (!this._snakeCamSpring)
                 this._snakeCamSpring = new CriticalSpring(2, SNAKE_CAM_STIFFNESS);
@@ -1611,7 +1694,7 @@ export class PlayPage extends Page {
             for (const p of players) {
                 if (!p.alive)
                     continue;
-                const pts = p.peerId === this._selfId ? selfBody : (this._advancePredictionFor(p.peerId, nowMs) ?? []);
+                const pts = p.peerId === this._selfId ? selfBody : (this._remoteBodyAt(p.peerId, renderTime) ?? p.body ?? []);
                 if (!pts || pts.length === 0)
                     continue;
                 const [r, g, b] = hexToRgb(p.peerId === this._selfId ? SELF_CARET_COLOR : this._playerColor(p.peerId));
@@ -1637,8 +1720,15 @@ export class PlayPage extends Page {
         this._snakeStateAt = now;
         const players = snake.players ?? [];
         const self = players.find(p => p.peerId === this._selfId);
-        for (const p of players)
-            this._reconcilePlayerPrediction(p.peerId, p, now);
+        this._reconcileSelfPrediction(self, now);
+        for (const p of players) {
+            if (p.peerId === this._selfId)
+                continue;
+            if (!p.alive || !p.body?.length)
+                this._snakeRemoteBuf.delete(p.peerId);
+            else
+                this._pushRemoteSnapshot(p.peerId, p.body, now);
+        }
         setText(this._snakeLengthLabel, `${self?.body?.length ?? 0}`);
         setText(this._snakeScoreLabel, `${self?.score ?? 0}`);
         this._snakeDeadOverlay.visible = !!self && !self.alive;
@@ -1908,7 +1998,8 @@ export class PlayPage extends Page {
             this._snakeState = null;
             this._snakeStateAt = 0;
             this._snakeCamReady = false;
-            this._snakePred = new Map();
+            this._selfPred = null;
+            this._snakeRemoteBuf = new Map();
             this._snakeTargetHeading = 0;
             this._peerSig = null;
             this._passage = null;
