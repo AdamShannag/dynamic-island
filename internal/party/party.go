@@ -861,7 +861,11 @@ func (e *Engine) Leave() {
 
 // Rematch returns a finished lobby to its lobby phase (same roster, same
 // lobbyId) so the host can pick another mode and go again, instead of
-// everyone having to re-invite from scratch.
+// everyone having to re-invite from scratch. Mode defaults back to Race,
+// the same as a brand new lobby, since the hero view always displays Race
+// when asked to render an unset mode - leaving the real Mode at ModeNone
+// here left Start disabled against what the lobby was visibly showing
+// until the host touched the mode picker.
 func (e *Engine) Rematch() error {
 	e.mu.Lock()
 	if !e.host || !e.state.Phase.free() || e.state.Phase == PhaseIdle {
@@ -874,7 +878,7 @@ func (e *Engine) Rematch() error {
 		}
 	}
 	e.state.Phase = PhaseLobby
-	e.state.Mode = ModeNone
+	e.state.Mode = ModeRace
 	e.publishLobbyLocked()
 	e.mu.Unlock()
 	e.notify()

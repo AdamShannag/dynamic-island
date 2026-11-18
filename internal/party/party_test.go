@@ -280,8 +280,8 @@ func TestPartyPhaseTransitionsToFinishedAndSupportsARematch(t *testing.T) {
 	if err := host.Rematch(); err != nil {
 		t.Fatalf("Rematch after finishing must succeed, got: %v", err)
 	}
-	if host.State().Phase != party.PhaseLobby || host.State().Mode != party.ModeNone {
-		t.Fatalf("got %+v, want back in the lobby with no mode selected", host.State())
+	if host.State().Phase != party.PhaseLobby || host.State().Mode != party.ModeRace {
+		t.Fatalf("got %+v, want back in the lobby defaulted to race like a brand new one", host.State())
 	}
 
 	// This only succeeds if (a) the guest's lobby subscription survived the
@@ -289,8 +289,8 @@ func TestPartyPhaseTransitionsToFinishedAndSupportsARematch(t *testing.T) {
 	// guest's phase-gating lets a "party" snapshot move it out of
 	// PhaseFinished back into PhaseLobby.
 	waitFor(t, func() bool { return guest.State().Phase == party.PhaseLobby })
-	if guest.State().Mode != party.ModeNone {
-		t.Fatalf("got %+v, want the guest's mode reset by the rematch too", guest.State())
+	if guest.State().Mode != party.ModeRace {
+		t.Fatalf("got %+v, want the guest's mode defaulted by the rematch too", guest.State())
 	}
 }
 
