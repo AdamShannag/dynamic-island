@@ -309,7 +309,7 @@ export class PlayPage extends Page {
         });
 
         // -- mode carousel --
-        this._heroView = column({x_align: Clutter.ActorAlign.CENTER});
+        this._heroView = column({style_class: 'island-lobby-hero', x_align: Clutter.ActorAlign.CENTER});
         const heroRow = new St.BoxLayout({style_class: 'island-lobby-hero-row', x_align: Clutter.ActorAlign.CENTER});
         heroRow.add_child(iconButton('go-previous-symbolic', 'island-lobby-hero-arrow',
             () => this._cycleMode(-1), 'Previous game'));

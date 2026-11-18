@@ -902,6 +902,8 @@
 
 .island-lobby-center { spacing: 16px; padding: 10px 0; }
 
+.island-lobby-hero { spacing: 16px; }
+
 .island-lobby-hero-row { spacing: 16px; }
 .island-lobby-hero-arrow {
   width: 28px;
