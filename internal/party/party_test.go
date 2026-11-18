@@ -177,7 +177,7 @@ func TestRaceEndToEndOverRealHTTP(t *testing.T) {
 	})
 }
 
-func TestDrawEndToEndKeepsTheWordSecretFromTheGuesser(t *testing.T) {
+func TestDrawEndToEndKeepsEachPlayersPromptSecretFromTheOther(t *testing.T) {
 	host := engine(t, "h1", 19010)
 	guest := engine(t, "g1", 19011)
 	host.CreateLobby()
@@ -193,27 +193,51 @@ func TestDrawEndToEndKeepsTheWordSecretFromTheGuesser(t *testing.T) {
 	if err := host.SetMode(party.ModeDraw); err != nil {
 		t.Fatal(err)
 	}
+	if err := host.SetRounds(1); err != nil {
+		t.Fatal(err)
+	}
 	if err := host.Start(); err != nil {
 		t.Fatal(err)
 	}
-	// The host draws first (join order), so the guest is the guesser here.
-	waitFor(t, func() bool { return guest.State().Draw != nil && guest.State().Draw.DrawerID != "" })
+	// Both players draw their own word at once.
+	waitFor(t, func() bool { return guest.State().Draw != nil && guest.State().Draw.Prompt != nil })
 
-	if guest.State().Draw.Word != "" {
-		t.Fatal("the guesser must never receive the word")
+	hostWord := host.State().Draw.Prompt.Word
+	guestWord := guest.State().Draw.Prompt.Word
+	if hostWord == "" || guestWord == "" {
+		t.Fatal("both players must know their own word to draw")
 	}
-	if host.State().Draw.Word == "" {
-		t.Fatal("the drawer (host) must know the word")
+	if hostWord == guestWord {
+		t.Fatal("the two players must not be given the same starting word")
 	}
 
-	if err := guest.DrawEngine().SubmitGuess(host.State().Draw.Word); err != nil {
+	if err := host.DrawEngine().SubmitDrawing(nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := guest.DrawEngine().SubmitDrawing(nil); err != nil {
+		t.Fatal(err)
+	}
+	// Now guessing: each must be shown the other's drawing, never their own.
 	waitFor(t, func() bool {
-		return host.State().Draw != nil && len(host.State().Draw.Guessed) == 1
+		return host.State().Draw != nil && host.State().Draw.Prompt != nil && host.State().Draw.Prompt.Kind == "drawing"
 	})
-	if guest.State().Draw.Word != "" {
-		t.Fatal("the guesser must still never learn the word, even after a correct guess broadcast")
+	if host.State().Draw.Prompt.FromPeerID != "g1" {
+		t.Fatalf("host should be guessing the guest's drawing, got from %q", host.State().Draw.Prompt.FromPeerID)
+	}
+	if guest.State().Draw.Prompt.FromPeerID != "h1" {
+		t.Fatalf("guest should be guessing the host's drawing, got from %q", guest.State().Draw.Prompt.FromPeerID)
+	}
+
+	if err := host.DrawEngine().SubmitGuess("a guess"); err != nil {
+		t.Fatal(err)
+	}
+	if err := guest.DrawEngine().SubmitGuess("another guess"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return host.State().Phase == party.PhaseFinished })
+	waitFor(t, func() bool { return guest.State().Phase == party.PhaseFinished })
+	if len(host.State().Draw.Chains) != 2 {
+		t.Fatalf("got %d chains at the end, want one per player", len(host.State().Draw.Chains))
 	}
 }
 

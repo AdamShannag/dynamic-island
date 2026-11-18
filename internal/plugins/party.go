@@ -138,7 +138,7 @@ func playingSummary(s party.State) string {
 		if s.Draw == nil {
 			return ""
 		}
-		return fmt.Sprintf("Round %d of %d", s.Draw.Round, s.Draw.TotalRounds)
+		return fmt.Sprintf("Pass %d of %d", s.Draw.Pass, s.Draw.TotalPasses)
 	case party.ModeSnake:
 		if s.Snake == nil {
 			return ""

@@ -55,15 +55,15 @@ func (a *api) RaceProgress(typedChars int32) *dbus.Error {
 	return dbusErr(a.party.Engine().RaceEngine().SubmitProgress(int(typedChars)))
 }
 
-func (a *api) DrawStroke(stroke string) *dbus.Error {
-	var s draw.Stroke
-	if err := json.Unmarshal([]byte(stroke), &s); err != nil {
+func (a *api) DrawSubmitDrawing(strokes string) *dbus.Error {
+	var s []draw.Stroke
+	if err := json.Unmarshal([]byte(strokes), &s); err != nil {
 		return dbusErr(err)
 	}
-	return dbusErr(a.party.Engine().DrawEngine().SubmitStroke(s))
+	return dbusErr(a.party.Engine().DrawEngine().SubmitDrawing(s))
 }
 
-func (a *api) DrawGuess(text string) *dbus.Error {
+func (a *api) DrawSubmitGuess(text string) *dbus.Error {
 	return dbusErr(a.party.Engine().DrawEngine().SubmitGuess(text))
 }
 

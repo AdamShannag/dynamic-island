@@ -259,7 +259,7 @@ export class PlayPage extends Page {
         segmented.add_child(this._modeSnakeBtn);
 
         this._roundsRow = new St.BoxLayout({style_class: 'island-rounds-row'});
-        this._roundsRow.add_child(label('island-rounds-label', {text: 'Rounds', x_expand: true}));
+        this._roundsRow.add_child(label('island-rounds-label', {text: 'Passes', x_expand: true}));
         const stepper = new St.BoxLayout({style_class: 'island-rounds-stepper'});
         stepper.add_child(iconButton('list-remove-symbolic', 'island-rounds-stepper-btn',
             () => this._changeRounds(-1), 'Fewer rounds'));
@@ -412,9 +412,9 @@ export class PlayPage extends Page {
         this._guestSig = this._syncPlayerRows(this._guestPlayerList, this._guestPlayerRefs, this._guestSig, players, state.selfId, host?.peerId);
         const modeText = state.mode === 'race' ? 'a typing race'
             : state.mode === 'snake' ? 'snake'
-                : state.mode === 'draw' ? 'draw & guess' : '';
+                : state.mode === 'draw' ? 'a drawing chain' : '';
         setText(this._guestModeLabel, state.mode
-            ? `Playing ${modeText}${state.mode === 'draw' ? ` · ${state.rounds ?? 3} rounds` : ''}`
+            ? `Playing ${modeText}${state.mode === 'draw' ? ` · ${state.rounds ?? 3} passes` : ''}`
             : 'Waiting for the host to pick a game');
         this._respondBar.visible = !this._guestResponded;
         this._guestLeaveBar.visible = !!this._guestResponded;
@@ -636,38 +636,91 @@ export class PlayPage extends Page {
         row.width = players.length ? x + (28 - step) : 1;
     }
 
-    _buildCanvas() {
-        const canvas = new St.DrawingArea({style_class: 'island-draw-canvas', x_expand: true, y_expand: true, reactive: true});
-        canvas.connect('repaint', area => this._paint(area));
-        canvas.connect('button-press-event', (actor, event) => this._onPressStart(actor, event));
-        canvas.connect('motion-event', (actor, event) => this._onPointerMove(actor, event));
-        canvas.connect('button-release-event', () => this._onPressEnd());
-        canvas.connect('leave-event', () => this._onPressEnd());
+    _buildCanvas(interactive = true) {
+        const canvas = new St.DrawingArea({style_class: 'island-draw-canvas', x_expand: true, y_expand: true, reactive: interactive});
+        if (interactive) {
+            canvas.connect('repaint', area => this._paint(area));
+            canvas.connect('button-press-event', (actor, event) => this._onPressStart(actor, event));
+            canvas.connect('motion-event', (actor, event) => this._onPointerMove(actor, event));
+            canvas.connect('button-release-event', () => this._onPressEnd());
+            canvas.connect('leave-event', () => this._onPressEnd());
+        } else {
+            canvas.connect('repaint', area => this._paintGuessDrawing(area));
+        }
         const wrap = new St.BoxLayout({style_class: 'island-draw-canvas-wrap', x_expand: true, y_expand: true});
         wrap.add_child(canvas);
         return {canvas, wrap};
+    }
+
+    _buildPips() {
+        return new St.BoxLayout({style_class: 'island-draw-pips', x_align: Clutter.ActorAlign.END});
+    }
+
+    _syncPips(row, pass, totalPasses) {
+        if (row._n !== totalPasses) {
+            row.destroy_all_children();
+            row._n = totalPasses;
+            for (let i = 0; i < totalPasses; i++)
+                row.add_child(new St.Widget({style_class: 'island-draw-pip'}));
+        }
+        const children = row.get_children();
+        for (let i = 0; i < children.length; i++) {
+            children[i].remove_style_class_name('done');
+            children[i].remove_style_class_name('current');
+            if (i < pass - 1)
+                children[i].add_style_class_name('done');
+            else if (i === pass - 1)
+                children[i].add_style_class_name('current');
+        }
+    }
+
+    _buildWaitOverlay() {
+        const overlay = new St.Bin({
+            style_class: 'island-draw-overlay', x_expand: true, y_expand: true,
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+        });
+        const col = column({x_align: Clutter.ActorAlign.CENTER});
+        overlay._msg = label('island-draw-overlay-msg', {text: '', x_align: Clutter.ActorAlign.CENTER});
+        overlay._list = column({style_class: 'island-draw-overlay-list', x_align: Clutter.ActorAlign.CENTER});
+        col.add_child(overlay._msg);
+        col.add_child(overlay._list);
+        overlay.child = col;
+        overlay.hide();
+        return overlay;
+    }
+
+    _syncWaitOverlay(overlay, waiting, selfId) {
+        const others = (waiting ?? []).filter(w => w.peerId !== selfId);
+        const remaining = others.filter(w => !w.done).length;
+        setText(overlay._msg, remaining > 0
+            ? `Waiting on ${remaining} more player${remaining === 1 ? '' : 's'}…`
+            : 'Everyone is ready…');
+        overlay._list.destroy_all_children();
+        for (const w of others)
+            overlay._list.add_child(this._statusRow(w.done ? 'ready' : 'waiting', w.done ? `${w.name} — done` : `${w.name} — waiting`));
     }
 
     _buildDrawing() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
 
         const top = new St.BoxLayout({x_expand: true});
-        this._drawRoundLabel = label('island-igroup-title', {text: '', x_expand: true});
-        this._drawTimer = label('island-race-timer');
-        this._drawPresence = this._buildPresenceRow();
-        top.add_child(this._drawRoundLabel);
-        top.add_child(this._drawTimer);
-        top.add_child(this._drawPresence);
+        this._drawPassLabel = label('island-igroup-title', {text: '', x_expand: true});
+        this._drawPips = this._buildPips();
+        top.add_child(this._drawPassLabel);
+        top.add_child(this._drawPips);
 
-        this._wordPill = new St.BoxLayout({style_class: 'island-draw-word-pill', x_align: Clutter.ActorAlign.CENTER});
+        this._wordPromptLabel = label('island-draw-prompt-label', {text: 'DRAW THIS', x_align: Clutter.ActorAlign.CENTER});
         this._wordLabel = label('island-draw-word-text');
         this._wordLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-        this._wordPill.add_child(this._wordLabel);
-        const wordWrap = new St.Bin({child: this._wordPill, x_align: Clutter.ActorAlign.CENTER});
-        this._wordHint = label('island-draw-word-hint', {text: 'Only you can see the word', x_align: Clutter.ActorAlign.CENTER});
+        const promptWrap = new St.Bin({child: this._wordPromptLabel, x_align: Clutter.ActorAlign.CENTER});
+        const wordWrap = new St.Bin({child: this._wordLabel, x_align: Clutter.ActorAlign.CENTER});
 
         const {canvas: drawCanvas, wrap: canvasWrap} = this._buildCanvas();
         this._drawCanvas = drawCanvas;
+        const canvasStack = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
+        canvasStack.add_child(canvasWrap);
+        this._drawWaitOverlay = this._buildWaitOverlay();
+        canvasStack.add_child(this._drawWaitOverlay);
 
         const toolsRow = new St.BoxLayout({x_expand: true});
         this._swatchRow = new St.BoxLayout({style_class: 'island-draw-tools'});
@@ -690,17 +743,21 @@ export class PlayPage extends Page {
         this._swatchRow.add_child(eraser);
         this._swatchButtons.push({btn: eraser, color: CANVAS_BG});
         this._selectColor(this._inkColor, this._swatchButtons[0].btn, INK_WIDTH);
-        const drawLeave = this._leaveButton('Leave', 'link');
+        this._drawDoneBtn = pillButton('Done', () => this._submitDrawing(), 'primary');
         toolsRow.add_child(this._swatchRow);
-        const spacer = new St.Widget({x_expand: true});
-        toolsRow.add_child(spacer);
-        toolsRow.add_child(drawLeave);
+        toolsRow.add_child(new St.Widget({x_expand: true}));
+        toolsRow.add_child(this._drawDoneBtn);
+
+        const leaveRow = new St.BoxLayout({x_expand: true});
+        leaveRow.add_child(new St.Widget({x_expand: true}));
+        leaveRow.add_child(this._leaveButton('Leave', 'link'));
 
         view.add_child(top);
+        view.add_child(promptWrap);
         view.add_child(wordWrap);
-        view.add_child(this._wordHint);
-        view.add_child(canvasWrap);
+        view.add_child(canvasStack);
         view.add_child(toolsRow);
+        view.add_child(leaveRow);
         return view;
     }
 
@@ -715,66 +772,115 @@ export class PlayPage extends Page {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
 
         const top = new St.BoxLayout({x_expand: true});
-        this._guessRoundLabel = label('island-igroup-title', {text: '', x_expand: true});
-        this._guessTimer = label('island-race-timer');
-        this._guessPresence = this._buildPresenceRow();
-        top.add_child(this._guessRoundLabel);
-        top.add_child(this._guessTimer);
-        top.add_child(this._guessPresence);
+        this._guessPassLabel = label('island-igroup-title', {text: '', x_expand: true});
+        this._guessPips = this._buildPips();
+        top.add_child(this._guessPassLabel);
+        top.add_child(this._guessPips);
 
-        const drawerRow = new St.BoxLayout({style_class: 'island-draw-drawer-row', x_align: Clutter.ActorAlign.CENTER});
-        this._drawerAvatar = badge({glyph: '?', color: '#8e8e93'});
-        this._drawerAvatar.add_style_class_name('island-draw-drawer-avatar');
-        this._drawerLabel = label('island-draw-drawer-label');
-        drawerRow.add_child(this._drawerAvatar);
-        drawerRow.add_child(this._drawerLabel);
-        const drawerWrap = new St.Bin({child: drawerRow, x_align: Clutter.ActorAlign.CENTER});
-
-        const {canvas: guessCanvas, wrap: guessCanvasWrap} = this._buildCanvas();
+        const {canvas: guessCanvas, wrap: guessCanvasWrap} = this._buildCanvas(false);
         this._guessCanvas = guessCanvas;
 
+        const drawerRow = new St.BoxLayout({style_class: 'island-draw-drawer-row', x_align: Clutter.ActorAlign.CENTER});
+        this._guessDrawerAvatar = badge({glyph: '?', color: '#8e8e93'});
+        this._guessDrawerAvatar.add_style_class_name('island-draw-drawer-avatar');
+        this._guessDrawerLabel = label('island-draw-drawer-label');
+        drawerRow.add_child(this._guessDrawerAvatar);
+        drawerRow.add_child(this._guessDrawerLabel);
+        const drawerWrap = new St.Bin({child: drawerRow, x_align: Clutter.ActorAlign.CENTER});
+
+        this._guessActive = column();
+        this._guessPromptLabel = label('island-draw-guess-prompt', {text: '', x_align: Clutter.ActorAlign.CENTER});
         this._guessEntry = new St.Entry({
             style_class: 'island-draw-guess-entry', hint_text: 'Type your guess…',
             can_focus: true, x_expand: true,
         });
         this._guessEntry.clutter_text.connect('activate', () => this._submitGuess());
+        this._guessActive.add_child(new St.Bin({child: this._guessPromptLabel, x_align: Clutter.ActorAlign.CENTER}));
+        this._guessActive.add_child(this._guessEntry);
+
+        this._guessDoneCard = column({style_class: 'island-draw-confirm-card', x_align: Clutter.ActorAlign.CENTER});
+        this._guessDoneLabel = label('island-draw-confirm-label', {text: 'YOU GUESSED', x_align: Clutter.ActorAlign.CENTER});
+        this._guessDoneLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this._guessDoneValue = label('island-draw-confirm-value', {x_align: Clutter.ActorAlign.CENTER});
+        this._guessDoneCard.add_child(this._guessDoneLabel);
+        this._guessDoneCard.add_child(this._guessDoneValue);
+        this._guessDoneCard.hide();
+        this._guessWaitList = column({x_align: Clutter.ActorAlign.CENTER});
+        this._guessWaitList.hide();
+
         const guessLeave = this._leaveButton('Leave', 'link');
         guessLeave.x_align = Clutter.ActorAlign.CENTER;
 
         view.add_child(top);
-        view.add_child(drawerWrap);
         view.add_child(guessCanvasWrap);
-        view.add_child(this._guessEntry);
+        view.add_child(drawerWrap);
+        view.add_child(this._guessActive);
+        view.add_child(this._guessDoneCard);
+        view.add_child(this._guessWaitList);
         view.add_child(guessLeave);
         return view;
     }
 
     _buildReveal() {
         const view = column({style_class: 'island-page', x_expand: true, y_expand: true});
-        this._revealWord = label('island-race-finish-title', {x_align: Clutter.ActorAlign.CENTER});
-        this._revealHint = label('island-race-subtitle', {x_align: Clutter.ActorAlign.CENTER, text: 'Next round starting…'});
-        const scoresGroup = group('THIS ROUND');
-        this._revealScoresList = scoresGroup.list;
-        const groups = column({style_class: 'island-groups'});
-        groups.add_child(scoresGroup.actor);
-        view.add_child(this._revealWord);
-        view.add_child(this._revealHint);
-        view.add_child(scrollView(groups));
+        const eyebrow = label('island-igroup-title', {text: 'THE REVEAL'});
+
+        const grid = new St.BoxLayout({style_class: 'island-reveal-grid', x_expand: true, y_expand: true});
+        this._chainList = column({style_class: 'island-reveal-chainlist'});
+        const chainScroll = scrollView(this._chainList);
+        this._threadColumn = column({style_class: 'island-reveal-thread'});
+        const threadScroll = scrollView(this._threadColumn);
+        threadScroll.x_expand = true;
+        grid.add_child(chainScroll);
+        grid.add_child(threadScroll);
+
+        const leaveRow = new St.BoxLayout({x_expand: true});
+        leaveRow.add_child(new St.Widget({x_expand: true}));
+        leaveRow.add_child(this._leaveButton('Leave lobby', 'link'));
+
+        view.add_child(eyebrow);
+        view.add_child(grid);
+        view.add_child(leaveRow);
+        this._chainRowRefs = new Map();
         return view;
+    }
+
+    _paintStrokesBg(cr, w, h, strokes) {
+        const [bgR, bgG, bgB] = hexToRgb(CANVAS_BG);
+        cr.setSourceRGB(bgR, bgG, bgB);
+        cr.rectangle(0, 0, w, h);
+        cr.fill();
+        for (const stroke of strokes ?? [])
+            this._paintStroke(cr, stroke, w, h);
     }
 
     _paint(area) {
         const cr = area.get_context();
         try {
             const [w, h] = area.get_surface_size();
-            const [bgR, bgG, bgB] = hexToRgb(CANVAS_BG);
-            cr.setSourceRGB(bgR, bgG, bgB);
-            cr.rectangle(0, 0, w, h);
-            cr.fill();
-            for (const stroke of this._strokes ?? [])
-                this._paintStroke(cr, stroke, w, h);
+            this._paintStrokesBg(cr, w, h, this._strokes);
             if (this._liveStroke)
                 this._paintStroke(cr, this._liveStroke, w, h);
+        } finally {
+            cr.$dispose();
+        }
+    }
+
+    _paintGuessDrawing(area) {
+        const cr = area.get_context();
+        try {
+            const [w, h] = area.get_surface_size();
+            this._paintStrokesBg(cr, w, h, this._guessPromptStrokes);
+        } finally {
+            cr.$dispose();
+        }
+    }
+
+    _paintThumbStrokes(area, strokes) {
+        const cr = area.get_context();
+        try {
+            const [w, h] = area.get_surface_size();
+            this._paintStrokesBg(cr, w, h, strokes);
         } finally {
             cr.$dispose();
         }
@@ -813,12 +919,13 @@ export class PlayPage extends Page {
         return {x: Math.min(1, Math.max(0, lx / w)), y: Math.min(1, Math.max(0, ly / h))};
     }
 
-    _isSelfDrawing() {
-        return this._phase === 'playing' && this._mode === 'draw' && this._drawerId && this._drawerId === this._selfId;
+    _canDraw() {
+        return this._phase === 'playing' && this._mode === 'draw' &&
+            this._drawSubPhase === 'drawing' && !this._drawSelfDone;
     }
 
     _onPressStart(actor, event) {
-        if (!this._isSelfDrawing())
+        if (!this._canDraw())
             return Clutter.EVENT_PROPAGATE;
         const p = this._localPoint(actor, event);
         if (!p)
@@ -861,51 +968,174 @@ export class PlayPage extends Page {
         if (stroke.points.length === 0)
             return;
         this._strokes = [...(this._strokes ?? []), stroke];
-        this.call('DrawStroke', [JSON.stringify(stroke)]);
+    }
+
+    _submitDrawing() {
+        if (this._liveStroke)
+            this._flushLiveStroke(true);
+        this._drawCanvas.queue_repaint();
+        this.call('DrawSubmitDrawing', [JSON.stringify(this._strokes ?? [])]);
     }
 
     _submitGuess() {
         const text = this._guessEntry.text.trim();
-        this._guessEntry.text = '';
         if (!text)
             return;
-        this.call('DrawGuess', [text]);
+        this._guessEntry.text = '';
+        this._lastGuessSubmitted = text;
+        this.call('DrawSubmitGuess', [text]);
     }
 
-    _renderDrawing(draw, isDrawer) {
-        this._strokes = draw.strokes ?? [];
-        const secsLeft = Math.max(0, Math.round(((draw.roundEndsAtMs ?? 0) - Date.now()) / 1000));
-        const players = draw.players ?? [];
-        const guessedIds = new Set(draw.guessed ?? []);
-        if (isDrawer) {
-            setText(this._drawRoundLabel, `ROUND ${draw.round} OF ${draw.totalRounds} · YOU'RE DRAWING`);
-            setText(this._drawTimer, `${secsLeft}s`);
-            setText(this._wordLabel, (draw.word ?? '').toUpperCase());
-            this._syncDrawPresence(this._drawPresence, players, guessedIds);
-        } else {
-            setText(this._guessRoundLabel, `ROUND ${draw.round} OF ${draw.totalRounds}`);
-            setText(this._guessTimer, `${secsLeft}s`);
-            this._drawerAvatar.set_style(`background-color: ${this._playerColor(draw.drawerId)};`);
-            this._drawerAvatar.child.text = (draw.drawerName?.[0] ?? '?').toUpperCase();
-            setText(this._drawerLabel, `${draw.drawerName} is drawing`);
-            this._syncDrawPresence(this._guessPresence, players, guessedIds);
+    _selfDoneThisStep(waiting) {
+        return (waiting ?? []).find(w => w.peerId === this._selfId)?.done ?? false;
+    }
+
+    _renderDraw(draw) {
+        const pass = draw.pass ?? 1, total = draw.totalPasses ?? 3;
+        const stepKey = `draw:${pass}`;
+        if (this._drawStepKey !== stepKey) {
+            this._drawStepKey = stepKey;
+            this._strokes = [];
+            this._liveStroke = null;
         }
-        (isDrawer ? this._drawCanvas : this._guessCanvas).queue_repaint();
+        const selfDone = this._selfDoneThisStep(draw.waiting);
+        this._drawSubPhase = 'drawing';
+        this._drawSelfDone = selfDone;
+
+        setText(this._drawPassLabel, `PASS ${pass} OF ${total} · DRAW`);
+        this._syncPips(this._drawPips, pass, total);
+        setText(this._wordLabel, (draw.prompt?.word ?? '').toUpperCase());
+        this._drawDoneBtn.reactive = !selfDone;
+        this._drawDoneBtn.opacity = selfDone ? 140 : 255;
+        this._drawDoneBtn.label = selfDone ? 'Waiting…' : 'Done';
+        this._drawWaitOverlay.visible = selfDone;
+        if (selfDone)
+            this._syncWaitOverlay(this._drawWaitOverlay, draw.waiting, this._selfId);
+        this._drawCanvas.queue_repaint();
     }
 
-    _renderReveal(draw) {
-        const lr = draw.lastRound;
-        setText(this._revealWord, lr ? `The word was "${lr.word}"` : '');
-        fillList(this._revealScoresList, lr?.deltas ?? [], d => this._deltaRow(d));
+    _renderGuess(draw) {
+        const pass = draw.pass ?? 1, total = draw.totalPasses ?? 3;
+        const stepKey = `guess:${pass}`;
+        const isNewStep = this._guessStepKey !== stepKey;
+        this._guessStepKey = stepKey;
+        const selfDone = this._selfDoneThisStep(draw.waiting);
+        this._drawSubPhase = 'guessing';
+        this._drawSelfDone = selfDone;
+
+        setText(this._guessPassLabel, `PASS ${pass} OF ${total} · GUESS`);
+        this._syncPips(this._guessPips, pass, total);
+        const prompt = draw.prompt;
+        this._guessPromptStrokes = prompt?.strokes ?? [];
+        this._guessDrawerAvatar.set_style(`background-color: ${this._playerColor(prompt?.fromPeerId)};`);
+        this._guessDrawerAvatar.child.text = (prompt?.fromName?.[0] ?? '?').toUpperCase();
+        setText(this._guessDrawerLabel, `Drawn by ${prompt?.fromName ?? ''}`);
+        setText(this._guessPromptLabel, `What did ${prompt?.fromName ?? 'they'} draw?`);
+        this._guessActive.visible = !selfDone;
+        this._guessDoneCard.visible = selfDone;
+        this._guessWaitList.visible = selfDone;
+        if (selfDone) {
+            setText(this._guessDoneValue, `"${this._lastGuessSubmitted ?? ''}"`);
+            this._guessWaitList.destroy_all_children();
+            for (const w of (draw.waiting ?? []).filter(x => x.peerId !== this._selfId))
+                this._guessWaitList.add_child(this._statusRow(w.done ? 'ready' : 'waiting', w.done ? `${w.name} — done` : `${w.name} — guessing`));
+        }
+        this._guessCanvas.queue_repaint();
+        if (isNewStep && !selfDone)
+            this._guessEntry.grab_key_focus();
     }
 
-    _deltaRow(d) {
-        const row = new St.BoxLayout({style_class: 'island-irow island-irow-box', x_expand: true});
-        const avatar = badge({glyph: (d.name[0] ?? '?').toUpperCase(), color: this._playerColor(d.peerId)});
-        avatar.add_style_class_name('island-race-row-avatar');
+    _renderDrawReveal(state) {
+        const chains = state.draw?.chains ?? [];
+        const sig = chains.map(c => c.ownerId).join('|');
+        if (sig !== this._revealChainsSig) {
+            this._revealChainsSig = sig;
+            this._chainList.destroy_all_children();
+            this._chainRowRefs.clear();
+            for (const c of chains) {
+                const row = this._chainRow(c, state.selfId);
+                this._chainList.add_child(row);
+                this._chainRowRefs.set(c.ownerId, row);
+            }
+            const preferred = chains.find(c => c.ownerId === state.selfId) ?? chains[0];
+            this._revealSelectedChain = preferred?.ownerId ?? null;
+            this._revealThreadSig = null;
+        }
+        this._syncChainSelection();
+        const selected = chains.find(c => c.ownerId === this._revealSelectedChain) ?? chains[0];
+        if (selected)
+            this._renderChainThread(selected);
+    }
+
+    _chainRow(chain, selfId) {
+        const row = new St.BoxLayout({
+            style_class: 'island-irow island-irow-box island-reveal-chainrow', x_expand: true,
+            reactive: true, track_hover: true, can_focus: true,
+        });
+        const avatar = badge({glyph: (chain.ownerName[0] ?? '?').toUpperCase(), color: this._playerColor(chain.ownerId)});
         row.add_child(avatar);
-        row.add_child(label('island-irow-title', {text: d.name, x_expand: true}));
-        row.add_child(label('island-irow-sub', {text: `+${d.points}`, x_align: Clutter.ActorAlign.END}));
+        const text = column({x_expand: true});
+        text.add_child(label('island-irow-title', {text: chain.entries[0]?.word ?? '', x_expand: true}));
+        text.add_child(label('island-irow-sub', {text: chain.ownerId === selfId ? 'Started by you' : `Started by ${chain.ownerName}`}));
+        row.add_child(text);
+        row.connect('button-press-event', () => {
+            this._revealSelectedChain = chain.ownerId;
+            this._syncChainSelection();
+            this._renderChainThread(chain);
+            return Clutter.EVENT_STOP;
+        });
+        return row;
+    }
+
+    _syncChainSelection() {
+        for (const [ownerId, row] of this._chainRowRefs) {
+            if (ownerId === this._revealSelectedChain)
+                row.add_style_class_name('selected');
+            else
+                row.remove_style_class_name('selected');
+        }
+    }
+
+    _renderChainThread(chain) {
+        const sig = `${chain.ownerId}:${chain.entries.length}`;
+        if (sig === this._revealThreadSig)
+            return;
+        this._revealThreadSig = sig;
+        this._threadColumn.destroy_all_children();
+        chain.entries.forEach((entry, i) => {
+            this._threadColumn.add_child(this._stepRow(entry, i === chain.entries.length - 1));
+        });
+    }
+
+    _stepRow(entry, isLast) {
+        const row = new St.BoxLayout({style_class: 'island-reveal-step', x_expand: true});
+        const rail = new St.BoxLayout({style_class: 'island-reveal-rail', vertical: true, x_align: Clutter.ActorAlign.CENTER});
+        rail.add_child(new St.Widget({style_class: `island-reveal-dot ${entry.kind === 'word' ? 'word' : 'draw'}`}));
+        if (!isLast)
+            rail.add_child(new St.Widget({style_class: 'island-reveal-line', y_expand: true}));
+
+        const body = column({x_expand: true, style_class: 'island-reveal-step-body'});
+        const who = new St.BoxLayout({style_class: 'island-reveal-who'});
+        const avatar = badge({glyph: (entry.name[0] ?? '?').toUpperCase(), color: this._playerColor(entry.peerId)});
+        avatar.add_style_class_name('island-reveal-who-avatar');
+        who.add_child(avatar);
+        who.add_child(label('island-reveal-who-text', {text: `${entry.name} ${entry.kind === 'word' ? 'wrote' : 'drew'}`}));
+        body.add_child(who);
+        if (entry.kind === 'word') {
+            body.add_child(label(`island-reveal-word-card${entry.final ? ' final' : ''}`, {text: entry.word ?? ''}));
+        } else {
+            // A DrawingArea's own preferred size isn't reliable once a
+            // parent layout stretches it, so size it via a plain wrapper
+            // widget (CSS width/height work fine there) and let the canvas
+            // just fill that fixed box.
+            const cardWrap = new St.Widget({style_class: 'island-reveal-draw-card', layout_manager: new Clutter.BinLayout()});
+            const canvas = new St.DrawingArea({x_expand: true, y_expand: true});
+            canvas.connect('repaint', area => this._paintThumbStrokes(area, entry.strokes ?? []));
+            cardWrap.add_child(canvas);
+            body.add_child(cardWrap);
+        }
+        row.add_child(rail);
+        row.add_child(body);
         return row;
     }
 
@@ -1289,39 +1519,14 @@ export class PlayPage extends Page {
         return row;
     }
 
+    // A finished draw game is routed to the chain reveal before it ever
+    // reaches _renderResult, so this only ever handles the missed/host-left
+    // cases - there is no score list to show for those.
     _renderDrawResult(state, finished, missed) {
-        const players = state.draw?.players ?? [];
-        const ranked = [...players].sort((a, b) => b.score - a.score);
-        const winner = ranked[0];
-        setText(this._resultTitle, finished ? 'Game finished' : missed ? 'That game already started' : 'The host left the game');
-        setText(this._resultHint, finished
-            ? (winner ? `${winner.name} finished with the most points` : '')
-            : missed ? 'The host started before you joined.' : 'Your progress was not saved.');
-        this._resultHint.visible = !finished || !!winner;
-        this._resultGroupActor.visible = finished && ranked.length > 0;
-        if (!finished)
-            return;
-        const sig = `draw:${ranked.map(p => `${p.peerId}:${p.score}`).join('|')}`;
-        if (sig === this._resultSig)
-            return;
-        this._resultSig = sig;
-        fillList(this._resultList, ranked, (p, i) => this._drawResultRow(p, i + 1));
-    }
-
-    _drawResultRow(p, rank) {
-        const isWinner = rank === 1;
-        const row = new St.BoxLayout({style_class: `island-irow island-irow-box${isWinner ? ' winner' : ''}`, x_expand: true});
-        row.add_child(label('island-race-rank', {text: `${rank}`, x_align: Clutter.ActorAlign.CENTER}));
-        const avatar = badge({glyph: (p.name[0] ?? '?').toUpperCase(), color: this._playerColor(p.peerId)});
-        avatar.add_style_class_name(isWinner ? 'island-race-winner-avatar' : 'island-race-list-avatar');
-        row.add_child(avatar);
-        const nameRow = new St.BoxLayout({x_expand: true});
-        nameRow.add_child(label(isWinner ? 'island-irow-title island-race-winner-name' : 'island-irow-title', {text: p.name}));
-        if (isWinner)
-            nameRow.add_child(this._winnerIcon());
-        row.add_child(nameRow);
-        row.add_child(label(isWinner ? 'island-irow-sub island-race-winner-wpm' : 'island-irow-sub', {text: `${p.score} pts`, x_align: Clutter.ActorAlign.END}));
-        return row;
+        setText(this._resultTitle, missed ? 'That game already started' : 'The host left the game');
+        setText(this._resultHint, missed ? 'The host started before you joined.' : 'Your progress was not saved.');
+        this._resultHint.visible = true;
+        this._resultGroupActor.visible = false;
     }
 
     _renderSnakeResult(state, finished, missed) {
@@ -1367,7 +1572,7 @@ export class PlayPage extends Page {
         this.refresh();
         if (this._phase === 'playing' && this._mode === 'race')
             this._passageStack.grab_key_focus();
-        else if (this._phase === 'playing' && this._mode === 'draw' && !this._isSelfDrawing())
+        else if (this._phase === 'playing' && this._mode === 'draw' && this._drawSubPhase === 'guessing' && !this._drawSelfDone)
             this._guessEntry.grab_key_focus();
         return null;
     }
@@ -1409,6 +1614,15 @@ export class PlayPage extends Page {
             this._passage = null;
             this._strokes = [];
             this._liveStroke = null;
+            this._drawStepKey = null;
+            this._guessStepKey = null;
+            this._guessPromptStrokes = [];
+            this._lastGuessSubmitted = '';
+            this._drawSubPhase = null;
+            this._drawSelfDone = false;
+            this._revealChainsSig = null;
+            this._revealThreadSig = null;
+            this._revealSelectedChain = null;
             this._selfCaret.visible = false;
             this._selfCaret._lastIndex = undefined;
             for (const caret of this._raceMarkers.values())
@@ -1420,7 +1634,6 @@ export class PlayPage extends Page {
         this._phase = state.phase;
         this._mode = state.mode;
         this._selfId = state.selfId;
-        this._drawerId = state.draw?.drawerId;
 
         if (state.phase === 'idle') {
             this._showView('idle');
@@ -1437,19 +1650,19 @@ export class PlayPage extends Page {
                 this._passageStack.grab_key_focus();
         } else if (state.phase === 'playing' && state.mode === 'draw') {
             const draw = state.draw ?? {};
-            if (draw.phase === 'reveal') {
-                this._showView('reveal');
-                this._renderReveal(draw);
+            if (draw.phase === 'drawing') {
+                this._showView('drawing');
+                this._renderDraw(draw);
             } else {
-                const isDrawer = this._isSelfDrawing();
-                this._showView(isDrawer ? 'drawing' : 'guessing');
-                this._renderDrawing(draw, isDrawer);
-                if (!(prevPhase === 'playing' && prevMode === 'draw') && !isDrawer)
-                    this._guessEntry.grab_key_focus();
+                this._showView('guessing');
+                this._renderGuess(draw);
             }
         } else if (state.phase === 'playing' && state.mode === 'snake') {
             this._showView('snake');
             this._renderSnake(state.snake ?? {});
+        } else if (state.phase === 'finished' && state.mode === 'draw') {
+            this._showView('reveal');
+            this._renderDrawReveal(state);
         } else {
             this._showView('result');
             this._renderResult(state);

@@ -1088,14 +1088,26 @@
 
 .island-race-timer { font-size: 10pt; font-weight: 700; color: rgba(245, 245, 247, 0.5); font-feature-settings: "tnum"; padding: 0 10px; }
 
-.island-draw-word-pill { padding: 6px 0 0; }
-.island-draw-word-text { font-size: 15pt; font-weight: 800; letter-spacing: 1.2px; color: #0a84ff; }
-.island-draw-word-hint { font-size: 7.5pt; color: rgba(245, 245, 247, 0.3); padding-top: 3px; }
+.island-draw-prompt-label { font-size: 8pt; font-weight: 600; color: rgba(245, 245, 247, 0.4); padding-top: 4px; }
+.island-draw-word-text { font-size: 15pt; font-weight: 800; letter-spacing: 0.2px; color: #f5f5f7; padding-top: 2px; }
+
+.island-draw-pips { spacing: 5px; }
+.island-draw-pip { width: 6px; height: 6px; border-radius: 3px; background-color: rgba(255, 255, 255, 0.16); }
+.island-draw-pip.done { background-color: #30d158; }
+.island-draw-pip.current { background-color: #0a84ff; }
 
 .island-draw-canvas-wrap { padding-top: 12px; }
 .island-draw-canvas {
   min-height: 180px;
 }
+
+.island-draw-overlay {
+  background-color: rgba(0, 0, 0, 0.72);
+  border-radius: 16px;
+  padding: 18px;
+}
+.island-draw-overlay-msg { font-size: 10pt; font-weight: 600; color: #fff; padding-bottom: 10px; }
+.island-draw-overlay-list { spacing: 9px; }
 
 .island-draw-tools { spacing: 10px; }
 .island-draw-swatch { width: 16px; height: 16px; border-radius: 9px; border: 2px solid rgba(255, 255, 255, 0.4); }
@@ -1118,13 +1130,59 @@
 .island-draw-presence-avatar .island-badge-glyph { font-size: 7pt; }
 .island-draw-presence-guessed { box-shadow: 0 0 0 2px #30d158; }
 
+.island-draw-guess-prompt { font-size: 11pt; font-weight: 700; padding: 10px 0; }
 .island-draw-guess-entry {
-  margin-top: 12px;
   background-color: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   padding: 11px 18px;
   font-size: 10pt;
+}
+
+.island-draw-confirm-card {
+  background-color: rgba(48, 209, 88, 0.08);
+  border: 1px solid rgba(48, 209, 88, 0.2);
+  border-radius: 14px;
+  padding: 14px;
+  spacing: 4px;
+  margin-top: 10px;
+}
+.island-draw-confirm-label { font-size: 7.5pt; font-weight: 700; letter-spacing: 0.6px; color: rgba(48, 209, 88, 0.8); }
+.island-draw-confirm-value { font-size: 12pt; font-weight: 800; }
+
+.island-reveal-grid { spacing: 18px; }
+.island-reveal-chainlist { width: 170px; spacing: 4px; }
+.island-reveal-chainrow.selected { background-color: rgba(10, 132, 255, 0.14); }
+.island-reveal-thread { spacing: 0; padding-right: 4px; }
+.island-reveal-step { spacing: 12px; }
+.island-reveal-rail { width: 14px; spacing: 3px; }
+.island-reveal-dot { width: 11px; height: 11px; border-radius: 6px; }
+.island-reveal-dot.word { background-color: #0a84ff; }
+.island-reveal-dot.draw { background-color: #30d158; }
+.island-reveal-line { width: 2px; background-color: rgba(255, 255, 255, 0.1); }
+.island-reveal-step-body { spacing: 7px; padding-bottom: 18px; }
+.island-reveal-who { spacing: 7px; }
+.island-badge.island-reveal-who-avatar { width: 20px; height: 20px; border-radius: 10px; }
+.island-reveal-who-avatar .island-badge-glyph { font-size: 7.5pt; }
+.island-reveal-who-text { font-size: 8pt; font-weight: 600; color: rgba(245, 245, 247, 0.5); }
+.island-reveal-word-card {
+  background-color: #141417;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 9px 16px;
+  font-size: 11pt;
+  font-weight: 800;
+}
+.island-reveal-word-card.final {
+  background-color: rgba(255, 214, 10, 0.1);
+  border-color: rgba(255, 214, 10, 0.3);
+  color: #ffd60a;
+}
+.island-reveal-draw-card {
+  width: 150px;
+  height: 100px;
+  border-radius: 12px;
+  background-color: #f5f5f7;
 }
 
 .island-snake-hud-label { font-size: 8pt; font-weight: 700; letter-spacing: 0.04em; color: rgba(245, 245, 247, 0.36); }

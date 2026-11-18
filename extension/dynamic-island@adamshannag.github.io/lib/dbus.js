@@ -65,8 +65,8 @@ export const INTERFACE_XML = `
     <method name="PartyRematch"/>
     <method name="PartyLeave"/>
     <method name="RaceProgress"><arg name="typed_chars" type="i" direction="in"/></method>
-    <method name="DrawStroke"><arg name="stroke" type="s" direction="in"/></method>
-    <method name="DrawGuess"><arg name="text" type="s" direction="in"/></method>
+    <method name="DrawSubmitDrawing"><arg name="strokes" type="s" direction="in"/></method>
+    <method name="DrawSubmitGuess"><arg name="text" type="s" direction="in"/></method>
     <method name="SnakeInput"><arg name="heading" type="d" direction="in"/></method>
     <signal name="StateChanged"><arg name="state" type="s"/></signal>
     <signal name="OpenDashboard"><arg name="tab" type="s"/></signal>

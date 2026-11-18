@@ -1,6 +1,9 @@
-// Package draw is the drawing-and-guessing gameplay engine. It owns no
-// lobby, discovery or transport of its own - internal/party hands it a
-// roster and a shared lobby.Server-backed publish/send pair once a lobby's
+// Package draw is the drawing-telephone gameplay engine. Every player draws
+// their own word at once, then everyone guesses someone else's finished
+// drawing at once, and that guess becomes the next word to draw - repeated
+// for TotalPasses passes, ending in a reveal of every word's full chain. It
+// owns no lobby, discovery or transport of its own - internal/party hands it
+// a roster and a shared lobby.Server-backed publish/send pair once a lobby's
 // host picks draw and starts.
 package draw
 
@@ -8,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	mrand "math/rand/v2"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,21 +24,22 @@ type Phase string
 const (
 	PhaseIdle     Phase = "idle"
 	PhaseDrawing  Phase = "drawing"
-	PhaseReveal   Phase = "reveal"
+	PhaseGuessing Phase = "guessing"
 	PhaseFinished Phase = "finished"
 )
 
 const (
-	defaultRoundDuration = 80 * time.Second
-	revealDuration       = 4 * time.Second
-	maxPointsPerRound    = 4000
+	defaultDrawDuration  = 45 * time.Second
+	defaultGuessDuration = 25 * time.Second
+	defaultPasses        = 3
+	maxPointsPerDrawing  = 4000
+	maxGuessLen          = 120
 )
 
 type Player struct {
 	PeerID string `json:"peerId"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
-	Score  int    `json:"score"`
 }
 
 type Point struct {
@@ -48,66 +53,110 @@ type Stroke struct {
 	Width  float64 `json:"width"`
 }
 
-type ScoreDelta struct {
-	PeerID string `json:"peerId"`
-	Name   string `json:"name"`
-	Points int    `json:"points"`
+// Entry is one link in a chain: either the word it started from (or a
+// guess, which plays the same role for every pass after the first) or a
+// drawing of whatever the previous entry was.
+type Entry struct {
+	PeerID  string   `json:"peerId"`
+	Name    string   `json:"name"`
+	Kind    string   `json:"kind"` // "word" | "drawing"
+	Word    string   `json:"word,omitempty"`
+	Strokes []Stroke `json:"strokes,omitempty"`
+	Final   bool     `json:"final,omitempty"`
 }
 
-type RoundResult struct {
-	Word   string       `json:"word"`
-	Drawer string       `json:"drawer"`
-	Deltas []ScoreDelta `json:"deltas"`
+// Chain is one player's starting word and everything it turned into, in
+// order. Only populated once the game has finished - exposing it mid-game
+// would let a player see everyone else's in-progress chain.
+type Chain struct {
+	OwnerID   string  `json:"ownerId"`
+	OwnerName string  `json:"ownerName"`
+	Entries   []Entry `json:"entries"`
+}
+
+// PlayerStatus is safe to broadcast to everyone mid-step: it says who has
+// submitted this step without revealing what they submitted.
+type PlayerStatus struct {
+	PeerID string `json:"peerId"`
+	Name   string `json:"name"`
+	Done   bool   `json:"done"`
+}
+
+// Prompt is what the local player must do right now. It is never broadcast
+// - it is delivered to each player individually, the same way the old
+// single-drawer game delivered the word only to its drawer.
+type Prompt struct {
+	Kind       string   `json:"kind"` // "word" | "drawing"
+	Word       string   `json:"word,omitempty"`
+	Strokes    []Stroke `json:"strokes,omitempty"`
+	FromPeerID string   `json:"fromPeerId,omitempty"`
+	FromName   string   `json:"fromName,omitempty"`
 }
 
 type State struct {
-	Phase         Phase        `json:"phase"`
-	Round         int          `json:"round"`
-	TotalRounds   int          `json:"totalRounds"`
-	DrawerID      string       `json:"drawerId"`
-	DrawerName    string       `json:"drawerName"`
-	Word          string       `json:"word"`
-	RoundEndsAtMs int64        `json:"roundEndsAtMs"`
-	Strokes       []Stroke     `json:"strokes"`
-	Guessed       []string     `json:"guessed"`
-	Players       []Player     `json:"players"`
-	LastRound     *RoundResult `json:"lastRound,omitempty"`
+	Phase        Phase          `json:"phase"`
+	Pass         int            `json:"pass"`
+	TotalPasses  int            `json:"totalPasses"`
+	PassEndsAtMs int64          `json:"passEndsAtMs"`
+	Prompt       *Prompt        `json:"prompt,omitempty"`
+	Waiting      []PlayerStatus `json:"waiting,omitempty"`
+	Players      []Player       `json:"players"`
+	Chains       []Chain        `json:"chains,omitempty"`
 }
 
-type startPayload struct {
-	Round         int      `json:"round"`
-	TotalRounds   int      `json:"totalRounds"`
-	DrawerID      string   `json:"drawerId"`
-	DrawerName    string   `json:"drawerName"`
-	Word          string   `json:"word"`
-	RoundEndsAtMs int64    `json:"roundEndsAtMs"`
-	Players       []Player `json:"players"`
+// turnPayload is what BeginHost/advanceStep send to each peer individually
+// (over the same /start transport BeginGuest and HandleStart already share)
+// to start a new step: the shared fields plus that one peer's own Prompt.
+type turnPayload struct {
+	Phase        Phase    `json:"phase"`
+	Pass         int      `json:"pass"`
+	TotalPasses  int      `json:"totalPasses"`
+	PassEndsAtMs int64    `json:"passEndsAtMs"`
+	Prompt       *Prompt  `json:"prompt,omitempty"`
+	Players      []Player `json:"players"`
 }
 
-type progressPayload struct {
-	Type   string  `json:"type"`
-	Stroke *Stroke `json:"stroke,omitempty"`
-	Text   string  `json:"text,omitempty"`
+type submitPayload struct {
+	Kind    string   `json:"kind"`
+	Word    string   `json:"word,omitempty"`
+	Strokes []Stroke `json:"strokes,omitempty"`
+}
+
+type rtEntry struct {
+	peerID, name string
+	kind         string
+	word         string
+	strokes      []Stroke
+}
+
+type rtChain struct {
+	ownerID, ownerName string
+	entries            []rtEntry
 }
 
 type Engine struct {
 	selfID   string
 	selfName string
 
-	roundDuration time.Duration
+	drawDuration  time.Duration
+	guessDuration time.Duration
 
-	mu          sync.Mutex
-	state       State
-	host        bool
-	hostAddr    string
-	lobbyID     string
-	peerAddrs   map[string]string
-	roundTimer  *time.Timer
-	revealTimer *time.Timer
-	drawOrder   []string
-	usedWords   map[string]bool
-	roundDeltas []ScoreDelta
-	onChange    func(State)
+	mu        sync.Mutex
+	state     State
+	host      bool
+	hostAddr  string
+	lobbyID   string
+	peerAddrs map[string]string
+
+	chainOrder []string            // owner peerIDs, stable order
+	chains     map[string]*rtChain // ownerID -> chain
+	turnOf     map[string]string   // ownerID -> worker peerID assigned this step
+	workerOf   map[string]string   // worker peerID -> ownerID (reverse of turnOf)
+	done       map[string]bool     // worker peerID -> submitted this step
+	pending    map[string]rtEntry  // ownerID -> the entry submitted for this step
+
+	stepTimer *time.Timer
+	onChange  func(State)
 
 	publish   func(disband bool, lobbyID string, payload json.RawMessage)
 	sendStart func(addr, lobbyID string, payload json.RawMessage) error
@@ -117,7 +166,8 @@ func NewEngine(selfID, selfName string) *Engine {
 	return &Engine{
 		selfID:        selfID,
 		selfName:      selfName,
-		roundDuration: defaultRoundDuration,
+		drawDuration:  defaultDrawDuration,
+		guessDuration: defaultGuessDuration,
 		state:         State{Phase: PhaseIdle},
 	}
 }
@@ -131,42 +181,31 @@ func (e *Engine) OnChange(fn func(State)) {
 func (e *Engine) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	s := cloneState(e.state)
-	if s.DrawerID != e.selfID {
-		s.Word = ""
-	}
-	return s
+	return cloneState(e.state)
 }
 
 func (e *Engine) notify() {
 	e.mu.Lock()
 	fn := e.onChange
 	snap := cloneState(e.state)
-	if snap.DrawerID != e.selfID {
-		snap.Word = ""
-	}
 	e.mu.Unlock()
 	if fn != nil {
 		fn(snap)
 	}
 }
 
-// BeginHost starts a drawing game for the host: players is the accepted
-// roster in turn order, peerAddrs resolves each non-self player's address.
-// rounds is the host-configured round count; a value below 1 falls back to
-// one round per player.
-func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[string]string, rounds int,
+// BeginHost starts a chain game for the host: players is the accepted
+// roster, each getting their own starting word and owning one chain.
+// peerAddrs resolves each non-self player's address. passes is the
+// host-configured number of draw+guess cycles; below 1 falls back to the
+// default.
+func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[string]string, passes int,
 	publish func(bool, string, json.RawMessage), sendStart func(addr, lobbyID string, payload json.RawMessage) error) error {
-	if len(players) == 0 {
-		return fmt.Errorf("draw: no accepted players")
+	if len(players) < 2 {
+		return fmt.Errorf("draw: needs at least 2 players")
 	}
-	if rounds < 1 {
-		rounds = len(players)
-	}
-	order := make([]string, len(players))
-	for i, p := range players {
-		order[i] = p.PeerID
-		players[i].Score = 0
+	if passes < 1 {
+		passes = defaultPasses
 	}
 
 	e.mu.Lock()
@@ -176,64 +215,40 @@ func (e *Engine) BeginHost(lobbyID string, players []Player, peerAddrs map[strin
 	e.peerAddrs = peerAddrs
 	e.publish = publish
 	e.sendStart = sendStart
-	e.drawOrder = order
-	e.usedWords = map[string]bool{}
-	e.roundDeltas = nil
 
-	round := 1
-	drawerID := order[0]
-	drawerName := players[0].Name
-	word := e.pickWordLocked()
-	endsAt := time.Now().Add(e.roundDuration).UnixMilli()
-
-	e.state = State{
-		Phase: PhaseDrawing, Round: round, TotalRounds: rounds,
-		DrawerID: drawerID, DrawerName: drawerName, Word: word,
-		RoundEndsAtMs: endsAt, Players: clonePlayers(players),
+	chosen := pickWords(len(players))
+	e.chainOrder = make([]string, len(players))
+	e.chains = make(map[string]*rtChain, len(players))
+	e.turnOf = make(map[string]string, len(players))
+	e.workerOf = make(map[string]string, len(players))
+	e.done = map[string]bool{}
+	e.pending = map[string]rtEntry{}
+	for i, p := range players {
+		e.chainOrder[i] = p.PeerID
+		e.chains[p.PeerID] = &rtChain{
+			ownerID: p.PeerID, ownerName: p.Name,
+			entries: []rtEntry{{peerID: p.PeerID, name: p.Name, kind: "word", word: chosen[i]}},
+		}
+		// Round 1's draw is always the owner drawing their own word -
+		// reassignment only begins once there is a drawing to guess.
+		e.turnOf[p.PeerID] = p.PeerID
+		e.workerOf[p.PeerID] = p.PeerID
 	}
-	playersCopy := clonePlayers(e.state.Players)
-	e.roundTimer = time.AfterFunc(e.roundDuration, func() { e.expireRound(lobbyID, round) })
-	e.mu.Unlock()
-	e.notify()
 
-	e.sendRoundStarts(peerAddrs, lobbyID, round, rounds, drawerID, drawerName, word, endsAt, playersCopy)
-
-	e.mu.Lock()
-	if e.lobbyID == lobbyID {
-		e.publishLocked()
-	}
+	e.state = State{Phase: PhaseDrawing, Pass: 1, TotalPasses: passes, Players: clonePlayers(players)}
+	e.state.PassEndsAtMs = time.Now().Add(e.drawDuration).UnixMilli()
+	e.startStepTimerLocked(lobbyID, PhaseDrawing, e.drawDuration)
 	e.mu.Unlock()
+
+	e.sendTurnMessages(lobbyID)
 	return nil
 }
 
-func (e *Engine) sendRoundStarts(peerAddrs map[string]string, lobbyID string, round, total int, drawerID, drawerName, word string, endsAt int64, players []Player) {
-	var wg sync.WaitGroup
-	for peerID, addr := range peerAddrs {
-		if peerID == e.selfID {
-			continue
-		}
-		wg.Add(1)
-		go func(peerID, addr string) {
-			defer wg.Done()
-			w := ""
-			if peerID == drawerID {
-				w = word
-			}
-			payload := startPayload{
-				Round: round, TotalRounds: total, DrawerID: drawerID, DrawerName: drawerName,
-				Word: w, RoundEndsAtMs: endsAt, Players: players,
-			}
-			_ = e.sendStart(addr, lobbyID, mustMarshal(payload))
-		}(peerID, addr)
-	}
-	wg.Wait()
-}
-
-// BeginGuest starts a drawing game for a guest once the host's initial
-// round-start message arrives.
+// BeginGuest starts a chain game for a guest once the host's first turn
+// message arrives.
 func (e *Engine) BeginGuest(lobbyID, hostAddr string, payload json.RawMessage) error {
-	var p startPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
+	var p turnPayload
+	if err := json.Unmarshal(payload, &p); err != nil || p.Phase == "" {
 		return lobby.ErrRejected
 	}
 	e.mu.Lock()
@@ -241,19 +256,18 @@ func (e *Engine) BeginGuest(lobbyID, hostAddr string, payload json.RawMessage) e
 	e.hostAddr = hostAddr
 	e.lobbyID = lobbyID
 	e.state = State{
-		Phase: PhaseDrawing, Round: p.Round, TotalRounds: p.TotalRounds,
-		DrawerID: p.DrawerID, DrawerName: p.DrawerName, Word: p.Word,
-		RoundEndsAtMs: p.RoundEndsAtMs, Players: clonePlayers(p.Players),
+		Phase: p.Phase, Pass: p.Pass, TotalPasses: p.TotalPasses,
+		PassEndsAtMs: p.PassEndsAtMs, Prompt: p.Prompt, Players: clonePlayers(p.Players),
 	}
 	e.mu.Unlock()
 	e.notify()
 	return nil
 }
 
-// HandleStart applies a mid-game round-transition start message (the only
-// kind draw ever receives once gameplay has begun).
+// HandleStart applies a mid-game turn message - the personalized push sent
+// at the start of every pass's draw and guess steps.
 func (e *Engine) HandleStart(payload json.RawMessage) error {
-	var p startPayload
+	var p turnPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return lobby.ErrRejected
 	}
@@ -262,17 +276,14 @@ func (e *Engine) HandleStart(payload json.RawMessage) error {
 		e.mu.Unlock()
 		return nil
 	}
-	e.state.Round = p.Round
-	e.state.TotalRounds = p.TotalRounds
-	e.state.DrawerID = p.DrawerID
-	e.state.DrawerName = p.DrawerName
-	e.state.Word = p.Word
-	e.state.RoundEndsAtMs = p.RoundEndsAtMs
+	e.state.Phase = p.Phase
+	e.state.Pass = p.Pass
+	e.state.TotalPasses = p.TotalPasses
+	e.state.PassEndsAtMs = p.PassEndsAtMs
+	e.state.Prompt = p.Prompt
 	e.state.Players = clonePlayers(p.Players)
-	e.state.Strokes = nil
-	e.state.Guessed = nil
-	e.state.LastRound = nil
-	e.state.Phase = PhaseDrawing
+	e.state.Waiting = nil
+	e.state.Chains = nil
 	e.mu.Unlock()
 	e.notify()
 	return nil
@@ -284,7 +295,7 @@ func (e *Engine) HandleRespond(r lobby.Response) error {
 	if e.host && e.lobbyID == r.LobbyID {
 		idx = e.playerIndexLocked(r.PeerID)
 	}
-	if idx <= 0 {
+	if idx < 0 {
 		e.mu.Unlock()
 		if r.Accept {
 			return lobby.ErrClosed
@@ -295,67 +306,74 @@ func (e *Engine) HandleRespond(r lobby.Response) error {
 		e.mu.Unlock()
 		return nil
 	}
-	leavingDrawer := e.state.Players[idx].PeerID == e.state.DrawerID
+
+	leavingID := r.PeerID
 	e.removePlayerLocked(idx)
-	switch {
-	case len(e.state.Players) < 2:
-		// Drawing needs at least one drawer and one guesser; continuing
-		// solo would just sit out every remaining round until the timer
-		// expires each time, with nobody able to guess.
-		e.state.Phase = PhaseFinished
-		if e.roundTimer != nil {
-			e.roundTimer.Stop()
-			e.roundTimer = nil
+	delete(e.chains, leavingID)
+	e.chainOrder = removeStr(e.chainOrder, leavingID)
+
+	if len(e.state.Players) < 2 {
+		if e.stepTimer != nil {
+			e.stepTimer.Stop()
+			e.stepTimer = nil
 		}
-		if e.revealTimer != nil {
-			e.revealTimer.Stop()
-			e.revealTimer = nil
-		}
+		e.finishLocked()
 		e.publishLocked()
-	case leavingDrawer && e.state.Phase == PhaseDrawing:
-		e.endRoundLocked()
-	case e.state.Phase == PhaseDrawing:
-		e.maybeEndRoundLocked()
-	default:
+		e.mu.Unlock()
+		e.notify()
+		return nil
+	}
+
+	if ownerID, assigned := e.workerOf[leavingID]; assigned {
+		if !e.done[leavingID] {
+			// Treat their unfinished turn as an immediate timeout so
+			// whatever chain they were working on isn't left waiting on
+			// someone who is gone.
+			e.fillOneLocked(leavingID, ownerID)
+		}
+		delete(e.workerOf, leavingID)
+		delete(e.turnOf, ownerID)
+	}
+	delete(e.done, leavingID)
+	e.syncWaitingLocked()
+	finished := e.allDoneLocked()
+	lobbyID := e.lobbyID
+	if !finished {
 		e.publishLocked()
 	}
 	e.mu.Unlock()
+	if finished {
+		e.advanceStep(lobbyID)
+		return nil
+	}
 	e.notify()
 	return nil
 }
 
-func (e *Engine) SubmitStroke(stroke Stroke) error {
-	e.mu.Lock()
-	if e.state.Phase != PhaseDrawing {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: not drawing")
-	}
-	if e.state.DrawerID != e.selfID {
-		e.mu.Unlock()
-		return fmt.Errorf("draw: not your turn to draw")
-	}
-	host := e.host
-	selfID := e.selfID
-	hostAddr := e.hostAddr
-	lobbyID := e.lobbyID
-	e.mu.Unlock()
-
-	if host {
-		e.applyStroke(lobbyID, selfID, stroke)
-		return nil
-	}
-	return lobby.SendProgress(hostAddr, lobby.Progress{
-		LobbyID: lobbyID,
-		PeerID:  selfID,
-		Payload: mustMarshal(progressPayload{Type: "stroke", Stroke: &stroke}),
-	})
+func (e *Engine) SubmitDrawing(strokes []Stroke) error {
+	return e.submit("drawing", capStrokes(cloneStrokes(strokes)), "")
 }
 
 func (e *Engine) SubmitGuess(text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		text = "…"
+	}
+	if len(text) > maxGuessLen {
+		text = text[:maxGuessLen]
+	}
+	return e.submit("word", nil, text)
+}
+
+func (e *Engine) submit(kind string, strokes []Stroke, word string) error {
 	e.mu.Lock()
-	if e.state.Phase != PhaseDrawing {
+	wantPhase := PhaseDrawing
+	if kind == "word" {
+		wantPhase = PhaseGuessing
+	}
+	if e.state.Phase != wantPhase {
 		e.mu.Unlock()
-		return fmt.Errorf("draw: not drawing")
+		return fmt.Errorf("draw: not your turn")
 	}
 	host := e.host
 	selfID := e.selfID
@@ -364,260 +382,269 @@ func (e *Engine) SubmitGuess(text string) error {
 	e.mu.Unlock()
 
 	if host {
-		e.applyGuess(lobbyID, selfID, text)
+		if !e.applySubmission(lobbyID, selfID, kind, strokes, word) {
+			return fmt.Errorf("draw: not your turn")
+		}
 		return nil
 	}
 	return lobby.SendProgress(hostAddr, lobby.Progress{
 		LobbyID: lobbyID,
 		PeerID:  selfID,
-		Payload: mustMarshal(progressPayload{Type: "guess", Text: text}),
+		Payload: mustMarshal(submitPayload{Kind: kind, Strokes: strokes, Word: word}),
 	})
 }
 
 func (e *Engine) HandleProgress(p lobby.Progress) error {
-	var payload progressPayload
-	if err := json.Unmarshal(p.Payload, &payload); err != nil {
+	var sp submitPayload
+	if err := json.Unmarshal(p.Payload, &sp); err != nil {
 		return lobby.ErrRejected
 	}
-	switch payload.Type {
-	case "stroke":
-		if payload.Stroke == nil || !e.applyStroke(p.LobbyID, p.PeerID, *payload.Stroke) {
-			return lobby.ErrClosed
-		}
-	case "guess":
-		e.applyGuess(p.LobbyID, p.PeerID, payload.Text)
-	default:
-		return lobby.ErrRejected
+	if !e.applySubmission(p.LobbyID, p.PeerID, sp.Kind, sp.Strokes, sp.Word) {
+		return lobby.ErrClosed
 	}
 	return nil
 }
 
-func (e *Engine) applyStroke(lobbyID, peerID string, stroke Stroke) bool {
+func (e *Engine) applySubmission(lobbyID, peerID, kind string, strokes []Stroke, word string) bool {
 	e.mu.Lock()
-	if !e.host || e.lobbyID != lobbyID || e.state.Phase != PhaseDrawing || e.state.DrawerID != peerID {
+	wantPhase := PhaseDrawing
+	if kind == "word" {
+		wantPhase = PhaseGuessing
+	}
+	ownerID, assigned := e.workerOf[peerID]
+	if !e.host || e.lobbyID != lobbyID || e.state.Phase != wantPhase || !assigned || e.done[peerID] {
 		e.mu.Unlock()
 		return false
 	}
-	e.state.Strokes = append(e.state.Strokes, stroke)
-	e.capStrokesLocked()
-	e.publishLocked()
+	e.pending[ownerID] = rtEntry{peerID: peerID, name: e.playerNameLocked(peerID), kind: kind, word: word, strokes: strokes}
+	e.done[peerID] = true
+	e.syncWaitingLocked()
+	finished := e.allDoneLocked()
+	if !finished {
+		e.publishLocked()
+	}
 	e.mu.Unlock()
+	if finished {
+		e.advanceStep(lobbyID)
+		return true
+	}
 	e.notify()
 	return true
 }
 
-func (e *Engine) capStrokesLocked() {
-	total := 0
-	for _, s := range e.state.Strokes {
-		total += len(s.Points)
-	}
-	for total > maxPointsPerRound && len(e.state.Strokes) > 0 {
-		total -= len(e.state.Strokes[0].Points)
-		e.state.Strokes = e.state.Strokes[1:]
-	}
+func (e *Engine) allDoneLocked() bool {
+	return len(e.done) >= len(e.workerOf)
 }
 
-func (e *Engine) applyGuess(lobbyID, peerID, text string) bool {
-	e.mu.Lock()
-	eligible := e.host && e.lobbyID == lobbyID && e.state.Phase == PhaseDrawing &&
-		peerID != e.state.DrawerID && !containsStr(e.state.Guessed, peerID)
-	if !eligible {
-		e.mu.Unlock()
-		return false
+func (e *Engine) syncWaitingLocked() {
+	waiting := make([]PlayerStatus, 0, len(e.workerOf))
+	for workerID := range e.workerOf {
+		waiting = append(waiting, PlayerStatus{PeerID: workerID, Name: e.playerNameLocked(workerID), Done: e.done[workerID]})
 	}
-	norm := normalizeGuess(text)
-	if norm == "" || norm != normalizeGuess(e.state.Word) {
-		e.mu.Unlock()
-		return false
-	}
-	rank := len(e.state.Guessed) + 1
-	pts := scoreForRank(rank)
-	e.addScoreLocked(peerID, pts)
-	e.state.Guessed = append(e.state.Guessed, peerID)
-	e.roundDeltas = append(e.roundDeltas, e.scoreDeltaLocked(peerID, pts))
-	e.maybeEndRoundLocked()
-	e.mu.Unlock()
-	e.notify()
-	return true
+	sort.Slice(waiting, func(i, j int) bool { return waiting[i].PeerID < waiting[j].PeerID })
+	e.state.Waiting = waiting
 }
 
-func (e *Engine) maybeEndRoundLocked() {
-	nonDrawers := 0
-	for _, p := range e.state.Players {
-		if p.PeerID != e.state.DrawerID {
-			nonDrawers++
+// fillOneLocked synthesizes a blank entry for a worker who ran out of time
+// (or left) without submitting, so the chain they were assigned keeps its
+// structure instead of getting stuck one entry short.
+func (e *Engine) fillOneLocked(workerID, ownerID string) {
+	kind := "drawing"
+	if e.state.Phase == PhaseGuessing {
+		kind = "word"
+	}
+	entry := rtEntry{peerID: workerID, name: e.playerNameLocked(workerID), kind: kind}
+	if kind == "word" {
+		entry.word = "…"
+	}
+	e.pending[ownerID] = entry
+	e.done[workerID] = true
+}
+
+func (e *Engine) fillMissingLocked() {
+	for workerID, ownerID := range e.turnOf {
+		if !e.done[workerID] {
+			e.fillOneLocked(workerID, ownerID)
 		}
 	}
-	if nonDrawers > 0 && len(e.state.Guessed) >= nonDrawers {
-		e.endRoundLocked()
-	}
 }
 
-func (e *Engine) expireRound(lobbyID string, round int) {
+func (e *Engine) startStepTimerLocked(lobbyID string, phase Phase, d time.Duration) {
+	e.stepTimer = time.AfterFunc(d, func() { e.expireStep(lobbyID, phase) })
+}
+
+func (e *Engine) expireStep(lobbyID string, phase Phase) {
 	e.mu.Lock()
-	if !e.host || e.lobbyID != lobbyID || e.state.Phase != PhaseDrawing || e.state.Round != round {
+	if !e.host || e.lobbyID != lobbyID || e.state.Phase != phase {
 		e.mu.Unlock()
 		return
 	}
-	e.endRoundLocked()
 	e.mu.Unlock()
-	e.notify()
+	e.advanceStep(lobbyID)
 }
 
-func (e *Engine) endRoundLocked() {
-	if e.roundTimer != nil {
-		e.roundTimer.Stop()
-		e.roundTimer = nil
-	}
-	if len(e.roundDeltas) > 0 {
-		const drawerBonus = 1
-		e.addScoreLocked(e.state.DrawerID, drawerBonus)
-		e.roundDeltas = append(e.roundDeltas, e.scoreDeltaLocked(e.state.DrawerID, drawerBonus))
-	}
-	e.state.LastRound = &RoundResult{Word: e.state.Word, Drawer: e.state.DrawerID, Deltas: e.roundDeltas}
-	e.roundDeltas = nil
-
-	if e.state.Round >= e.state.TotalRounds || len(e.state.Players) == 0 {
-		e.state.Phase = PhaseFinished
-		e.publishLocked()
-		return
-	}
-	e.state.Phase = PhaseReveal
-	e.publishLocked()
-	lobbyID := e.lobbyID
-	e.revealTimer = time.AfterFunc(revealDuration, func() { e.advanceRound(lobbyID) })
-}
-
-func (e *Engine) advanceRound(lobbyID string) {
+// advanceStep commits whatever was submitted this step (filling in any
+// stragglers), moves to the next phase or finishes the game, and - unless
+// finished - pushes each player their next personalized turn.
+func (e *Engine) advanceStep(lobbyID string) {
 	e.mu.Lock()
-	if !e.host || e.lobbyID != lobbyID || e.state.Phase != PhaseReveal {
+	if !e.host || e.lobbyID != lobbyID {
 		e.mu.Unlock()
 		return
 	}
-	round := e.state.Round + 1
-	drawerID, ok := e.nextDrawerLocked(round)
-	if !ok {
-		e.state.Phase = PhaseFinished
-		e.publishLocked()
-		e.mu.Unlock()
+	if e.stepTimer != nil {
+		e.stepTimer.Stop()
+		e.stepTimer = nil
+	}
+	e.fillMissingLocked()
+	for ownerID, entry := range e.pending {
+		if c := e.chains[ownerID]; c != nil {
+			c.entries = append(c.entries, entry)
+		}
+	}
+	e.pending = map[string]rtEntry{}
+	e.done = map[string]bool{}
+
+	finished := false
+	switch e.state.Phase {
+	case PhaseDrawing:
+		e.reassignLocked()
+		e.state.Phase = PhaseGuessing
+		e.state.PassEndsAtMs = time.Now().Add(e.guessDuration).UnixMilli()
+		e.startStepTimerLocked(lobbyID, PhaseGuessing, e.guessDuration)
+	case PhaseGuessing:
+		if e.state.Pass >= e.state.TotalPasses {
+			e.finishLocked()
+			finished = true
+			e.publishLocked()
+		} else {
+			e.state.Pass++
+			e.reassignLocked()
+			e.state.Phase = PhaseDrawing
+			e.state.PassEndsAtMs = time.Now().Add(e.drawDuration).UnixMilli()
+			e.startStepTimerLocked(lobbyID, PhaseDrawing, e.drawDuration)
+		}
+	}
+	e.mu.Unlock()
+	if finished {
 		e.notify()
 		return
 	}
-	drawerName := e.playerNameLocked(drawerID)
-	word := e.pickWordLocked()
-	endsAt := time.Now().Add(e.roundDuration).UnixMilli()
+	e.sendTurnMessages(lobbyID)
+}
 
-	e.state.Round = round
-	e.state.DrawerID = drawerID
-	e.state.DrawerName = drawerName
-	e.state.Word = word
-	e.state.Strokes = nil
-	e.state.Guessed = nil
-	e.state.LastRound = nil
-	e.state.Phase = PhaseDrawing
-	e.state.RoundEndsAtMs = endsAt
+// reassignLocked picks, for every still-owned chain, a worker other than
+// whoever contributed that chain's most recent entry. Every chain's most
+// recent author is distinct (each step's assignment is a bijection over the
+// active players), so a plain shuffle-and-swap-with-neighbour repair always
+// terminates: a conflict at i can only be resolved by some order[j] with
+// j != i, and since order is a permutation the only position holding
+// avoid[i] is i itself, so any neighbour is automatically safe.
+func (e *Engine) reassignLocked() {
+	n := len(e.chainOrder)
+	workers := make([]string, n)
+	avoid := make([]string, n)
+	for i, ownerID := range e.chainOrder {
+		workers[i] = ownerID
+		c := e.chains[ownerID]
+		avoid[i] = c.entries[len(c.entries)-1].peerID
+	}
+	mrand.Shuffle(n, func(i, j int) { workers[i], workers[j] = workers[j], workers[i] })
+	for i := range workers {
+		if workers[i] != avoid[i] {
+			continue
+		}
+		j := (i + 1) % n
+		workers[i], workers[j] = workers[j], workers[i]
+	}
+	e.turnOf = make(map[string]string, n)
+	e.workerOf = make(map[string]string, n)
+	for i, ownerID := range e.chainOrder {
+		e.turnOf[ownerID] = workers[i]
+		e.workerOf[workers[i]] = ownerID
+	}
+}
 
-	total := e.state.TotalRounds
+func (e *Engine) buildPromptsLocked() map[string]*Prompt {
+	out := make(map[string]*Prompt, len(e.turnOf))
+	for ownerID, workerID := range e.turnOf {
+		c := e.chains[ownerID]
+		last := c.entries[len(c.entries)-1]
+		if e.state.Phase == PhaseDrawing {
+			out[workerID] = &Prompt{Kind: "word", Word: last.word}
+		} else {
+			out[workerID] = &Prompt{
+				Kind: "drawing", Strokes: cloneStrokes(last.strokes),
+				FromPeerID: last.peerID, FromName: last.name,
+			}
+		}
+	}
+	return out
+}
+
+// sendTurnMessages pushes each peer their own Prompt for the step already
+// committed to e.state, applies the host's own Prompt directly, and
+// publishes the shared (prompt-redacted) snapshot. Must be called without
+// the lock held.
+func (e *Engine) sendTurnMessages(lobbyID string) {
+	e.mu.Lock()
+	if !e.host || e.lobbyID != lobbyID {
+		e.mu.Unlock()
+		return
+	}
+	prompts := e.buildPromptsLocked()
+	phase, pass, total, endsAt := e.state.Phase, e.state.Pass, e.state.TotalPasses, e.state.PassEndsAtMs
 	players := clonePlayers(e.state.Players)
 	peerAddrs := make(map[string]string, len(e.peerAddrs))
 	for k, v := range e.peerAddrs {
 		peerAddrs[k] = v
 	}
-	e.roundTimer = time.AfterFunc(e.roundDuration, func() { e.expireRound(lobbyID, round) })
+	selfID := e.selfID
+	sendStart := e.sendStart
 	e.mu.Unlock()
-	e.notify()
 
-	e.sendRoundStarts(peerAddrs, lobbyID, round, total, drawerID, drawerName, word, endsAt, players)
+	var wg sync.WaitGroup
+	for peerID, addr := range peerAddrs {
+		if peerID == selfID {
+			continue
+		}
+		wg.Add(1)
+		go func(peerID, addr string) {
+			defer wg.Done()
+			payload := turnPayload{
+				Phase: phase, Pass: pass, TotalPasses: total, PassEndsAtMs: endsAt,
+				Prompt: prompts[peerID], Players: players,
+			}
+			_ = sendStart(addr, lobbyID, mustMarshal(payload))
+		}(peerID, addr)
+	}
+	wg.Wait()
 
 	e.mu.Lock()
 	if e.lobbyID == lobbyID {
+		e.state.Prompt = prompts[selfID]
 		e.publishLocked()
 	}
 	e.mu.Unlock()
+	e.notify()
 }
 
-// nextDrawerLocked picks the drawer for round (1-based), cycling through
-// drawOrder round-robin once a round exceeds the player count - rounds only
-// equals len(drawOrder) when the host didn't configure more, so this must
-// wrap rather than stop at the end of the slice. It skips any peer who has
-// since left (no longer in e.state.Players), scanning at most one full lap
-// so it still reports false once everyone has left.
-func (e *Engine) nextDrawerLocked(round int) (string, bool) {
-	n := len(e.drawOrder)
-	if n == 0 {
-		return "", false
-	}
-	start := (round - 1) % n
-	for k := 0; k < n; k++ {
-		id := e.drawOrder[(start+k)%n]
-		if e.playerIndexLocked(id) >= 0 {
-			return id, true
+func (e *Engine) finishLocked() {
+	e.state.Phase = PhaseFinished
+	e.state.Prompt = nil
+	chains := make([]Chain, len(e.chainOrder))
+	for i, ownerID := range e.chainOrder {
+		c := e.chains[ownerID]
+		entries := make([]Entry, len(c.entries))
+		for j, re := range c.entries {
+			entries[j] = Entry{
+				PeerID: re.peerID, Name: re.name, Kind: re.kind, Word: re.word,
+				Strokes: cloneStrokes(re.strokes), Final: j == len(c.entries)-1,
+			}
 		}
+		chains[i] = Chain{OwnerID: c.ownerID, OwnerName: c.ownerName, Entries: entries}
 	}
-	return "", false
-}
-
-func (e *Engine) pickWordLocked() string {
-	available := make([]string, 0, len(words))
-	for _, w := range words {
-		if !e.usedWords[w] {
-			available = append(available, w)
-		}
-	}
-	if len(available) == 0 {
-		e.usedWords = map[string]bool{}
-		available = words
-	}
-	w := available[mrand.IntN(len(available))]
-	if e.usedWords == nil {
-		e.usedWords = map[string]bool{}
-	}
-	e.usedWords[w] = true
-	return w
-}
-
-func (e *Engine) addScoreLocked(peerID string, pts int) {
-	for i := range e.state.Players {
-		if e.state.Players[i].PeerID == peerID {
-			e.state.Players[i].Score += pts
-			return
-		}
-	}
-}
-
-func (e *Engine) scoreDeltaLocked(peerID string, pts int) ScoreDelta {
-	return ScoreDelta{PeerID: peerID, Name: e.playerNameLocked(peerID), Points: pts}
-}
-
-func (e *Engine) playerNameLocked(peerID string) string {
-	if i := e.playerIndexLocked(peerID); i >= 0 {
-		return e.state.Players[i].Name
-	}
-	return ""
-}
-
-func scoreForRank(rank int) int {
-	switch rank {
-	case 1:
-		return 3
-	case 2:
-		return 2
-	default:
-		return 1
-	}
-}
-
-func normalizeGuess(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
-}
-
-func containsStr(list []string, v string) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	e.state.Chains = chains
 }
 
 func (e *Engine) publishLocked() {
@@ -625,7 +652,7 @@ func (e *Engine) publishLocked() {
 		return
 	}
 	redacted := cloneState(e.state)
-	redacted.Word = ""
+	redacted.Prompt = nil
 	payload, err := json.Marshal(redacted)
 	if err != nil {
 		return
@@ -635,8 +662,8 @@ func (e *Engine) publishLocked() {
 
 // ApplyEvent absorbs a broadcast snapshot received over the shared lobby
 // subscription, for a guest tracking the host's game. The host always
-// redacts Word in what it broadcasts, so a drawer's own locally-learned
-// word (from BeginGuest/HandleStart) must survive these snapshots.
+// redacts Prompt in what it broadcasts, so a player's own locally-learned
+// prompt (from BeginGuest/HandleStart) must survive these snapshots.
 func (e *Engine) ApplyEvent(payload json.RawMessage) {
 	var snap State
 	if err := json.Unmarshal(payload, &snap); err != nil {
@@ -647,20 +674,17 @@ func (e *Engine) ApplyEvent(payload json.RawMessage) {
 		e.mu.Unlock()
 		return
 	}
-	word := snap.Word
-	if e.state.DrawerID == e.selfID && e.state.Word != "" {
-		word = e.state.Word
-	}
-	e.state.Word = word
-	e.state.Strokes = cloneStrokes(snap.Strokes)
-	e.state.Guessed = append([]string(nil), snap.Guessed...)
+	prompt := e.state.Prompt
+	e.state.Phase = snap.Phase
+	e.state.Pass = snap.Pass
+	e.state.TotalPasses = snap.TotalPasses
+	e.state.PassEndsAtMs = snap.PassEndsAtMs
+	e.state.Waiting = snap.Waiting
 	e.state.Players = clonePlayers(snap.Players)
-	e.state.LastRound = snap.LastRound
-	switch {
-	case e.state.Phase == PhaseDrawing && snap.Phase == PhaseReveal:
-		e.state.Phase = PhaseReveal
-	case (e.state.Phase == PhaseDrawing || e.state.Phase == PhaseReveal) && snap.Phase == PhaseFinished:
-		e.state.Phase = PhaseFinished
+	e.state.Chains = snap.Chains
+	e.state.Prompt = prompt
+	if snap.Phase == PhaseFinished {
+		e.state.Prompt = nil
 	}
 	e.mu.Unlock()
 	e.notify()
@@ -678,34 +702,40 @@ func (e *Engine) FinishedIfClosed() bool {
 // caller (party) is responsible for the lobby-level cleanup.
 func (e *Engine) Leave() {
 	e.mu.Lock()
-	if e.state.Phase != PhaseDrawing && e.state.Phase != PhaseReveal {
+	if e.state.Phase != PhaseDrawing && e.state.Phase != PhaseGuessing {
 		e.mu.Unlock()
 		return
 	}
 	if e.host {
-		e.publish(true, e.lobbyID, mustMarshal(struct{}{}))
+		e.publishDisbandLocked()
 	}
 	e.resetLocked()
 	e.mu.Unlock()
 	e.notify()
 }
 
-func (e *Engine) resetLocked() {
-	if e.roundTimer != nil {
-		e.roundTimer.Stop()
-		e.roundTimer = nil
+func (e *Engine) publishDisbandLocked() {
+	if e.publish == nil {
+		return
 	}
-	if e.revealTimer != nil {
-		e.revealTimer.Stop()
-		e.revealTimer = nil
+	e.publish(true, e.lobbyID, mustMarshal(struct{}{}))
+}
+
+func (e *Engine) resetLocked() {
+	if e.stepTimer != nil {
+		e.stepTimer.Stop()
+		e.stepTimer = nil
 	}
 	e.host = false
 	e.hostAddr = ""
 	e.lobbyID = ""
 	e.peerAddrs = nil
-	e.drawOrder = nil
-	e.usedWords = nil
-	e.roundDeltas = nil
+	e.chainOrder = nil
+	e.chains = nil
+	e.turnOf = nil
+	e.workerOf = nil
+	e.done = nil
+	e.pending = nil
 	e.publish = nil
 	e.sendStart = nil
 	e.state = State{Phase: PhaseIdle}
@@ -720,9 +750,48 @@ func (e *Engine) playerIndexLocked(peerID string) int {
 	return -1
 }
 
+func (e *Engine) playerNameLocked(peerID string) string {
+	if i := e.playerIndexLocked(peerID); i >= 0 {
+		return e.state.Players[i].Name
+	}
+	return ""
+}
+
 func (e *Engine) removePlayerLocked(i int) {
 	delete(e.peerAddrs, e.state.Players[i].PeerID)
 	e.state.Players = append(e.state.Players[:i:i], e.state.Players[i+1:]...)
+}
+
+func pickWords(n int) []string {
+	available := append([]string(nil), words...)
+	mrand.Shuffle(len(available), func(i, j int) { available[i], available[j] = available[j], available[i] })
+	out := make([]string, n)
+	for i := range out {
+		out[i] = available[i%len(available)]
+	}
+	return out
+}
+
+func capStrokes(strokes []Stroke) []Stroke {
+	total := 0
+	for _, s := range strokes {
+		total += len(s.Points)
+	}
+	for total > maxPointsPerDrawing && len(strokes) > 0 {
+		total -= len(strokes[0].Points)
+		strokes = strokes[1:]
+	}
+	return strokes
+}
+
+func removeStr(list []string, v string) []string {
+	out := make([]string, 0, len(list))
+	for _, x := range list {
+		if x != v {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func mustMarshal(v any) json.RawMessage {
@@ -735,12 +804,24 @@ func mustMarshal(v any) json.RawMessage {
 
 func cloneState(s State) State {
 	s.Players = clonePlayers(s.Players)
-	s.Strokes = cloneStrokes(s.Strokes)
-	s.Guessed = append([]string(nil), s.Guessed...)
-	if s.LastRound != nil {
-		lr := *s.LastRound
-		lr.Deltas = append([]ScoreDelta(nil), s.LastRound.Deltas...)
-		s.LastRound = &lr
+	s.Waiting = append([]PlayerStatus(nil), s.Waiting...)
+	if s.Prompt != nil {
+		p := *s.Prompt
+		p.Strokes = cloneStrokes(s.Prompt.Strokes)
+		s.Prompt = &p
+	}
+	if s.Chains != nil {
+		chains := make([]Chain, len(s.Chains))
+		for i, c := range s.Chains {
+			entries := make([]Entry, len(c.Entries))
+			for j, en := range c.Entries {
+				en.Strokes = cloneStrokes(en.Strokes)
+				entries[j] = en
+			}
+			c.Entries = entries
+			chains[i] = c
+		}
+		s.Chains = chains
 	}
 	return s
 }
@@ -752,6 +833,9 @@ func clonePlayers(in []Player) []Player {
 }
 
 func cloneStrokes(in []Stroke) []Stroke {
+	if in == nil {
+		return nil
+	}
 	out := make([]Stroke, len(in))
 	for i, s := range in {
 		s.Points = append([]Point(nil), s.Points...)

@@ -137,10 +137,10 @@ const introXML = `
     <method name="RaceProgress">
       <arg name="typed_chars" type="i" direction="in"/>
     </method>
-    <method name="DrawStroke">
-      <arg name="stroke" type="s" direction="in"/>
+    <method name="DrawSubmitDrawing">
+      <arg name="strokes" type="s" direction="in"/>
     </method>
-    <method name="DrawGuess">
+    <method name="DrawSubmitGuess">
       <arg name="text" type="s" direction="in"/>
     </method>
     <method name="SnakeInput">
